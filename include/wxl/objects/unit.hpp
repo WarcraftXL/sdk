@@ -57,6 +57,18 @@ namespace wxl
             return Unit(*target);
         }
 
+        /// How this unit regards @p other: 0-1 hostile, 2-3 neutral, 4-7 friendly.
+        Expected<uint32_t> ReactionTo(const Unit& other) const
+        {
+            const wxl_object_api* api = ObjectService::Raw();
+            if (!detail::Carries(api, &wxl_object_api::unit_reaction)) return Unexpected{WXL_E_UNSUPPORTED};
+            if (!HasHandle() || !other.HasHandle()) return Unexpected{WXL_E_NOT_FOUND};
+            uint32_t         out    = 0;
+            const wxl_result result = api->unit_reaction(Handle(), other.Handle(), &out);
+            if (result != WXL_OK) return Unexpected{result};
+            return out;
+        }
+
         Expected<uint32_t> PowerValue(Power power) const
         {
             return ReadAt(&wxl_object_api::unit_power, static_cast<uint32_t>(power));

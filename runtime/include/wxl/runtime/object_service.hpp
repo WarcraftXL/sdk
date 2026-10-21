@@ -47,6 +47,16 @@ namespace wxl::runtime
         /// The object the local player controls, or nullptr while out of the world.
         virtual void* LocalPlayer() const = 0;
 
+        /// How one unit regards another (wxl_object_api::unit_reaction). A binding that cannot
+        /// tell answers false.
+        virtual bool UnitReaction(void* unit, void* other, uint32_t& out) const
+        {
+            (void)unit;
+            (void)other;
+            (void)out;
+            return false;
+        }
+
 #define WXL_OBJECT_READ(kinds, member, Method, type) \
     virtual bool Method(void* object, type& out) const = 0;
 #define WXL_OBJECT_READ_AT(kinds, member, Method, type) \
@@ -148,6 +158,7 @@ namespace wxl::runtime
         static wxl_handle WXL_CALL LocalPlayerThunk(void);
         static wxl_result WXL_CALL NameThunk(wxl_handle object, wxl_str* out);
         static wxl_result WXL_CALL UnitTargetThunk(wxl_handle unit, wxl_handle* out);
+        static wxl_result WXL_CALL UnitReactionThunk(wxl_handle unit, wxl_handle other, uint32_t* out);
         static uint32_t   WXL_CALL EnumerateThunk(uint32_t type, wxl_handle* out, uint32_t cap);
         static wxl_result WXL_CALL PositionsThunk(const wxl_handle* objects, uint32_t count, wxl_vec3* out);
 

@@ -53,6 +53,7 @@ namespace wxl::runtime
 
         api_.name        = &ObjectService::NameThunk;
         api_.unit_target = &ObjectService::UnitTargetThunk;
+        api_.unit_reaction = &ObjectService::UnitReactionThunk;
         api_.enumerate   = &ObjectService::EnumerateThunk;
         api_.positions   = &ObjectService::PositionsThunk;
 
@@ -156,6 +157,21 @@ namespace wxl::runtime
         wxl_guid target = WXL_GUID_NONE;
         if (!instance_->binding_.UnitTarget(native, target)) return WXL_E_INVALID;
         *out = instance_->FromGuid(target);
+        return WXL_OK;
+    }
+
+    wxl_result WXL_CALL ObjectService::UnitReactionThunk(wxl_handle unit, wxl_handle other, uint32_t* out)
+    {
+        if (!out) return WXL_E_INVALID;
+
+        void*      native = nullptr;
+        void*      seen   = nullptr;
+        wxl_result gated  = Gate(unit, kUnits, native);
+        if (gated != WXL_OK) return gated;
+        gated = Gate(other, kUnits, seen);
+        if (gated != WXL_OK) return gated;
+
+        if (!instance_->binding_.UnitReaction(native, seen, *out)) return WXL_E_UNSUPPORTED;
         return WXL_OK;
     }
 

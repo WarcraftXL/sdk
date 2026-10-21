@@ -187,6 +187,15 @@ typedef struct wxl_object_api
     wxl_result(WXL_CALL* corpse_guild)(wxl_handle corpse, uint32_t* out);
     wxl_result(WXL_CALL* corpse_flags)(wxl_handle corpse, uint32_t* out);
     wxl_result(WXL_CALL* corpse_dynamic_flags)(wxl_handle corpse, uint32_t* out);
+
+    // --- appended: how one unit regards another -----------------------------------------------
+
+    /**
+     * @brief How @p unit regards @p other, as the client works it out from their factions,
+     *        PvP flags and charm: 0-1 hostile, 2-3 neutral (2 unfriendly), 4-7 friendly.
+     *        Lua's UnitReaction answers the same scale plus one.
+     */
+    wxl_result(WXL_CALL* unit_reaction)(wxl_handle unit, wxl_handle other, uint32_t* out);
 } wxl_object_api;
 
 #ifdef __cplusplus
