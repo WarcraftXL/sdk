@@ -1064,6 +1064,9 @@ mod and a mod that teaches the client a later expansion's model format.
 | hang a model of your own on a character, a creature, a mount | `wxl::M2Service`, `wxl::M2Model` | every runtime |
 | reshape a model file as the client loads it | `AssetScript::OnModelParsed` and the stages after it, `wxl::M2FileService` | every runtime |
 | draw a batch of a model again, with your own state | `RenderScript::OnModelBatchDrawn`, `wxl::GxService` | every runtime |
+| put a model anywhere in the world, as a spell effect | `wxl::M2Model::World`, `Place`, `PlayAnimation` | every runtime |
+| move the bones the client has just posed (cloth, chains) | `wxl::M2BoneWatch`, `wxl::M2Service::BoneInfo` | every runtime |
+| know where a ground spell lands | `ObjectScript::OnSpellCastStart`, `OnSpellCastGo`: `has_dest`, `dest` | every runtime |
 
 The three services are **raw**: they hand you the client's own models and memory, which no
 check stands between. A native mod names each one it uses in its manifest, as any service.
@@ -1185,6 +1188,72 @@ records them as the device draws, and on the stock one the runtime rebuilds them
 was drawn from.
 
 These came with abi `0.1.20`.
+
+**A model in the world.** `wxl::M2Model::World(path)` makes a model in the world's own scene, the
+one units and spell effects are in. It shows nowhere until you place it: `Place(placement)` puts it
+at a point of the world, turned and scaled, and moves it there again each time you call it -- every
+frame, for a missile. `wxl::M2Placement(position, yaw, pitch, roll, scale)` builds the placement:
+the turn is in radians, yaw first, as a unit's facing, and the scale 1 when you leave it out.
+
+```cpp
+void Cast(const wxl_vec3& target)
+{
+    // A ring of fire where the spell lands, on the ground under the point.
+    const float ground = wxl::M2Service::GroundHeight(target, 5.0f, 20.0f).ValueOr(target.z);
+    fire_ = wxl::M2Model::World("Spells\\FireNova_Area.m2");
+    fire_.Place(wxl::M2Placement(wxl_vec3{target.x, target.y, ground}));
+    fire_.PlayAnimation(158);        // its birth (AnimationData.dbc), then what the file chains
+}
+
+void Fade(float left)                // called each frame as it ends
+{
+    fire_.SetAlpha(left);
+    fire_.SetEmitting(false);        // its particles play out, no new ones start
+}
+```
+
+`PlayAnimation(id, speed)` plays an animation on the whole model from its start, once it has
+loaded if it has not yet; `AnimationLength(id)` says how long one play lasts once `Loaded()`.
+`SetTransform(placement)` is how a model sits on the point it hangs on, for one you `Attach`
+instead. `wxl::M2Service::AttachmentWorld(model, point)` says where an attachment point of any
+loaded model is in the world now (a hand, to launch from), and `GroundHeight(at, up, down)` finds
+the ground under a point, as the client finds it for its own spell effects. The model is yours as
+any `M2Model`; leaving the world (a logout, a teleport to another map) takes it out of the world
+with the client's own spell effects, so place it again after `OnWorldEnter`.
+
+**The bones, as the client posed them.** A mod that simulates a cape or a chain needs every
+model's bones right after the client posed them, before they are drawn. `wxl::M2BoneWatch(filter,
+watcher, user)` hands them over: the filter says once per model file whether its models interest
+you, the watcher gets each one of them every frame, its matrices yours to rewrite.
+
+```cpp
+wxl_bool WXL_CALL Capes(void*, wxl_str path, uint32_t, void*)
+{
+    return wxl::View(path).find("Cape") != std::string_view::npos ? WXL_TRUE : WXL_FALSE;
+}
+
+void WXL_CALL Sway(const wxl_m2_bones* bones, void* user)
+{
+    // 16 floats a bone, row vectors: the translation is 12, 13, 14.
+    for (uint32_t i = 1; i < bones->bone_count; ++i)
+        bones->matrices[i * 16 + 12] += 0.01f * std::sin(bones->time_ms * 0.002f + i);
+}
+
+wxl::M2BoneWatch sway_{&Capes, &Sway};
+```
+
+Both run on the client's animate threads, several at once: they must be thread-safe and must call
+nothing of the platform but `wxl::M2Service::BoneInfo(file, index)`, a bone's parent and pivot. A
+watcher that faults is dropped; sixteen run at most, across every mod. The matrices take a point
+of the file to the scene's camera-relative space; `model_matrix` and `view_to_world` take you to
+the world.
+
+**Where a spell lands.** `OnSpellCastStart` and `OnSpellCastGo` carry the cast's points:
+`has_dest` and `dest` for where a ground spell lands, `has_source` and `source` for where it
+starts, each in world coordinates unless `dest_transport` (or `source_transport`) names the ship
+or elevator it was measured on.
+
+These came with abi `0.1.21`, from Tyrallis as well.
 
 ### Changing the engine: points
 

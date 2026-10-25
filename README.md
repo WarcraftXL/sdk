@@ -348,7 +348,9 @@ Event ids and stage numbers are appended, never renumbered, never removed.
 
 **Contributors.** Tyrallis brought the model services (`wxl.m2file`, `wxl.m2`, `wxl.gx`), the
 character appearance seams behind `AppearanceChanged`, and the recompiled client's skins over 65535
-indices and textures over 4 MB (sdk, core and client pull requests #1).
+indices and textures over 4 MB (sdk, core and client pull requests #1), then `wxl.m2`'s models of
+the world and bone watchers, the cast's ground point, and the recompiled client's additive blend,
+retail animation ids, Ogg Vorbis sounds and later bodies' geosets (pull requests #4).
 
 ## 📄 License
 

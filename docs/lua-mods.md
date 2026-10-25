@@ -1243,6 +1243,47 @@ with their numbers, but reshaping a model file or drawing with the device is a C
 the C++ guide (`building-a-mod.md`, "Models") shows it. `OnModelBatchDrawn` comes thousands of
 times a frame: listen to it only while you need it. All of this came with abi `0.1.20`.
 
+**A model in the world.** `wxl.m2.CreateWorldModel(path)` makes a `wxl.Model` in the world's own
+scene, the one units and spell effects are in. It shows nowhere until you place it:
+`model:Place(placement)` puts it at a point of the world, and moves it there again each time you
+call it. A placement is a table: `position`, a point, and if you want them `yaw`, `pitch` and
+`roll` in radians (yaw as a unit's facing) and `scale` (1 when left out).
+
+```lua
+local fire
+
+function ObjectScript:OnSpellCastGo(caster, caster_guid, target, target_guid, cast_item, spell_id,
+                                    cast_count, cast_flags, target_flags, cast_time, hit_count,
+                                    hits, misses, miss_reasons, has_source, source, has_dest, dest)
+    if not has_dest then return end                  -- no ground point: not a ground spell
+    local ground = wxl.m2.GroundHeight(dest, 5, 20) or dest.z
+    if fire then fire:Release() end
+    fire = wxl.m2.CreateWorldModel("Spells\\FireNova_Area.m2")
+    fire:Place({ position = { x = dest.x, y = dest.y, z = ground } })
+    fire:PlayAnimation(158, 1)                       -- its birth, then what the file chains
+end
+```
+
+`has_dest` and `dest` say where a ground spell lands, `has_source` and `source` where it starts,
+in world coordinates unless the `dest_transport` (or `source_transport`) after them names the ship
+or elevator they were measured on.
+
+| Function or method | What it does |
+|---|---|
+| `wxl.m2.CreateWorldModel(path)` | a `wxl.Model` of your mod's in the world's scene; it shows once placed |
+| `model:Place({ position = {x, y, z}, yaw, pitch, roll, scale })` | puts it in the world there, or moves it there |
+| `model:SetTransform(placement)` | how it sits on the point it hangs on, for one you `Attach` |
+| `model:PlayAnimation(id, speed)` | plays an animation (`AnimationData.dbc` id) from its start, once loaded |
+| `model:SetAlpha(alpha)`, `model:SetEmitting(on)` | a fade, 0 to 1; whether its particles start new ones |
+| `wxl.m2.ModelLoaded(model)`, `wxl.m2.AnimationLength(model, id)` | whether a model has loaded; how long one play of an animation lasts, in milliseconds |
+| `wxl.m2.AttachmentWorld(model, point)` | where a point of a loaded model is in the world now, as `{ x, y, z }` |
+| `wxl.m2.GroundHeight(at, up, down)` | the height of the ground under a point, looked for from `up` yards above to `down` below |
+
+Leaving the world (a logout, a teleport to another map) takes your placed models out of it, with
+the client's own spell effects: place them again in `WorldScript:OnWorldEnter`. The bones the
+client poses every frame can be watched and moved too (a cape, a chain), but only by a C++ mod:
+it happens on the client's animate threads, where no script runs. These came with abi `0.1.21`.
+
 ### The client's databases: `wxl.data`
 
 The client keeps its game data -- spells, items, maps -- in databases, files ending in `.dbc`,
@@ -1769,6 +1810,7 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.action.Follow(unit)`, `.Assist(unit)`, `.MoveTo(point)` | follows a unit; targets what it targets; walks to a point (`{ x, y, z }`) as click-to-move does |
 | `wxl.m2.ObjectModel(object)`, `.RacePrefix(race)`, `.AttachmentPoint(model, point)` | the model an object draws with; a race's prefix in file names; a point of a model as `{ x, y, z }` (abi `0.1.20`; the module needs `wxl.m2` in `mod.json`) |
 | `wxl.m2.CreateModel(model, path)` | a `Model` of your mod's in that model's scene: `:Attach`, `:AttachToBone`, `:Detach`, `:Parent`, `:SetGeosets`, `:ReplaceTexture`, `:Release` (see [Models](#models-wxlm2)) |
+| `wxl.m2.CreateWorldModel(path)`, `.ModelLoaded(model)`, `.AnimationLength(model, id)`, `.AttachmentWorld(model, point)`, `.GroundHeight(at, up, down)` | a `Model` in the world's scene: `:Place`, `:SetTransform`, `:PlayAnimation`, `:SetAlpha`, `:SetEmitting`; whether a model loaded; an animation's length; a point in the world; the ground under a point (abi `0.1.21`) |
 | `wxl.point.Points()`, `.Find(name)` | the engine functions a C++ mod can run code before, instead of or after (name, signature, thread, flags, and `absent`: why this runtime lacks one); the id of one this runtime has (abi `0.1.16`). Attaching from Lua is to come; see "Changing the engine: points" in [Building a mod](building-a-mod.md) |
 | `wxl.engine.Layout(name)` | the layout hash of an engine structure (`"CM2Shared"`) as this runtime lays it out, for a tool comparing it with the SDK's engine headers (abi `0.1.22`); `nil, "not_found"` for a type it does not describe |
 | `wxl.camera.Position()`, `.Forward()`, `.Up()`, `.Fov()`, `.Pivot()`, `.Cinematic()` | where the world camera is and looks, its field of view, the point the client's camera turns around, whether a cinematic has the view (abi `0.1.24`) |
@@ -2038,7 +2080,9 @@ The [gameplay events](#gameplay-events), with the families `LootScript`, `ItemSc
 `wxl.storage.Serve` and `wxl.storage.Unserve`, and the reason `"pending"`, came with `0.1.19`.
 `ObjectScript`'s `OnAppearanceChanged`, `AssetScript`'s `OnModelParsed`, `OnSkinProfileParsed` and
 `OnModelSequenceLoad`, `RenderScript`'s `OnModelBatchDrawn` and the `wxl.m2` module came with
-`0.1.20`.
+`0.1.20`. `wxl.m2`'s models of the world (`CreateWorldModel`, `Place` and the rest) and the cast's
+points (`has_source`, `source`, `has_dest`, `dest` and their transports) came with `0.1.21`, and the
+`wxl.engine` module with `0.1.22`.
 `AssetScript`'s `OnFileMissing`, `wxl.storage`'s `HashFile`, `HashFileAsync`, `OverrideFile`,
 `RestoreFile` and `ReloadAsset`, and the `wxl.relay` module came with `0.1.23`.
 `WorldScript`'s `OnMouseMotion` and `OnMouseWheel`, `RenderScript`'s `OnCameraUpdate`,
