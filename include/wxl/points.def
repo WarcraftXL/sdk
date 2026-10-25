@@ -33,5 +33,7 @@ WXL_POINT(CGWorldFrame_RenderWorld, "CGWorldFrame::RenderWorld", void, (void* pa
 WXL_POINT(vFrameScript_SignalEvent, "vFrameScript_SignalEvent", void, (uint32_t index, void* format, void* args), "void(u32,ptr,ptr)", 0xF3D045C8u, replace, main, stable, both)
 // every world packet before its handler; shares the gate NetClient.ProcessMessage
 WXL_POINT(NetClient_ProcessMessage, "NetClient::ProcessMessage", int32_t, (void* self, uint32_t timeReceived, void* msg, int32_t unused_a4), "i32(ptr,u32,ptr,i32)", 0xBDAC6C44u, replace, main, stable, both)
-// a model's bytes read and fixed up; inlined into CM2Shared::LoadSucceededCallback on x86
-WXL_POINT(CM2Shared_FinishLoading, "CM2Shared::FinishLoading", int32_t, (void* self), "i32(ptr)", 0x78EA765Eu, replace, main, provisional, x64)
+// a model's bytes read and fixed up, once, from CM2Shared::LoadSucceededCallback; param is the CM2Shared
+WXL_POINT(CM2Shared_FinishLoading, "CM2Shared::FinishLoading", int32_t, (void* self), "i32(ptr)", 0x78EA765Eu, replace, main, provisional, both)
+// a model file's header checked and its arrays relocated, from FinishLoading (and on x64 FinishLoadingLowPrioritySequence); answers 0 for a file it refuses
+WXL_POINT(M2Init_uint8_t_uint32_t_M2Data, "M2Init(uint8_t*,uint32_t,M2Data&)", int32_t, (void* base, uint32_t size, void* data), "i32(ptr,u32,ptr)", 0x55608FC6u, replace, main, provisional, both)

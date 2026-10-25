@@ -33,6 +33,7 @@
 #include "wxl/services/patch.h"
 #include "wxl/services/footprint.h"
 #include "wxl/services/gx.h"
+#include "wxl/services/engine.h"
 #include "wxl/services/m2.h"
 #include "wxl/services/m2file.h"
 #include "wxl/services/profile.h"
@@ -1919,6 +1920,61 @@ namespace wxltest
                 t.struct_size      = sizeof t;
                 t.d3d9_device      = &Device;
                 t.invalidate_state = &Invalidate;
+                return t;
+            }();
+            return &api;
+        }
+    };
+
+    // Three engine types as a mod's headers would describe them.
+    struct EngineShared
+    {
+        static constexpr const char* kName       = "CM2Shared";
+        static constexpr uint64_t    kLayoutHash = 0x1122334455667788ULL;
+    };
+    struct EngineData
+    {
+        static constexpr const char* kName       = "M2Data";
+        static constexpr uint64_t    kLayoutHash = 0x0102030405060708ULL;
+    };
+    struct EngineAbsent
+    {
+        static constexpr const char* kName       = "CNoSuchType";
+        static constexpr uint64_t    kLayoutHash = 1;
+    };
+
+    // --- wxl.engine ----------------------------------------------------------------------------
+    // Answers one type's hash, and another's wrongly when told to: what a runtime built from
+    // another fork would say.
+    struct FakeEngine
+    {
+        static inline const char* name      = "CM2Shared";
+        static inline uint64_t    hash      = 0;
+        static inline const char* wrongName = "M2Data";
+        static inline uint64_t    wrongHash = 0;
+
+        static wxl_result WXL_CALL Layout(const char* type, uint64_t* out)
+        {
+            if (!type || !out) return WXL_E_INVALID;
+            if (std::strcmp(type, name) == 0)
+            {
+                *out = hash;
+                return WXL_OK;
+            }
+            if (std::strcmp(type, wrongName) == 0)
+            {
+                *out = wrongHash;
+                return WXL_OK;
+            }
+            return WXL_E_NOT_FOUND;
+        }
+
+        static const wxl_engine_api* Table()
+        {
+            static const wxl_engine_api api = [] {
+                wxl_engine_api t{};
+                t.struct_size = sizeof t;
+                t.layout      = &Layout;
                 return t;
             }();
             return &api;

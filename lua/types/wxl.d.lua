@@ -2978,6 +2978,17 @@ function m2.CreateModel(scene_model, path) end
 ---@return string|nil reason
 function m2.AttachmentPoint(model, attachment) end
 
+---wxl.engine. The client's own structures as this runtime lays them out.
+---Came with abi 0.1.21: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.engine
+local engine = {}
+
+---The layout hash of an engine type (sdk/engine) on this runtime, by the fork's name of it.
+---@param name string
+---@return integer|nil
+---@return string|nil reason
+function engine.Layout(name) end
+
 ---@class wxl.ModInfo
 ---@field id string
 ---@field name string
@@ -3050,6 +3061,7 @@ function object.Unwatch(type, name) end
 ---@field action wxl.action
 ---@field point wxl.point
 ---@field m2 wxl.m2
+---@field engine wxl.engine
 ---@field events table<wxl.Family, string[]> every family's events, as On<Event>
 wxl = {}
 

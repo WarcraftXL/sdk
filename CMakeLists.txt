@@ -20,6 +20,15 @@ target_include_directories(wxl-sdk SYSTEM INTERFACE
 
 target_compile_features(wxl-sdk INTERFACE cxx_std_17)
 
+# The engine headers (engine/, under their own NOTICE): the client's structures for a mod that
+# reads or replaces engine code, laid out for x86 and x64. A mod links it besides wxl::sdk.
+add_library(wxl-engine INTERFACE)
+add_library(wxl::engine ALIAS wxl-engine)
+target_include_directories(wxl-engine INTERFACE
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/engine/include>
+    $<INSTALL_INTERFACE:include>)
+target_link_libraries(wxl-engine INTERFACE wxl-sdk)
+
 # Declares the entry points in mod.h. A runtime includes the same headers without it, so that it
 # does not export the symbols it goes looking for.
 add_library(wxl-sdk-mod INTERFACE)
@@ -55,8 +64,10 @@ if(WXL_SDK_TESTS)
     add_subdirectory(tests)
 endif()
 
-install(TARGETS wxl-sdk wxl-sdk-mod EXPORT wxl-sdk-targets)
+install(TARGETS wxl-sdk wxl-sdk-mod wxl-engine EXPORT wxl-sdk-targets)
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY engine/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES engine/NOTICE.md DESTINATION ${CMAKE_INSTALL_DATADIR}/wxl-sdk RENAME NOTICE-engine.md)
 install(DIRECTORY deps/unordered_dense/include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(FILES deps/unordered_dense/LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/wxl-sdk RENAME LICENSE-unordered_dense)
 install(EXPORT wxl-sdk-targets

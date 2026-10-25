@@ -97,6 +97,7 @@
 #include "wxl/services/profile.h"
 #include "wxl/services/action.h"
 #include "wxl/services/gx.h"
+#include "wxl/services/engine.h"
 #include "wxl/services/m2.h"
 #include "wxl/services/m2file.h"
 #include "wxl/objects/object.hpp"

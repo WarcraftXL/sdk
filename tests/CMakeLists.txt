@@ -1,7 +1,7 @@
 # The conformance checks. A runtime passes them by building contract.cpp against its own host in
 # place of fake_host.hpp.
 add_executable(wxl-contract contract.cpp)
-target_link_libraries(wxl-contract PRIVATE wxl::sdk)
+target_link_libraries(wxl-contract PRIVATE wxl::sdk wxl::engine)
 target_include_directories(wxl-contract PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} ${CMAKE_CURRENT_SOURCE_DIR}/../runtime/include)
 # C++20, as wxl_add_mod builds a mod: wxl::Log's formatting is std::format.
 set_target_properties(wxl-contract PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
@@ -25,6 +25,20 @@ else()
 endif()
 
 add_test(NAME reflect COMMAND wxl-reflect)
+
+# The engine headers on this architecture: every layout's static_asserts, every layout hash
+# against the xxHash library (deps/xxhash, BSD-2-Clause, its own license file), and the table the
+# runtimes answer wxl.engine from against the headers.
+add_executable(wxl-engine-tests engine.cpp)
+target_link_libraries(wxl-engine-tests PRIVATE wxl::engine)
+target_include_directories(wxl-engine-tests SYSTEM PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/../deps/xxhash)
+set_target_properties(wxl-engine-tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+if(MSVC)
+    target_compile_options(wxl-engine-tests PRIVATE /W4 /permissive-)
+else()
+    target_compile_options(wxl-engine-tests PRIVATE -Wall -Wextra)
+endif()
+add_test(NAME engine COMMAND wxl-engine-tests)
 
 # The shared runtime scaffolding, against a binding backed by a table instead of a client.
 add_executable(wxl-runtime-tests runtime.cpp)

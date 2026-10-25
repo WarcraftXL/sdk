@@ -57,10 +57,11 @@ namespace
                 return WXL_OK;
             }
 
-            // A point of one runtime only: the recompiled client has it, the stock one does not.
-            const std::string absent = wxl::points::CM2Shared_FinishLoading::Absent();
-            wxl::Log(WXL_LOG_INFO, kTag, absent.empty() ? std::string("CM2Shared::FinishLoading is a point here")
-                                                        : "CM2Shared::FinishLoading is not a point here: " + absent);
+            // A point the stock client inlined: its runtime makes it a function again, and says why
+            // when it cannot (a runtime older than abi 0.1.21 does not list it).
+            const std::string absent = wxl::points::M2Init_uint8_t_uint32_t_M2Data::Absent();
+            wxl::Log(WXL_LOG_INFO, kTag, absent.empty() ? std::string("M2Init, a model file's check, is a point here")
+                                                        : "M2Init is not a point here: " + absent);
             return WXL_OK;
         }
 

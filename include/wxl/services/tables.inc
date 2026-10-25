@@ -18,3 +18,4 @@
 #include "wxl/services/m2file.def"
 #include "wxl/services/m2.def"
 #include "wxl/services/gx.def"
+#include "wxl/services/engine.def"

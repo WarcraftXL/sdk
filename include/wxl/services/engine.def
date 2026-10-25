@@ -1,0 +1,15 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.engine as data: one row per member of wxl_engine_api, in member order. The shapes and their
+// columns are described in wxl/services/rows.hpp.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including engine.def"
+#endif
+
+WXL_API_SERVICE(engine, WXL_ENGINE_SERVICE, WXL_ENGINE_SERVICE_VERSION, (0, 1, 21), open,
+                "The client's own structures as this runtime lays them out.")
+
+WXL_API(engine, layout, Layout, out<u64>, (cstr name), generated, generated,
+        "The layout hash of an engine type (sdk/engine) on this runtime, by the fork's name of it.")

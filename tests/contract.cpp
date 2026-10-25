@@ -18,6 +18,7 @@
 #include "fake_host.hpp"
 #include "fake_services.hpp"
 #include "wxl/services.hpp"
+#include "wxl/engine/check.hpp"
 
 namespace
 {
@@ -1039,6 +1040,7 @@ int main()
         host.Table()->publish_service(WXL_M2_SERVICE, WXL_M2_SERVICE_VERSION, wxltest::FakeModels::Table());
         host.Table()->publish_service(WXL_M2FILE_SERVICE, WXL_M2FILE_SERVICE_VERSION, wxltest::FakeModels::FileTable());
         host.Table()->publish_service(WXL_GX_SERVICE, WXL_GX_SERVICE_VERSION, wxltest::FakeModels::GxTable());
+        host.Table()->publish_service(WXL_ENGINE_SERVICE, WXL_ENGINE_SERVICE_VERSION, wxltest::FakeEngine::Table());
     }
 
     Section("reads that can fail");
@@ -1364,6 +1366,29 @@ int main()
         Check(wxl::GxService::D3d9Device() == FakeModels::Device(), "D3d9Device answers the device");
         wxl::GxService::InvalidateState();
         Check(FakeModels::Invalidated() == invalidated + 1, "InvalidateState reaches the runtime");
+    }
+
+    Section("wxl.engine, and the layout check of the engine headers");
+    {
+        using wxltest::FakeEngine;
+        using wxltest::EngineShared;
+        using wxltest::EngineData;
+        using wxltest::EngineAbsent;
+        FakeEngine::hash      = EngineShared::kLayoutHash;
+        FakeEngine::wrongHash = EngineData::kLayoutHash + 1;
+        Check(wxl::EngineService::Layout("CM2Shared") && *wxl::EngineService::Layout("CM2Shared") == EngineShared::kLayoutHash,
+              "Layout answers a type's hash");
+        Check(!wxl::EngineService::Layout("CNoSuchType") &&
+                  wxl::EngineService::Layout("CNoSuchType").Error() == WXL_E_NOT_FOUND,
+              "and not found for a type it does not describe");
+        Check(wxl::engine::LayoutMismatch<EngineShared>().empty(), "a type laid out alike: no mismatch");
+        const std::string differs = wxl::engine::LayoutMismatch<EngineShared, EngineData>();
+        Check(differs.find("M2Data") != std::string::npos && differs.find("CM2Shared") == std::string::npos &&
+                  differs.find("rebuild it") != std::string::npos,
+              "a type laid out otherwise is named, with what to do");
+        const std::string absent = wxl::engine::LayoutMismatch<EngineAbsent>();
+        Check(absent.find("CNoSuchType (this runtime does not describe it)") != std::string::npos,
+              "a type the runtime does not describe is named");
     }
 
     Section("wxl.action, and the objects' own actions");
