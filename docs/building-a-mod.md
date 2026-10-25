@@ -1332,7 +1332,7 @@ What to know before writing your own:
   client has no address for them. Some are points all the same, **de-inlined**: the runtime
   recompiles the function they were copied into from the client's source, in which they are calls
   again, and runs that body in place of the stock one while the point has handlers (below).
-  `include/wxl/deinlined.def` lists them, each with the function it lives in. A point the runtime
+  `include/wxl/deinlined.def` lists them, each with the functions it lives in. A point the runtime
   cannot reach at all is listed with why: `Here()` tells whether this runtime has a point and
   `Absent()` why not; attaching where it is absent attaches nothing and logs why.
 - **Overloads.** A function the client has several of under one name is named with its parameter
@@ -1448,10 +1448,22 @@ the log says so once. On the recompiled client the function already is source: c
 client, or attach to the point there as usual.
 
 The runtime does the same for the points the stock client inlined. `M2Init(uint8_t*,uint32_t,
-M2Data&)`, which checks a model file's header and finds its arrays, is copied into
-`CM2Shared::FinishLoading` in Wow.exe; the runtime carries FinishLoading recompiled by this tool,
-in which M2Init is a call, and puts it in place of the stock one while M2Init has handlers. A mod
-that teaches the stock client another model version attaches a Replace there:
+M2Data&)`, which checks a model file's header and finds its arrays, is copied in Wow.exe into
+`CM2Shared::FinishLoading` and into `CM2Shared::FinishLoadingLowPrioritySequence`; the runtime
+carries both recompiled by this tool, in which M2Init is a call, and puts them in place of the
+stock ones while M2Init has handlers. So M2Init fires from the same two places on both clients:
+
+- **from FinishLoading**, once per model, when its file has just been read: the header is checked
+  and every array of the file is found (relocated). Your handler sees the file as it was read.
+- **from FinishLoadingLowPrioritySequence**, once for each sequence the model left for later (an
+  animation kept in a file of its own, read when it is first played): the same `base`, `size` and
+  header, but of a model already loaded, whose arrays were found the first time; this call checks
+  the header again and points that sequence's keys into the buffer read from its file. A handler
+  that only wants new models can tell the two apart with a Before and an After on
+  `CM2Shared::FinishLoading`: a call between them is the first.
+
+A mod that teaches the stock client another model version attaches a Replace there (the header it
+rewrites the first time already says 0x108 when the model's later sequences come):
 
 ```cpp
 init_ = wxl::points::M2Init_uint8_t_uint32_t_M2Data::Replace(

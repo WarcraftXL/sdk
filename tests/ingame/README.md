@@ -21,7 +21,7 @@ world with a character, wait about two minutes without touching anything, and re
 | `wxl.test-throw/` | C++ | an exception thrown by a handler or a script function costs that call only; `TestThrow()` |
 | `wxl.test-throw-ready/` | C++ | an exception thrown by `OnReady` disables the mod, and none of its code runs again |
 | `wxl.test-manifest/` | C++ | puts back the `mod.json` `wxl.test-reload` broke, which that mod cannot do once it is unloaded; `TestManifestRepair()` |
-| `wxl.test-points/` | C++ | attaches to `CM2Shared::FinishLoading` and the de-inlined `M2Init` on request and counts them, reading each model through the engine headers (phase 12) |
+| `wxl.test-points/` | C++ | attaches to `CM2Shared::FinishLoading` and the de-inlined `M2Init` on request and counts them, M2Init's by where they come from (inside FinishLoading or a sequence read later), reading each model through the engine headers (phase 12) |
 | `wxl.test-bones/` | C++ | watches the bones of character models on request, on the client's animate threads, counts the files taken and the frames handed over and reads a file's root bone through `BoneInfo` (phase 16) |
 | `wxl.test-assets/` | C++ | serves the add-on `WxlProvided` and `Interface\WxlTest\lower.wxltest` through an asset provider; one transform rewrites the add-on's Lua, another upper-cases `.wxltest` files (phase 10); plays a downloader through its `wxl.relay` service `wxl.test-assets.fetch`, and keeps the last name the client could not find (phase 13) |
 | `steps.txt` | text | the plan the probe shows with `/mark`: the few steps a person still plays |
@@ -60,11 +60,15 @@ seconds, then the selftest stops listening (the event comes thousands of times a
 both clients, a FAIL when none came or the runtime does not raise it. With `model-swap` in
 `Mods/`, the murloc is drawn as a gnoll.
 Phase 12 checks the model loader's points (abi 0.1.22): the C++ mod `wxl.test-points` attaches to
-`CM2Shared::FinishLoading` and to `M2Init(uint8_t*,uint32_t,M2Data&)` -- inlined into FinishLoading
-in the stock client, which its runtime then runs recompiled with M2Init a call of its own -- and
-four boss models are made, which the starting zones do not show. Both handlers must fire, read the
-model through the engine headers (its file name, version 264) and the models must still parse
-(`ModelParsed`). Without `wxl.test-points` in `Mods/` the phase is a FAIL.
+`CM2Shared::FinishLoading` and to `M2Init(uint8_t*,uint32_t,M2Data&)` -- inlined in the stock client
+into FinishLoading and into `CM2Shared::FinishLoadingLowPrioritySequence`, both of which its runtime
+then runs recompiled with M2Init a call of its own -- and four boss models are made, which the
+starting zones do not show. Both handlers must fire, read the model through the engine headers (its
+file name, version 264) and the models must still parse (`ModelParsed`). M2Init fires from both
+parents on both clients: once inside each FinishLoading (the count must equal FinishLoading's) and
+once for each sequence read later from its own file, which must equal the `ModelSequenceLoad`
+events of the same moments (a NOTE when no sequence was read later meanwhile). Without
+`wxl.test-points` in `Mods/` the phase is a FAIL.
 Phase 13 checks the bricks a mod fetching assets on demand is built from (abi 0.1.23): a texture
 nobody has raises `FileMissing` (a mod's own `wxl.storage` lookup does not); bytes the selftest
 serves at 0 under a path of its own (`Interface\WxlSelfTest\FrameXML.toc`) live beside the

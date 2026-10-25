@@ -21,9 +21,10 @@
 --      murloc on the player's head and takes it off again, and ModelBatchDrawn counts the batches
 --      drawn meanwhile, for two seconds;
 --  12. the model loader's points: wxl.test-points attaches to CM2Shared::FinishLoading and to
---      M2Init (inlined in the stock client, de-inlined by its runtime), models the starting zones
---      rarely show are asked for, and both handlers must fire and read the models through the
---      engine headers while the models still parse;
+--      M2Init (inlined in the stock client into FinishLoading and FinishLoadingLowPrioritySequence,
+--      de-inlined by its runtime from both), models the starting zones rarely show are asked for,
+--      and both handlers must fire, M2Init once in each FinishLoading and once per sequence read
+--      later, and read the models through the engine headers while the models still parse;
 --  13. the asset bricks: FileMissing for a texture nobody has, a file served under a path of its
 --      own, an override, content hashes (served bytes, an archive's file, asynchronously), textures
 --      and the player's model read again, a service of its own through wxl.relay, then
@@ -1092,7 +1093,7 @@ end)
 -- Models the starting zones rarely show, so that at least one is read while the points are armed.
 local POINT_MODELS = { "Creature\\Ragnaros\\Ragnaros.m2", "Creature\\Illidan\\Illidan.m2",
                        "Creature\\KelThuzad\\KelThuzad.m2", "Creature\\Arthaslichking\\ArthasLichKing.m2" }
-local pointModels, parsedBefore = {}, 0
+local pointModels, parsedBefore, sequencesBefore = {}, 0, 0
 
 step(function()
     print("phase 12: the model loader's points, M2Init de-inlined on the stock client")
@@ -1106,7 +1107,7 @@ step(function()
     result("CM2Shared::FinishLoading and M2Init(uint8_t*,uint32_t,M2Data&) attached", ok and armed == true,
            ok and tostring(why) or tostring(armed))
     if not (ok and armed) then return end
-    parsedBefore = modelCount.ModelParsed
+    parsedBefore, sequencesBefore = modelCount.ModelParsed, modelCount.ModelSequenceLoad
     local body = wxl.m2.ObjectModel(wxl.object.LocalPlayer())
     for _, path in ipairs(POINT_MODELS) do
         local model = body and wxl.m2.CreateModel(body, path)
@@ -1118,15 +1119,28 @@ step(function()
 end)
 
 step(function()
-    local asked, counts = ask("local f, i, n, v, s = TestPointsCounts() " ..
-                              "return string.format('%d|%d|%s|%d|%d', f or 0, i or 0, n or '', v or 0, s or 0)")
+    local asked, counts = ask("local f, i, n, v, s, a, b = TestPointsCounts() " ..
+                              "return string.format('%d|%d|%s|%d|%d|%d|%d', f or 0, i or 0, n or '', v or 0, " ..
+                              "s or 0, a or 0, b or 0)")
     if not (asked and type(counts) == "string") then return end
-    local f, i, n, v, z = counts:match("^(%d+)|(%d+)|(.-)|(%d+)|(%d+)$")
+    local f, i, n, v, z, a, b = counts:match("^(%d+)|(%d+)|(.-)|(%d+)|(%d+)|(%d+)|(%d+)$")
     local finishes, inits, name, version, size = tonumber(f), tonumber(i), n, tonumber(v), tonumber(z)
+    local fromFinish, fromSequences = tonumber(a) or 0, tonumber(b) or 0
+    local sequences = modelCount.ModelSequenceLoad - sequencesBefore
     result("a handler on CM2Shared::FinishLoading fired (" .. tostring(finishes) .. " model(s))",
            (finishes or 0) > 0, "no model finished loading in three seconds")
-    result("a handler on M2Init fired (" .. tostring(inits) .. "), de-inlined on the stock client",
-           (inits or 0) > 0 and inits <= finishes, "FinishLoading " .. tostring(finishes))
+    -- M2Init has two parents on both clients: every FinishLoading checks its model's header once,
+    -- and every sequence read later (FinishLoadingLowPrioritySequence) once more.
+    result("a handler on M2Init fired (" .. tostring(inits) .. "): " .. fromFinish .. " in FinishLoading, " ..
+           fromSequences .. " for sequences read later, de-inlined from both on the stock client",
+           (inits or 0) > 0 and inits >= finishes and fromFinish == finishes,
+           "FinishLoading " .. tostring(finishes))
+    if sequences > 0 then
+        result("M2Init fired once per sequence read later (ModelSequenceLoad " .. sequences .. ")",
+               fromSequences == sequences, fromSequences .. " outside FinishLoading")
+    else
+        note("M2Init for sequences read later", false, "no sequence was read later while the points were attached")
+    end
     result("the handlers read the model through the engine headers: " .. tostring(name),
            version == 264 and (size or 0) > 0 and type(name) == "string" and name ~= "",
            string.format("version %s, %s bytes", tostring(version), tostring(size)))

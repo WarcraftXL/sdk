@@ -271,7 +271,7 @@ include/wxl/
                    reads the tables, for wxl.lua's modules and the facades' plain methods
     points.def     the engine points of wxl.point, generated from core's points.txt
     deinlined.def  the points the stock client inlined and its runtime makes real again, each
-                   with the function it was inlined into
+                   with the functions it was inlined into (a row for each)
 engine/            the engine headers (wxl::engine::CM2Shared, CGUnit_C, M2Data...): the client's
                    structures laid out for x86 and x64, each with its layout hash, generated from
                    the client fork; check.hpp, the load-time check of those hashes; under their
