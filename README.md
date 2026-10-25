@@ -5,7 +5,7 @@
 **The contract a WarcraftXL mod is written against**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![ABI](https://img.shields.io/badge/ABI-0.1.20-blue.svg)](include/wxl/abi.h)
+[![ABI](https://img.shields.io/badge/ABI-0.1.21-blue.svg)](include/wxl/abi.h)
 [![C++](https://img.shields.io/badge/C%2B%2B-17%20and%20up-blue.svg)](#-getting-started)
 [![Header only](https://img.shields.io/badge/header--only-yes-lightgrey.svg)](include/wxl)
 
@@ -210,10 +210,11 @@ Beyond events, a runtime publishes services, and a mod asks for the ones it need
 | `wxl.data` | the client's databases, served from a mod's files | yes |
 | `wxl.net` | messages to and from the server | yes; no runtime publishes it yet |
 | `wxl.ui` | frames and the interface | yes; no runtime publishes it yet |
-| `wxl.point` | functions of the engine: run code before, instead of or after them | yes; a few exist on one runtime, and say so |
+| `wxl.point` | functions of the engine: run code before, instead of or after them, those the stock client inlined included (`wxl/deinlined.def`) | yes; one that exists on one runtime only says so |
 | `wxl.m2file` | a parsed model file's arrays, read and pointed the runtime's way, for a mod that teaches the client a model format | yes |
 | `wxl.m2` | the models objects draw with, and models a mod makes and hangs on them | yes |
 | `wxl.gx` | the client's D3D9 device, to draw a model batch again (`ModelBatchDrawn`) | yes |
+| `wxl.engine` | the layout hash of each engine structure of `engine/`, as the runtime lays it out | yes |
 | `wxl.hook` | hook points a runtime names and keeps working | yes |
 | `wxl.hook.raw` | a detour at a raw address | no: runtimes that load into a shipped binary |
 | `wxl.patch` | bytes written into the image | no: runtimes that load into a shipped binary |
@@ -221,6 +222,7 @@ Beyond events, a runtime publishes services, and a mod asks for the ones it need
 Each service has a typed facade with its name and version sealed in -- `wxl::ObjectService`,
 `wxl::ScriptService`, `wxl::StorageService`, `wxl::DataService`, `wxl::NetService`,
 `wxl::UiService`, `wxl::PointService`, `wxl::M2FileService`, `wxl::M2Service`, `wxl::GxService`,
+`wxl::EngineService`,
 `wxl::HookService`, `wxl::RawHookService`, `wxl::PatchService` -- taking and
 returning C++ types. `wxl::Service<T>` is still there for the raw table. Lua mods reach the same
 services as `wxl.storage`, `wxl.data`, `wxl.script`, `wxl.hook`, `wxl.patch` and `wxl.m2`, built from the
@@ -261,6 +263,13 @@ include/wxl/
     services/      one C header per service, its table (<service>.def: every member with the
                    kinds it takes and answers) and one .hpp with its typed facade; rows.hpp
                    reads the tables, for wxl.lua's modules and the facades' plain methods
+    points.def     the engine points of wxl.point, generated from core's points.txt
+    deinlined.def  the points the stock client inlined and its runtime makes real again, each
+                   with the function it was inlined into
+engine/            the engine headers (wxl::engine::CM2Shared, CGUnit_C, M2Data...): the client's
+                   structures laid out for x86 and x64, each with its layout hash, generated from
+                   the client fork; check.hpp, the load-time check of those hashes; under their
+                   own NOTICE.md, not this license
 host/              the mod host: discovery, manifests, load order, registry, event bus
 runtime/           service scaffolding every runtime shares: handles, wxl.object over a table of
                    reads (object_reads.def) each runtime implements
@@ -284,12 +293,13 @@ tests/ingame/      the same against a real client: test mods and wxl.selftest, w
                    from the game and logs PASS or FAIL per check
 ```
 
-A mod links `wxl::sdk` and nothing else. A runtime links `wxl::host` and `wxl::runtime` too, and
+A mod links `wxl::sdk` and nothing else; one that reads the engine's structures links
+`wxl::engine` too. A runtime links `wxl::host` and `wxl::runtime` too, and
 supplies only the bindings that reach its own client.
 
 ## 🔢 Versioning
 
-`major.minor.feature`, in [`abi.h`](include/wxl/abi.h): today `0.1.20`.
+`major.minor.feature`, in [`abi.h`](include/wxl/abi.h): today `0.1.21`.
 
 - **Major** changes when an existing field, signature or id changes meaning. A runtime refuses a
   mod built against a different major.
@@ -340,6 +350,11 @@ MIT. See [LICENSE](LICENSE).
 
 These headers compile into whoever includes them, so they are deliberately permissive: a mod built
 against this SDK carries no obligation from it.
+
+The engine headers under `engine/include/wxl/engine/` are the exception: they describe the 3.3.5a
+client's own structures, generated from its decompilation, and no license is granted over them.
+See [engine/NOTICE.md](engine/NOTICE.md). `deps/` holds unordered_dense (MIT) and xxHash (BSD-2,
+used by the tests to check the layout hashes), each with its license file.
 
 <div align="center">
 

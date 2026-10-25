@@ -1145,10 +1145,17 @@ What to know before writing your own:
 - **Threads.** The points of `thread main` run on the client's main thread, as events do. A point
   of `thread any` may run on several threads at once: its handler must hold no state (a lambda
   without captures, or a function), which the facade checks when it compiles.
-- **One runtime only.** A function the 2008 compiler inlined everywhere has no address in the stock
-  client, so it is a point of the recompiled client alone (`CM2Shared::FinishLoading`, the end of a
-  model's load). `Here()` tells whether this runtime has a point and `Absent()` why not; attaching
-  where it is absent attaches nothing and logs why.
+- **Inlined functions.** The 2008 compiler copied some functions into their callers, so the stock
+  client has no address for them. Some are points all the same, **de-inlined**: the runtime
+  recompiles the function they were copied into from the client's source, in which they are calls
+  again, and runs that body in place of the stock one while the point has handlers (below).
+  `include/wxl/deinlined.def` lists them, each with the function it lives in. A point the runtime
+  cannot reach at all is listed with why: `Here()` tells whether this runtime has a point and
+  `Absent()` why not; attaching where it is absent attaches nothing and logs why.
+- **Overloads.** A function the client has several of under one name is named with its parameter
+  types, as the client's source spells them: `M2Init(uint8_t*,uint32_t,M2Data&)`, whose class is
+  `wxl::points::M2Init_uint8_t_uint32_t_M2Data`. A parameter taken by reference is handed to your
+  handler as its address, a `void*`, like a pointer.
 - **Signatures.** Each attach carries the point's layout hash from your headers. If a later SDK
   changes a point's signature, a mod built against the old one is refused with a line asking to
   rebuild it, instead of being called with the wrong arguments. The points of `stable` never change
@@ -1161,6 +1168,119 @@ For a point your mod only knows by name at run time, `wxl::PointService` lists t
 (`Points()`), finds one (`Find(name)`), and attaches a handler of the generic shape, which is
 handed the call: `call->args[i]` is the address of argument `i` and `call->result` the address of
 the answer.
+
+### Reading the engine: the engine headers
+
+A point hands your handler `void*`s: the client's own objects. The **engine headers** say what is
+in them. They are generated from the client's source for both clients and live in the SDK's
+`engine/` folder; link `wxl::engine` beside `wxl::sdk` and include the group you need:
+
+| Header | Types |
+|---|---|
+| `wxl/engine/math.hpp` | `C2Vector`, `C3Vector`, `C4Vector`, `C4Quaternion`, `CAaBox`, `CAaSphere`, `C44Matrix`, `CImVector`, `CiRange`, `C2iVector`, `C4Plane`, `CRect`, `CiRect` |
+| `wxl/engine/m2.hpp` | a model file once parsed (`M2Data` and its records: `M2Sequence`, `M2CompBone`, `M2Vertex`, `M2Texture`, `M2Material`, `M2Attachment`, `M2Particle`...), the skin (`M2SkinProfile`, `M2SkinSection`, `M2Batch`), `CM2Shared` (a model as every instance shares it), `CM2Model` (an instance), `CM2SceneRender` |
+| `wxl/engine/gx.hpp` | the graphics device `CGxDevice`, its `CGxCaps` and `CGxFormat`, `CGxBuf`, `CGxPool`, `CGxTex`, `CGxMatrixStack` |
+| `wxl/engine/texture.hpp` | `CTexture` |
+| `wxl/engine/object.hpp` | `WOWGUID`, `CMovement_C`, `CGObject_C`, `CGUnit_C`, `CGPlayer_C` and their descriptor blocks `CGObjectData`, `CGUnitData`, `CGPlayerData` |
+| `wxl/engine/engine.hpp` | all of them |
+
+Each is a struct of `wxl::engine` named as the client names it, its members where the client has
+them on the client your mod is built for: one layout for the stock client (x86), one for the
+recompiled client (x64), each held to its offsets by `static_assert`s. A member whose type the
+headers do not describe is bytes of its size, its type in a comment; a pointer to such a type is a
+`void*`. A model file's arrays (`M2Array<T>`) answer `Data()` and `[]` as each client holds them,
+which differ once the client has parsed the file.
+
+```cpp
+#include "wxl/engine/m2.hpp"
+
+finish_ = wxl::points::CM2Shared_FinishLoading::Before([](void*& self) {
+    const auto* shared = static_cast<const wxl::engine::CM2Shared*>(self);
+    wxl::Log(WXL_LOG_INFO, "mymod", "{} ({} bytes)", shared->m_fileName, shared->m_fileSize);
+});
+```
+
+**The layout check.** A client built from a later source may lay a type out otherwise, and a mod
+built against the old headers would read the wrong bytes. Every type carries its **layout hash**
+(`kLayoutHash`, XXH64 of its members' offsets, kinds and sizes, an embedded type by its own hash),
+and the runtime answers its own through `wxl::EngineService::Layout(name)` (abi `0.1.21`). Check
+the types your mod reads once, in `OnLoad`:
+
+```cpp
+wxl_result OnLoad() override
+{
+    if (!wxl::engine::RequireLayouts<wxl::engine::CM2Shared, wxl::engine::M2Data>()) return WXL_OK;
+    ...
+}
+```
+
+`RequireLayouts` (in `wxl/engine/check.hpp`) stops your mod with a line naming each type that
+differs and asking to rebuild against this runtime's SDK; `LayoutMismatch<...>()` answers that line
+without stopping it. The stock client never changes, so its hashes never do; the recompiled
+client's build fails when its own types drift from the headers, before a mod can see the drift.
+
+The engine headers are not under the SDK's license: they describe the client's own structures
+(`engine/NOTICE.md`).
+
+### Taking a function apart: extraction
+
+To change part of an engine function on the stock client -- one test, one call inside it -- you
+need the function as source. `core/tools/extract/extract.py` writes it out from the client's
+source as a starting template you compile for x86:
+
+```sh
+python core/tools/extract/extract.py CM2Shared::FinishLoading --client <client checkout> \
+    --binary <Wow.exe 12340> --namespace mine --out FinishLoading.cpp
+```
+
+It takes a qualified name, an overload with its types, or an x86 address (`0x0083CF00`), and
+writes a `.cpp` against the engine headers in which:
+
+- every function the original calls is called in Wow.exe at its own address, with its own
+  convention (namespace `stock`); a member function becomes `__fastcall (Class* self, void* edx,
+  ...)`, which is how a mod writes the client's `__thiscall`;
+- every global it reads is Wow.exe's own, by reference;
+- every function the 2008 compiler had copied into it is extracted too, as a function of its own;
+- memory comes from Storm, as in the client: its allocator is called like any other function;
+- what it uses that the engine headers lack is listed at the top of the file.
+
+`--binary` reads the stock Wow.exe to tell apart the instantiations of one template that the
+client's source tags with a list of addresses: each call takes the next of its candidates in the
+order Wow.exe's own function makes them.
+
+Change what you need, build it as part of your mod for `win-x86`, and put it in place of the stock
+function through a point:
+
+```cpp
+#include "FinishLoading.cpp"
+
+finish_ = wxl::points::CM2Shared_FinishLoading::Replace([](auto original, void* self) {
+    // the recompiled FinishLoading, changed, runs instead of Wow.exe's
+    return mine::CM2Shared_FinishLoading(static_cast<wxl::engine::CM2Shared*>(self), nullptr);
+});
+```
+
+A Replace that never calls `original` takes the call for good; it is your mod's from then on, and
+the log says so once. On the recompiled client the function already is source: change it in the
+client, or attach to the point there as usual.
+
+The runtime does the same for the points the stock client inlined. `M2Init(uint8_t*,uint32_t,
+M2Data&)`, which checks a model file's header and finds its arrays, is copied into
+`CM2Shared::FinishLoading` in Wow.exe; the runtime carries FinishLoading recompiled by this tool,
+in which M2Init is a call, and puts it in place of the stock one while M2Init has handlers. A mod
+that teaches the stock client another model version attaches a Replace there:
+
+```cpp
+init_ = wxl::points::M2Init_uint8_t_uint32_t_M2Data::Replace(
+    [](auto original, void* base, uint32_t size, void* data) {
+        auto* header = static_cast<wxl::engine::M2Data*>(data);
+        if (header->m_version == 0x110) Downgrade(*header); // a file of a later client, made 0x108
+        return original(base, size, data);
+    });
+```
+
+The runtime's recompiled body is checked against Wow.exe's own code: run on the same model files,
+both answer the same and leave the same bytes (core's `stock` test).
 
 ### Profiling memory
 

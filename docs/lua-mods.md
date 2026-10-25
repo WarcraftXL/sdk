@@ -1592,6 +1592,7 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.m2.ObjectModel(object)`, `.RacePrefix(race)`, `.AttachmentPoint(model, point)` | the model an object draws with; a race's prefix in file names; a point of a model as `{ x, y, z }` (abi `0.1.20`; the module needs `wxl.m2` in `mod.json`) |
 | `wxl.m2.CreateModel(model, path)` | a `Model` of your mod's in that model's scene: `:Attach`, `:AttachToBone`, `:Detach`, `:Parent`, `:SetGeosets`, `:ReplaceTexture`, `:Release` (see [Models](#models-wxlm2)) |
 | `wxl.point.Points()`, `.Find(name)` | the engine functions a C++ mod can run code before, instead of or after (name, signature, thread, flags, and `absent`: why this runtime lacks one); the id of one this runtime has (abi `0.1.16`). Attaching from Lua is to come; see "Changing the engine: points" in [Building a mod](building-a-mod.md) |
+| `wxl.engine.Layout(name)` | the layout hash of an engine structure (`"CM2Shared"`) as this runtime lays it out, for a tool comparing it with the SDK's engine headers (abi `0.1.21`); `nil, "not_found"` for a type it does not describe |
 
 ### Object methods
 
