@@ -3,7 +3,7 @@
   "id": "wxl.example",
   "name": "Example",
   "version": "1.0.0",
-  "abi": "0.1.24",
+  "abi": "0.1.25",
   "description": "The shape of a mod: a lifecycle, two scripts, one optional service.",
   "binaries": {
     "win-x64": "bin/x64/example.dll",

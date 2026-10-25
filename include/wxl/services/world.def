@@ -8,7 +8,7 @@
 #error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including world.def"
 #endif
 
-WXL_API_SERVICE(world, WXL_WORLD_SERVICE, WXL_WORLD_SERVICE_VERSION, (0, 1, 23), open,
+WXL_API_SERVICE(world, WXL_WORLD_SERVICE, WXL_WORLD_SERVICE_VERSION, (0, 1, 24), open,
                 "Questions about the world's geometry. Main thread only.")
 
 WXL_API(world, trace, Trace, found<vec3>, (vec3 start, vec3 finish, opt<u32> flags), generated, by_hand,

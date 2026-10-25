@@ -96,7 +96,7 @@ typedef struct wxl_action_api
      * @param facing  radians, the client's: 0 is north (+x), growing towards the west (+y)
      *
      * WXL_E_FAILED when the client will not turn the player now: dead, stunned, sitting, on a
-     * flight path, or following a script's spline. Abi 0.1.23.
+     * flight path, or following a script's spline. Abi 0.1.24.
      */
     wxl_result(WXL_CALL* face)(double facing);
 } wxl_action_api;

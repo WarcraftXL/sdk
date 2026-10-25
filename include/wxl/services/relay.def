@@ -8,7 +8,7 @@
 #error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including relay.def"
 #endif
 
-WXL_API_SERVICE(relay, WXL_RELAY_SERVICE, WXL_RELAY_SERVICE_VERSION, (0, 1, 22), open,
+WXL_API_SERVICE(relay, WXL_RELAY_SERVICE, WXL_RELAY_SERVICE_VERSION, (0, 1, 23), open,
                 "Services mods publish for each other: a call now, its answer later, on the main thread.")
 
 WXL_API(relay, publish, Publish, result, (str name, relay_endpoint endpoint), shim, by_hand,

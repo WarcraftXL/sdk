@@ -478,7 +478,7 @@ The events that can be answered, as the SDK stands:
 | Event | Answers through | What answering does |
 |---|---|---|
 | `WorldScript:OnInput` | `handled` | the client never sees the input |
-| `WorldScript:OnMouseWheel` | `handled` | the game never sees the turn of the wheel (abi `0.1.23`) |
+| `WorldScript:OnMouseWheel` | `handled` | the game never sees the turn of the wheel (abi `0.1.24`) |
 | `WorldScript:OnSoundPlay` | `suppressed` | the sound does not play |
 | `AssetScript:OnFileOpen` | `redirect` | the client opens the path you return instead, for an open on the main thread; on any thread, use `wxl.storage.Redirect` |
 | `NetScript:OnMessageReceived` | `suppressed` | the client never sees the server's message |
@@ -656,7 +656,7 @@ item:Use()             -- uses an item, on what it picks itself; item:Use(unit) 
 `wxl.action` has the same and what needs no object: `wxl.action.ClearTarget()`,
 `wxl.action.StopCasting()`, `wxl.action.CastSpell(id)` at your current target, and
 `wxl.action.MoveTo({ x = ..., y = ..., z = ... })`, which walks your player there as a
-click-to-move click does, and `wxl.action.Face(radians)` (abi `0.1.23`), which turns your player
+click-to-move click does, and `wxl.action.Face(radians)` (abi `0.1.24`), which turns your player
 the way steering with the mouse does and tells the server: 0 faces north, the angle grows towards
 the west. An action runs on the thread that runs the game, where your handlers of world events
 run.
@@ -1138,7 +1138,7 @@ moment.
 Put together, a fetch on demand reads: `OnFileMissing` (or a request from another mod) says what is
 needed; the file is fetched and served under the path you chose; `HashFile` compares it with the client's when
 both exist; `OverrideFile` puts it in place if it should replace the client's; `ReloadAsset` shows
-it. All of this came with abi `0.1.22`.
+it. All of this came with abi `0.1.23`.
 
 ### Services between mods: `wxl.relay`
 
@@ -1168,7 +1168,7 @@ it is given. Values are numbers, strings, booleans and `nil`. A C++ mod publishe
 services. Either side may go with requests in flight: a service that goes fails what it had not
 answered (`false, "not_found"`), a caller that goes has its requests cancelled -- the service's
 optional `cancelled(request)` function is told -- and nothing is handed to a mod that went.
-`wxl.relay.Cancel(request)` takes one back by hand. The module came with abi `0.1.22`.
+`wxl.relay.Cancel(request)` takes one back by hand. The module came with abi `0.1.23`.
 
 ### Models: `wxl.m2`
 
@@ -1361,7 +1361,7 @@ checks bytes without writing, `Find(bytes, after)` searches the program's consta
 
 ### The camera, the mouse and the world: `wxl.camera`, `wxl.input`, `wxl.world`
 
-Three modules (abi `0.1.23`) let a mod take the camera and steer it with the mouse. The client
+Three modules (abi `0.1.24`) let a mod take the camera and steer it with the mouse. The client
 places its world camera once a frame, and `RenderScript`'s `OnCameraUpdate` comes right after,
 before anything is drawn: a view set there is the one the frame is drawn from.
 
@@ -1401,7 +1401,7 @@ keeps from the game. The pointer is let go while the game's window is not in fro
 and its hold on the pointer go when it reloads, is disabled or unloads. Whether a unit stands
 indoors is `unit:IsOutdoors()`. Everything here runs on the game's thread, where your handlers run.
 
-`wxl.input.BlockMouseLook(true)` (abi `0.1.24`) keeps the game out of its own mouse look: a held
+`wxl.input.BlockMouseLook(true)` (abi `0.1.25`) keeps the game out of its own mouse look: a held
 mouse button turns no camera and no character, hides no pointer, and a click let go within 0.8 s
 still selects (left) or talks, loots, attacks (right). `wxl.pose.Head(unit, yaw, pitch, smoothing)`
 turns a unit's head from where its body faces (radians: yaw positive to its left, pitch up;
@@ -1742,10 +1742,10 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.storage.Unredirect(name)` | `true`: the mod's redirect of `name` is taken back; `nil, "not_found"` for one it did not make (abi `0.1.15`) |
 | `wxl.storage.Serve(name, data, priority)` | `true`: the client reads `data` as the file `name`, on every thread, until the mod takes it back or goes; the higher priority of two mods' wins, then the later (abi `0.1.19`) |
 | `wxl.storage.Unserve(name)` | `true`: what the mod serves under `name` is taken back; `nil, "not_found"` for a name it does not serve (abi `0.1.19`) |
-| `wxl.storage.HashFile(name, fresh)`, `.HashFileAsync(name, fn, fresh)` | `{ md5, size, layer, source }` of a file as the client would read it; the same later, to `fn` (abi `0.1.22`) |
+| `wxl.storage.HashFile(name, fresh)`, `.HashFileAsync(name, fn, fresh)` | `{ md5, size, layer, source }` of a file as the client would read it; the same later, to `fn` (abi `0.1.23`) |
 | `wxl.storage.OverrideFile(name, other)`, `.RestoreFile(name)` | `true`: `other` replaces the client's `name` for opens and existence checks, on every thread, until restored or the mod goes |
 | `wxl.storage.ReloadAsset(name)` | `{ textures, models, objects, busy }`: a texture or a model the client holds, read again |
-| `wxl.relay.Publish(name, fn, cancelled)`, `.Unpublish(name)`, `.Published(name)` | a service of the mod's, its requests to `fn(request, method, ...)`; taken back; whether one is published (abi `0.1.22`) |
+| `wxl.relay.Publish(name, fn, cancelled)`, `.Unpublish(name)`, `.Published(name)` | a service of the mod's, its requests to `fn(request, method, ...)`; taken back; whether one is published (abi `0.1.23`) |
 | `wxl.relay.Call(name, method, args, fn)` | the request's number; `fn(true, ...)` or `fn(false, reason)` at a later update |
 | `wxl.relay.Answer(request, ...)`, `.Fail(request, reason)`, `.Cancel(request)` | `true`: a request the mod's service received answered, or failed; one the mod made taken back |
 | `wxl.data.ServeTable(table, path)`, `.RestoreTable(table)` | `true`: the client reads the table from `path`, or its own again |
@@ -1770,14 +1770,14 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.m2.ObjectModel(object)`, `.RacePrefix(race)`, `.AttachmentPoint(model, point)` | the model an object draws with; a race's prefix in file names; a point of a model as `{ x, y, z }` (abi `0.1.20`; the module needs `wxl.m2` in `mod.json`) |
 | `wxl.m2.CreateModel(model, path)` | a `Model` of your mod's in that model's scene: `:Attach`, `:AttachToBone`, `:Detach`, `:Parent`, `:SetGeosets`, `:ReplaceTexture`, `:Release` (see [Models](#models-wxlm2)) |
 | `wxl.point.Points()`, `.Find(name)` | the engine functions a C++ mod can run code before, instead of or after (name, signature, thread, flags, and `absent`: why this runtime lacks one); the id of one this runtime has (abi `0.1.16`). Attaching from Lua is to come; see "Changing the engine: points" in [Building a mod](building-a-mod.md) |
-| `wxl.engine.Layout(name)` | the layout hash of an engine structure (`"CM2Shared"`) as this runtime lays it out, for a tool comparing it with the SDK's engine headers (abi `0.1.21`); `nil, "not_found"` for a type it does not describe |
-| `wxl.camera.Position()`, `.Forward()`, `.Up()`, `.Fov()`, `.Pivot()`, `.Cinematic()` | where the world camera is and looks, its field of view, the point the client's camera turns around, whether a cinematic has the view (abi `0.1.23`) |
+| `wxl.engine.Layout(name)` | the layout hash of an engine structure (`"CM2Shared"`) as this runtime lays it out, for a tool comparing it with the SDK's engine headers (abi `0.1.22`); `nil, "not_found"` for a type it does not describe |
+| `wxl.camera.Position()`, `.Forward()`, `.Up()`, `.Fov()`, `.Pivot()`, `.Cinematic()` | where the world camera is and looks, its field of view, the point the client's camera turns around, whether a cinematic has the view (abi `0.1.24`) |
 | `wxl.camera.SetView(position, forward, fov)`, `.ReleaseView()` | `true`: the camera is placed from now on, until the mod releases it or goes; see [The camera, the mouse and the world](#the-camera-the-mouse-and-the-world-wxlcamera-wxlinput-wxlworld) |
-| `wxl.input.CaptureCursor(captured)`, `.CursorCaptured()`, `.PointerOverWorld()` | `true`: the pointer held at the centre, or let go; whether some mod holds it; whether it is over the world (abi `0.1.23`) |
-| `wxl.world.Trace(start, finish, flags)` | the first point of the world's geometry between two points, or `nil` (abi `0.1.23`) |
-| `wxl.action.Face(radians)` | `true`: your player turns that way and the server is told, as mouse look does (abi `0.1.23`) |
-| `wxl.input.BlockMouseLook(blocked)`, `.MouseLookBlocked()` | `true`: the game kept out of its own mouse look, clicks still act; whether some mod keeps it out (abi `0.1.24`) |
-| `wxl.pose.Head(unit, yaw, pitch, smoothing)`, `.ReleaseHead(unit)` | `true`: a unit's head turned from where its body faces and held, or given back (abi `0.1.24`) |
+| `wxl.input.CaptureCursor(captured)`, `.CursorCaptured()`, `.PointerOverWorld()` | `true`: the pointer held at the centre, or let go; whether some mod holds it; whether it is over the world (abi `0.1.24`) |
+| `wxl.world.Trace(start, finish, flags)` | the first point of the world's geometry between two points, or `nil` (abi `0.1.24`) |
+| `wxl.action.Face(radians)` | `true`: your player turns that way and the server is told, as mouse look does (abi `0.1.24`) |
+| `wxl.input.BlockMouseLook(blocked)`, `.MouseLookBlocked()` | `true`: the game kept out of its own mouse look, clicks still act; whether some mod keeps it out (abi `0.1.25`) |
+| `wxl.pose.Head(unit, yaw, pitch, smoothing)`, `.ReleaseHead(unit)` | `true`: a unit's head turned from where its body faces and held, or given back (abi `0.1.25`) |
 
 ### Object methods
 
@@ -1878,7 +1878,7 @@ method, a container every item method. The tables are made from the runtime's ta
 | `IsSwimming()` | `boolean` | Whether it swims, as the client's IsSwimming reads it. Came with abi 0.1.18. |
 | `IsFlying()` | `boolean` | Whether it flies, as the client's IsFlying reads it. Came with abi 0.1.18. |
 | `IsFalling()` | `boolean` | Whether it is falling, as the client's IsFalling reads it. Came with abi 0.1.18. |
-| `IsOutdoors()` | `boolean` | Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused. Came with abi 0.1.23. |
+| `IsOutdoors()` | `boolean` | Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused. Came with abi 0.1.24. |
 
 **Players**
 
@@ -2009,11 +2009,11 @@ A few to start from:
 | `AssetScript` | `OnTerrainTileLoad`, `OnMapObjectGroupLoad`, `OnSkinProfileLoad`, `OnTextureDecode`, `OnShaderLoad`, `OnSoundFileLoad` | see [Serving and converting assets](#serving-and-converting-assets) | the engine read a tile, a building's group, a skin, a texture, a shader, a sound (abi `0.1.19`) |
 | `ObjectScript` | `OnAppearanceChanged` | `change`, `wearer`, `model`, `race_id`, `sex_id`, `item_slot`, `display_id`, `npc` | a character's appearance put an item on, is taking one off (`"worn"`, `"removed"`), or goes away (`"freed"`) (abi `0.1.20`) |
 | `AssetScript` | `OnModelParsed`, `OnSkinProfileParsed`, `OnModelSequenceLoad` | `path`, `file`, then the header, the skin or the sequence | the model loader's stages; see [Models](#models-wxlm2) (abi `0.1.20`) |
-| `AssetScript` | `OnFileMissing` | `path`, `kind`, `open`, `pending`, `loader` | the client looked for a file no layer has; see [Assets on demand](#assets-on-demand-missing-names-hashes-paths-of-your-own-overrides-reloads) (abi `0.1.22`) |
+| `AssetScript` | `OnFileMissing` | `path`, `kind`, `open`, `pending`, `loader` | the client looked for a file no layer has; see [Assets on demand](#assets-on-demand-missing-names-hashes-paths-of-your-own-overrides-reloads) (abi `0.1.23`) |
 | `RenderScript` | `OnModelBatchDrawn` | `model`, `root_model`, then the numbers of the draw | the device drew one batch of a model (abi `0.1.20`) |
-| `WorldScript` | `OnMouseMotion`, `OnMouseWheel` | `dx`, `dy`; `delta`, `handled` | the mouse moved, in its own counts; the wheel turned, in notches, which an `Override` keeps from the game (abi `0.1.23`) |
-| `RenderScript` | `OnCameraUpdate` | `index`, `delta` | the client placed the world camera for the frame: set a view with `wxl.camera.SetView` here (abi `0.1.23`) |
-| `RenderScript` | `OnImGuiFrame` | `index`, `delta` | a frame of the runtime's Dear ImGui is open, for a C++ mod's windows (abi `0.1.24`) |
+| `WorldScript` | `OnMouseMotion`, `OnMouseWheel` | `dx`, `dy`; `delta`, `handled` | the mouse moved, in its own counts; the wheel turned, in notches, which an `Override` keeps from the game (abi `0.1.24`) |
+| `RenderScript` | `OnCameraUpdate` | `index`, `delta` | the client placed the world camera for the frame: set a view with `wxl.camera.SetView` here (abi `0.1.24`) |
+| `RenderScript` | `OnImGuiFrame` | `index`, `delta` | a frame of the runtime's Dear ImGui is open, for a C++ mod's windows (abi `0.1.25`) |
 
 The families `PlayerScript`, `GlueScript` and `ChatScript`, and `WorldScript`'s `OnZoneChanged`,
 `OnMouseoverChanged` and `OnCVarChanged`, came with `0.1.6`: a mod that uses one asks for
@@ -2040,11 +2040,11 @@ The [gameplay events](#gameplay-events), with the families `LootScript`, `ItemSc
 `OnModelSequenceLoad`, `RenderScript`'s `OnModelBatchDrawn` and the `wxl.m2` module came with
 `0.1.20`.
 `AssetScript`'s `OnFileMissing`, `wxl.storage`'s `HashFile`, `HashFileAsync`, `OverrideFile`,
-`RestoreFile` and `ReloadAsset`, and the `wxl.relay` module came with `0.1.22`.
+`RestoreFile` and `ReloadAsset`, and the `wxl.relay` module came with `0.1.23`.
 `WorldScript`'s `OnMouseMotion` and `OnMouseWheel`, `RenderScript`'s `OnCameraUpdate`,
 the `wxl.camera`, `wxl.input` and `wxl.world` modules, `wxl.action.Face` and `IsOutdoors` came with
-`0.1.23`. `wxl.input.BlockMouseLook` and `MouseLookBlocked`, the `wxl.pose` module and
-`RenderScript`'s `OnImGuiFrame` came with `0.1.24`.
+`0.1.24`. `wxl.input.BlockMouseLook` and `MouseLookBlocked`, the `wxl.pose` module and
+`RenderScript`'s `OnImGuiFrame` came with `0.1.25`.
 
 ### Gameplay events
 

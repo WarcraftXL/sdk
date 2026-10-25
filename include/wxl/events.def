@@ -517,7 +517,7 @@ WXL_EVENT(Render, ModelBatchDrawn,  139, wxl_model_batch_args)
 
 // --- Asset, continued: names no layer has ----------------------------------------------------
 
-WXL_EVENTS_SINCE(0, 1, 22, 140)
+WXL_EVENTS_SINCE(0, 1, 23, 140)
 
 /** The client looked for a file -- to open it or to know whether it exists -- and no layer has it:
     not the disk, not an archive, not a folder of the search path, no provider, no served bytes.
@@ -528,7 +528,7 @@ WXL_EVENT(Asset, FileMissing,       140, wxl_file_missing_args)
 
 // --- The mouse and the camera ----------------------------------------------------------------
 
-WXL_EVENTS_SINCE(0, 1, 23, 141)
+WXL_EVENTS_SINCE(0, 1, 24, 141)
 
 /** The mouse moved, in the device's own counts, as Windows' raw input reports them: raised for
     every report while a mod listens, whether the pointer moves or is held by wxl.input. */
@@ -541,7 +541,7 @@ WXL_EVENT(Render, CameraUpdate,    143, wxl_frame_args)
 
 // --- The interface drawn by mods ---------------------------------------------------------------
 
-WXL_EVENTS_SINCE(0, 1, 24, 144)
+WXL_EVENTS_SINCE(0, 1, 25, 144)
 
 /** A frame of the runtime's Dear ImGui is open: the moment a mod adds its windows, through
     wxl.imgui. Raised once a frame while a mod listens, before the frame is shown. */

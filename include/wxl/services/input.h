@@ -65,10 +65,10 @@ typedef struct wxl_input_api
     wxl_bool(WXL_CALL* pointer_over_world)(void);
 
     /// Keeps the game out of its own mouse look for the calling mod (WXL_TRUE), or gives that back
-    /// (WXL_FALSE); the game looks again once no mod blocks it. Abi 0.1.24.
+    /// (WXL_FALSE); the game looks again once no mod blocks it. Abi 0.1.25.
     wxl_result(WXL_CALL* block_mouse_look)(wxl_bool blocked);
 
-    /// Whether some mod keeps the game out of its mouse look. Abi 0.1.24.
+    /// Whether some mod keeps the game out of its mouse look. Abi 0.1.25.
     wxl_bool(WXL_CALL* mouse_look_blocked)(void);
 } wxl_input_api;
 

@@ -45,7 +45,7 @@ namespace wxl
      *
      * Bind() points the mod's copy of Dear ImGui and ImPlot at the runtime's contexts and
      * allocator. It answers false, and logs once why, when the runtime has no wxl.imgui (abi older
-     * than 0.1.24) or a copy of another version: draw nothing then.
+     * than 0.1.25) or a copy of another version: draw nothing then.
      */
     class ImGuiService : public detail::Facade<ImGuiService, wxl_imgui_api>,
                          public api::facade::Methods<wxl_imgui_api>

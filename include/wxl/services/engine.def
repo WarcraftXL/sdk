@@ -8,7 +8,7 @@
 #error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including engine.def"
 #endif
 
-WXL_API_SERVICE(engine, WXL_ENGINE_SERVICE, WXL_ENGINE_SERVICE_VERSION, (0, 1, 21), open,
+WXL_API_SERVICE(engine, WXL_ENGINE_SERVICE, WXL_ENGINE_SERVICE_VERSION, (0, 1, 22), open,
                 "The client's own structures as this runtime lays them out.")
 
 WXL_API(engine, layout, Layout, out<u64>, (cstr name), generated, generated,

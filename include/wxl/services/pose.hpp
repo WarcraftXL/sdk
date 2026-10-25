@@ -36,7 +36,7 @@ namespace wxl
      *   ReleaseHead(unit)                   gives it back to the animation
      *
      * Radians: a positive yaw to the unit's left, a positive pitch up; smoothing in seconds (half
-     * the way). WXL_E_UNSUPPORTED on a runtime older than abi 0.1.24.
+     * the way). WXL_E_UNSUPPORTED on a runtime older than abi 0.1.25.
      */
     class PoseService : public detail::Facade<PoseService, wxl_pose_api>, public api::facade::Methods<wxl_pose_api>
     {

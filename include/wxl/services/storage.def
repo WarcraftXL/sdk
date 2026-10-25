@@ -52,7 +52,7 @@ WXL_API(storage, serve, Serve, result, (str path, bytes data, bytes_size size, i
         "reads them as one of its files. Priority as AddSearchPath's.")
 WXL_API(storage, unserve, Unserve, result, (str path), shim, generated,
         "Takes back what the mod serves under a name; not_found for one it does not serve.")
-WXL_API_SINCE(storage, hash_file, (0, 1, 22))
+WXL_API_SINCE(storage, hash_file, (0, 1, 23))
 WXL_API(storage, hash_file, HashFile, out<file_hash>, (str path, u32 flags), shim, by_hand,
         "The MD5 and length of a file as the client would read it, and the layer that holds it; flags 1 "
         "reads it again rather than answer from what was kept.")

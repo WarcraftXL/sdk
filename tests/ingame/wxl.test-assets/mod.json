@@ -3,7 +3,7 @@
   "id": "wxl.test-assets",
   "name": "Test assets",
   "version": "1.0.0",
-  "abi": "0.1.22",
+  "abi": "0.1.23",
   "description": "Serves an add-on the client finds in its AddOns folder, loads and runs, through an asset provider, and converts files through two transforms, so that wxl.selftest can see the client read both; plays a downloader through its wxl.relay service wxl.test-assets.fetch, serving what it fetched under the path the asking mod chose, and keeps the last name the client could not find.",
   "binaries": {
     "win-x64": "bin/x64/test-assets.dll",

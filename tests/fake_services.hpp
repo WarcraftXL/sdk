@@ -1206,7 +1206,7 @@ namespace wxltest
             return Served().erase(NameKey(Key(path))) ? WXL_OK : WXL_E_NOT_FOUND;
         }
 
-        // --- hashes, overrides, reloads (0.1.22) ------------- ------------------------------
+        // --- hashes, overrides, reloads (0.1.23) ------------- ------------------------------
         //
         // A hash is no MD5 here: its sixteen bytes are the file's length, then 1, 2, 3...; the
         // runtime's MD5 is checked by core's harness. An asynchronous one waits for PumpHashes.

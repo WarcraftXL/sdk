@@ -361,7 +361,7 @@ WXL_OBJECT_READ(Items, item_sell_price, ItemSellPrice, uint32_t, cache, SellPric
 WXL_OBJECT_READ_AT(Containers, container_slot_item, ContainerSlotItem, wxl_handle, shared, SlotItem, Item, uint32_t, uint32_t,
                    "The item in a slot of the bag; none for an empty one, invalid past NumSlots.")
 
-WXL_OBJECT_SINCE(0, 1, 23)
+WXL_OBJECT_SINCE(0, 1, 24)
 
 // Units: where they stand.
 WXL_OBJECT_READ(Units, unit_is_outdoors, UnitIsOutdoors, wxl_bool, client, IsOutdoors, bool,

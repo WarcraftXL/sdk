@@ -1468,7 +1468,7 @@ step(function()
     print("phase 15: the mouse look kept out, a head turned, the runtime's Dear ImGui")
     local input = wxl.input
     if not (input and input.BlockMouseLook) then
-        result("wxl.input.BlockMouseLook", false, "this runtime is older than abi 0.1.24")
+        result("wxl.input.BlockMouseLook", false, "this runtime is older than abi 0.1.25")
         return
     end
     local ok, why = input.BlockMouseLook(true)

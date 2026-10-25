@@ -58,7 +58,7 @@ namespace
             }
 
             // A point the stock client inlined: its runtime makes it a function again, and says why
-            // when it cannot (a runtime older than abi 0.1.21 does not list it).
+            // when it cannot (a runtime older than abi 0.1.22 does not list it).
             const std::string absent = wxl::points::M2Init_uint8_t_uint32_t_M2Data::Absent();
             wxl::Log(WXL_LOG_INFO, kTag, absent.empty() ? std::string("M2Init, a model file's check, is a point here")
                                                         : "M2Init is not a point here: " + absent);

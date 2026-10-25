@@ -2404,7 +2404,7 @@ function Object:SlotItem(index) end
 
 ---Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused.
 ---For Unit, Player (unit_is_outdoors).
----Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
 ---@return boolean|nil value, string|nil reason
 function Object:IsOutdoors() end
 
@@ -2732,7 +2732,7 @@ function storage.Serve(path, data, priority) end
 ---@return string|nil reason
 function storage.Unserve(path) end
 
----Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
 ---The content hash of a file as the client would read it, from whichever layer holds it: an
 ---archive, the disk, a folder of the search path, a provider, served bytes. The bytes are hashed
 ---before any transform, by the system's MD5, and the answer is kept: `fresh` reads it again.
@@ -2743,7 +2743,7 @@ function storage.Unserve(path) end
 ---@return string|nil reason
 function storage.HashFile(path, fresh) end
 
----Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
 ---HashFile on a thread of the runtime's: `fn(hash)` is called later, on the main thread, with the
 ---table HashFile answers, or nil and the reason. Answers the request's number. A request of a
 ---mod that is disabled, reloads or unloads is dropped.
@@ -2754,7 +2754,7 @@ function storage.HashFile(path, fresh) end
 ---@return string|nil reason
 function storage.HashFileAsync(path, fn, fresh) end
 
----Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
 ---Replaces a file of the client with another name, for this mod: every open of `path`, and every
 ---check that it exists, gets `with` instead, on every thread, above every layer. The way to
 ---put a file of the mod's own in place of the client's file. It stays until RestoreFile,
@@ -2766,14 +2766,14 @@ function storage.HashFileAsync(path, fn, fresh) end
 ---@return string|nil reason
 function storage.OverrideFile(path, with) end
 
----Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
 ---Takes this mod's override of a name back; nil, "not_found" for one it did not override.
 ---@param path string
 ---@return true|nil ok
 ---@return string|nil reason
 function storage.RestoreFile(path) end
 
----Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
 ---Makes the client read again a model or a texture it holds, so a file that changed shows: a
 ---texture is read again in place, a model is dropped from the model cache and the units drawn
 ---with it made again. Other kinds answer nil, "unsupported"; nil, "pending" when what the
@@ -3016,7 +3016,7 @@ function action.Assist(unit) end
 ---@return string|nil reason
 function action.MoveTo(point) end
 
----Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
 ---Turns the player to a facing in radians (0 north, growing towards the west), as steering with the mouse does, and tells the server.
 ---@param facing number
 ---@return true|nil ok
@@ -3072,7 +3072,7 @@ function m2.CreateModel(scene_model, path) end
 function m2.AttachmentPoint(model, attachment) end
 
 ---wxl.engine. The client's own structures as this runtime lays them out.
----Came with abi 0.1.21: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
 ---@class wxl.engine
 local engine = {}
 
@@ -3083,7 +3083,7 @@ local engine = {}
 function engine.Layout(name) end
 
 ---wxl.relay. Services mods publish for each other: a call now, its answer later, on the main thread.
----Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
 ---@class wxl.relay
 local relay = {}
 
@@ -3144,7 +3144,7 @@ function relay.Fail(request, reason) end
 function relay.Cancel(request) end
 
 ---wxl.camera. Where the world camera is, and placing it instead of the client. Main thread only.
----Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
 ---@class wxl.camera
 local camera = {}
 
@@ -3195,7 +3195,7 @@ function camera.SetView(position, forward, fov) end
 function camera.ReleaseView() end
 
 ---wxl.input. The pointer, for a mod that steers with the mouse: captured at the centre of the window, or free. Main thread only.
----Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
 ---@class wxl.input
 local input = {}
 
@@ -3217,7 +3217,7 @@ function input.CursorCaptured() end
 ---@return string|nil reason
 function input.PointerOverWorld() end
 
----Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.25: a mod whose mod.json asks for an older abi cannot use it.
 ---Keeps the game out of its own mouse look (true): a held mouse button turns nothing and hides
 ---nothing, a click still selects or acts; false gives this mod's block back. Kept while any mod
 ---blocks it, and given back when the mod is disabled, reloads or unloads.
@@ -3226,14 +3226,14 @@ function input.PointerOverWorld() end
 ---@return string|nil reason
 function input.BlockMouseLook(blocked) end
 
----Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.25: a mod whose mod.json asks for an older abi cannot use it.
 ---Whether some mod keeps the game out of its mouse look.
 ---@return boolean|nil
 ---@return string|nil reason
 function input.MouseLookBlocked() end
 
 ---wxl.world. Questions about the world's geometry. Main thread only.
----Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
 ---@class wxl.world
 local world = {}
 
@@ -3246,7 +3246,7 @@ local world = {}
 function world.Trace(start, finish, flags) end
 
 ---wxl.pose. A unit's head turned by a mod, over its animation. Main thread only.
----Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
+---Came with abi 0.1.25: a mod whose mod.json asks for an older abi cannot use it.
 ---@class wxl.pose
 local pose = {}
 

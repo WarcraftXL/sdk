@@ -34,13 +34,13 @@ namespace wxl
      *   CaptureCursor(bool)   holds the pointer at the centre of the window, or lets it go
      *   CursorCaptured()      whether some mod holds it
      *   PointerOverWorld()    whether the pointer is over the world, not the interface
-     *   BlockMouseLook(bool)  keeps the game out of its own mouse look; clicks still act (0.1.24)
+     *   BlockMouseLook(bool)  keeps the game out of its own mouse look; clicks still act (0.1.25)
      *   MouseLookBlocked()    whether some mod does
      *
      * A held pointer is where the game picks and clicks: the object at the centre of the screen
      * is the mouseover, and a click lands on it. The motion arrives as WorldScript's
      * OnMouseMotion, the wheel as OnMouseWheel. CaptureCursor answers WXL_E_UNSUPPORTED on a
-     * runtime older than abi 0.1.23.
+     * runtime older than abi 0.1.24.
      */
     class InputService : public detail::Facade<InputService, wxl_input_api>,
                          public api::facade::Methods<wxl_input_api>

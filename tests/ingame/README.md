@@ -58,13 +58,13 @@ taken off again. While it hangs, `ModelBatchDrawn` counts the batches the device
 seconds, then the selftest stops listening (the event comes thousands of times a frame): a PASS on
 both clients, a FAIL when none came or the runtime does not raise it. With `model-swap` in
 `Mods/`, the murloc is drawn as a gnoll.
-Phase 12 checks the model loader's points (abi 0.1.21): the C++ mod `wxl.test-points` attaches to
+Phase 12 checks the model loader's points (abi 0.1.22): the C++ mod `wxl.test-points` attaches to
 `CM2Shared::FinishLoading` and to `M2Init(uint8_t*,uint32_t,M2Data&)` -- inlined into FinishLoading
 in the stock client, which its runtime then runs recompiled with M2Init a call of its own -- and
 four boss models are made, which the starting zones do not show. Both handlers must fire, read the
 model through the engine headers (its file name, version 264) and the models must still parse
 (`ModelParsed`). Without `wxl.test-points` in `Mods/` the phase is a FAIL.
-Phase 13 checks the bricks a mod fetching assets on demand is built from (abi 0.1.22): a texture
+Phase 13 checks the bricks a mod fetching assets on demand is built from (abi 0.1.23): a texture
 nobody has raises `FileMissing` (a mod's own `wxl.storage` lookup does not); bytes the selftest
 serves at 0 under a path of its own (`Interface\WxlSelfTest\FrameXML.toc`) live beside the
 client's `Interface\FrameXML\FrameXML.toc`; `OverrideFile` puts them in place of the client's and
@@ -83,14 +83,14 @@ to look at), and a request cancelled once the C++ service has it (the service is
 before it is handed over is dropped without a word to anyone). Without `wxl.test-assets`, the
 downloader's checks are a SKIP.
 
-Phase 14 checks the camera and the pointer (abi 0.1.23): `wxl.camera` reads the world camera,
+Phase 14 checks the camera and the pointer (abi 0.1.24): `wxl.camera` reads the world camera,
 then places it ten yards above the player's head at every `CameraUpdate` for two seconds (the
 view is seen while it lasts), while `wxl.input` holds the pointer at the centre; both are given
 back. `MouseMotion` is a NOTE (move the mouse during those two seconds to see it). Then
 `wxl.world.Trace` meets the ground under the player and nothing in the sky, `IsOutdoors` agrees
 with the client's `IsIndoors`, and `wxl.action.Face` turns the player half a radian and back.
 
-Phase 15 checks the game kept out of its mouse look and a head turned (abi 0.1.24): with
+Phase 15 checks the game kept out of its mouse look and a head turned (abi 0.1.25): with
 `wxl.input.BlockMouseLook(true)`, the game's `MouselookStart()` leaves `IsMouselooking()` false;
 once the block is given back it works again. `wxl.pose.Head` turns the player's head left and up
 for a second (watch it), then `ReleaseHead` gives it back. `ImGuiFrame` raised by the runtime is a

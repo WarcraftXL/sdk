@@ -10,7 +10,7 @@
 #error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including imgui.def"
 #endif
 
-WXL_API_SERVICE(imgui, WXL_IMGUI_SERVICE, WXL_IMGUI_SERVICE_VERSION, (0, 1, 24), open,
+WXL_API_SERVICE(imgui, WXL_IMGUI_SERVICE, WXL_IMGUI_SERVICE_VERSION, (0, 1, 25), open,
                 "The runtime's Dear ImGui and ImPlot, drawn in the game's frame, for a native mod's windows.")
 
 WXL_API(imgui, version, Version, str, (), native, generated, "")

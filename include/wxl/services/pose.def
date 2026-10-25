@@ -8,7 +8,7 @@
 #error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including pose.def"
 #endif
 
-WXL_API_SERVICE(pose, WXL_POSE_SERVICE, WXL_POSE_SERVICE_VERSION, (0, 1, 24), open,
+WXL_API_SERVICE(pose, WXL_POSE_SERVICE, WXL_POSE_SERVICE_VERSION, (0, 1, 25), open,
                 "A unit's head turned by a mod, over its animation. Main thread only.")
 
 WXL_API(pose, head, Head, result, (object unit, f64 yaw, f64 pitch, f64 smoothing), shim, generated,

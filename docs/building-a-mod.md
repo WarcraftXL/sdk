@@ -475,7 +475,7 @@ wxl::ActionService::MoveTo(wxl_vec3{-8913.0f, 554.0f, 93.0f}); // click-to-move 
 wxl::ActionService::Face(1.57);             // turns the player to face west, as mouse look does
 ```
 
-`Face` (abi `0.1.23`) takes radians as the client counts them: 0 faces north (+x), and the angle
+`Face` (abi `0.1.24`) takes radians as the client counts them: 0 faces north (+x), and the angle
 grows towards the west (+y). The character turns at once and the server is told, as when the
 player steers with the right mouse button; it is refused (`WXL_E_FAILED`) while the client would
 not let the player turn: dead, stunned, on a flight path.
@@ -567,7 +567,7 @@ rows as the methods, by `wxl-object-members`.
 | `IsSwimming()` | `bool` | Whether it swims, as the client's IsSwimming reads it. Came with abi 0.1.18: WXL_E_UNSUPPORTED on an older runtime. |
 | `IsFlying()` | `bool` | Whether it flies, as the client's IsFlying reads it. Came with abi 0.1.18: WXL_E_UNSUPPORTED on an older runtime. |
 | `IsFalling()` | `bool` | Whether it is falling, as the client's IsFalling reads it. Came with abi 0.1.18: WXL_E_UNSUPPORTED on an older runtime. |
-| `IsOutdoors()` | `bool` | Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused. Came with abi 0.1.23: WXL_E_UNSUPPORTED on an older runtime. |
+| `IsOutdoors()` | `bool` | Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused. Came with abi 0.1.24: WXL_E_UNSUPPORTED on an older runtime. |
 
 **`wxl::Player`**: Players
 
@@ -1050,7 +1050,7 @@ booleans and nil, copied. The `RelayPublication` takes the service back when it 
 may go with requests in flight: a service that goes fails what it had not answered
 (`WXL_E_NOT_FOUND`), a caller that goes has its requests cancelled (the service's `cancelled`
 function is told), and nothing is ever handed to a mod that went. All of this came with abi
-`0.1.22`.
+`0.1.23`.
 
 ### Models: what characters wear, models of your own, model files
 
@@ -1317,7 +1317,7 @@ finish_ = wxl::points::CM2Shared_FinishLoading::Before([](void*& self) {
 **The layout check.** A client built from a later source may lay a type out otherwise, and a mod
 built against the old headers would read the wrong bytes. Every type carries its **layout hash**
 (`kLayoutHash`, XXH64 of its members' offsets, kinds and sizes, an embedded type by its own hash),
-and the runtime answers its own through `wxl::EngineService::Layout(name)` (abi `0.1.21`). Check
+and the runtime answers its own through `wxl::EngineService::Layout(name)` (abi `0.1.22`). Check
 the types your mod reads once, in `OnLoad`:
 
 ```cpp
@@ -1398,7 +1398,7 @@ both answer the same and leave the same bytes (core's `stock` test).
 
 ### The camera, the mouse and the world's geometry
 
-Three services (abi `0.1.23`) let a mod take the camera and steer it with the mouse: a camera
+Three services (abi `0.1.24`) let a mod take the camera and steer it with the mouse: a camera
 that follows the character from over its shoulder, a free camera, a top-down one.
 
 **Placing the camera.** The client places its world camera once a frame, and
@@ -1487,14 +1487,14 @@ from another thread they are refused with `WXL_E_INVALID`.
 **Keeping the game out of its mouse look.** With the left button held the game turns its own
 camera, with the right one it turns the character, and either way it hides the pointer and
 forgets what is under it. A mod that steers the camera itself keeps the game out of that with
-`wxl::InputService::BlockMouseLook(true)` (abi `0.1.24`): a held button then turns nothing, hides
+`wxl::InputService::BlockMouseLook(true)` (abi `0.1.25`): a held button then turns nothing, hides
 nothing and starts no turn, and a click still does what a click does -- the left one selects, the
 right one talks, loots or attacks -- when it is let go within the game's click time (0.8 s), on
 what was under the pointer when it was pressed. A longer hold does nothing, as in the game, and
 the game's `MouselookStart` and its move with both buttons are kept out too. `BlockMouseLook(false)`
 gives it back; it holds while any mod blocks it, and goes with the mod.
 
-**Turning a head.** `wxl::PoseService::Head(unit, yaw, pitch, smoothing)` (abi `0.1.24`) turns a
+**Turning a head.** `wxl::PoseService::Head(unit, yaw, pitch, smoothing)` (abi `0.1.25`) turns a
 unit's head from where its body faces and holds it there, over whatever its animation does:
 radians, a positive yaw to the unit's left, a positive pitch up, `smoothing` the seconds to cover
 half the way (0 at once). The runtime holds the angles to what a neck allows (100 degrees of yaw,
@@ -1511,7 +1511,7 @@ wxl::PoseService::Head(wxl::Player::Local(), std::clamp(yaw, -1.22f, 1.22f), pit
 ### Windows of your own: Dear ImGui
 
 The runtime carries [Dear ImGui](https://github.com/ocornut/imgui) and
-[ImPlot](https://github.com/epezent/implot) (abi `0.1.24`) and draws them over the game's frame,
+[ImPlot](https://github.com/epezent/implot) (abi `0.1.25`) and draws them over the game's frame,
 after its interface, with the game's own Direct3D 9 device, on both clients. A mod adds its
 windows from `RenderScript::OnImGuiFrame`, which comes once a frame while some mod listens:
 

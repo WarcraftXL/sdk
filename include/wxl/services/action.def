@@ -29,7 +29,7 @@ WXL_API(action, assist, Assist, result, (object unit), generated, generated,
         "Targets what a unit targets, as /assist does.")
 WXL_API(action, move_to, MoveTo, result, (vec3 point), generated, generated,
         "Walks the player to a point, as a click-to-move click on the ground does.")
-WXL_API_SINCE(action, face, (0, 1, 23))
+WXL_API_SINCE(action, face, (0, 1, 24))
 WXL_API(action, face, Face, result, (f64 facing), generated, generated,
         "Turns the player to a facing in radians (0 north, growing towards the west), as steering with the mouse does, and tells the server.")
 

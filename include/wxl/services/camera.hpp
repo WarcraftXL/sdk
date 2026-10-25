@@ -49,7 +49,7 @@ namespace wxl
      *   ReleaseView()                    gives it back to the client
      *
      * A view set from OnCameraUpdate applies to the frame being prepared. The reads answer
-     * WXL_E_UNSUPPORTED out of the world, and on a runtime older than abi 0.1.23.
+     * WXL_E_UNSUPPORTED out of the world, and on a runtime older than abi 0.1.24.
      */
     class CameraService : public detail::Facade<CameraService, wxl_camera_api>,
                           public api::facade::Methods<wxl_camera_api>

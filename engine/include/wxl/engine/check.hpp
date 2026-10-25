@@ -22,14 +22,14 @@ namespace wxl::engine
      * A type differs when the runtime's layout hash (wxl.engine's layout) is not the one these
      * headers were generated with: the client it runs on was built from another fork, and a
      * member read through these headers may land on other bytes. A runtime that predates
-     * wxl.engine (abi 0.1.21) cannot say, and that is reported too.
+     * wxl.engine (abi 0.1.22) cannot say, and that is reported too.
      */
     template <class... T>
     std::string LayoutMismatch()
     {
         std::string out;
         if (!EngineService::Available())
-            return "the runtime publishes no wxl.engine (it predates abi 0.1.21), so it cannot say whether "
+            return "the runtime publishes no wxl.engine (it predates abi 0.1.22), so it cannot say whether "
                    "it lays out the engine types this mod reads as the mod's headers do";
         auto check = [&out](const char* name, uint64_t built) {
             auto served = EngineService::Layout(name);

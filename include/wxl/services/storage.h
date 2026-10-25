@@ -125,7 +125,7 @@ typedef struct wxl_asset_transform
                                 const wxl_asset_output* out);
 } wxl_asset_transform;
 
-// --- what a mod learns of a file and of what the client holds (0.1.22) --------------------
+// --- what a mod learns of a file and of what the client holds (0.1.23) --------------------
 
 /// The layer of the client's files a name was found in.
 typedef enum wxl_file_layer
@@ -315,7 +315,7 @@ typedef struct wxl_storage_api
     /// Takes back what the calling mod serves under a name: WXL_E_NOT_FOUND when it serves none.
     wxl_result(WXL_CALL* unserve)(wxl_str path);
 
-    // --- appended in 0.1.22 -----------------------------------------------------------------
+    // --- appended in 0.1.23 -----------------------------------------------------------------
 
     /**
      * @brief The content hash of a file as the client would read it: its MD5 and its length,

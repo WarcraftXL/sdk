@@ -8,7 +8,7 @@
 #error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including camera.def"
 #endif
 
-WXL_API_SERVICE(camera, WXL_CAMERA_SERVICE, WXL_CAMERA_SERVICE_VERSION, (0, 1, 23), open,
+WXL_API_SERVICE(camera, WXL_CAMERA_SERVICE, WXL_CAMERA_SERVICE_VERSION, (0, 1, 24), open,
                 "Where the world camera is, and placing it instead of the client. Main thread only.")
 
 WXL_API(camera, position, Position, out<vec3>, (), generated, generated,
