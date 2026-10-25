@@ -22,3 +22,10 @@ WXL_API(input, block_mouse_look, BlockMouseLook, result, (boolean blocked), shim
         "Keeps the game out of its own mouse look (true): a held mouse button turns nothing and hides nothing, a click still selects or acts; false gives the mod's block back.")
 WXL_API(input, mouse_look_blocked, MouseLookBlocked, boolean, (), generated, generated,
         "Whether some mod keeps the game out of its mouse look.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

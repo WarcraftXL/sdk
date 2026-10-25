@@ -13,3 +13,10 @@ WXL_API_SERVICE(world, WXL_WORLD_SERVICE, WXL_WORLD_SERVICE_VERSION, (0, 1, 24),
 
 WXL_API(world, trace, Trace, found<vec3>, (vec3 start, vec3 finish, opt<u32> flags), generated, by_hand,
         "The first point of the world's geometry (ground, buildings, doodads) between two points, or nil when the way is clear; flags is the client's hit-test mask, the camera's when left out.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

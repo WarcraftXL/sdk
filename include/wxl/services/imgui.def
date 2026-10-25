@@ -17,3 +17,10 @@ WXL_API(imgui, version, Version, str, (), native, generated, "")
 WXL_API(imgui, context, Context, ptr, (), native, generated, "")
 WXL_API(imgui, plot_context, PlotContext, ptr, (), native, generated, "")
 WXL_API(imgui, allocators, Allocators, none, (ptr_out alloc, ptr_out release, ptr_out user), native, by_hand, "")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

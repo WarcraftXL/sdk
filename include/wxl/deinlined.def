@@ -24,3 +24,10 @@
 #endif
 
 WXL_DEINLINED(M2Init_uint8_t_uint32_t_M2Data, "M2Init(uint8_t*,uint32_t,M2Data&)", "CM2Shared::FinishLoading", 0x0083CF00)
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

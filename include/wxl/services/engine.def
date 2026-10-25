@@ -13,3 +13,10 @@ WXL_API_SERVICE(engine, WXL_ENGINE_SERVICE, WXL_ENGINE_SERVICE_VERSION, (0, 1, 2
 
 WXL_API(engine, layout, Layout, out<u64>, (cstr name), generated, generated,
         "The layout hash of an engine type (sdk/engine) on this runtime, by the fork's name of it.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

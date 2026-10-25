@@ -28,3 +28,10 @@ WXL_API(relay, fail, Fail, result, (u64 request, str reason), shim, by_hand,
         "Fails a request the mod's service received, with a reason.")
 WXL_API(relay, cancel, Cancel, result, (u64 request), shim, by_hand,
         "Takes back a request the mod made: it is never answered.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif
