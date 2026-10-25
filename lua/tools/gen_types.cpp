@@ -279,6 +279,16 @@ namespace
         return parameter.name;
     }
 
+    /// The Lua type of a value kind an out<K> or a found<K> answers.
+    std::string ValueType(const std::string& k)
+    {
+        if (k == "str") return "string";
+        if (k == "vec3") return "wxl.Vec3";
+        if (k == "f64") return "number";
+        if (k == "boolean") return "boolean";
+        return "integer";
+    }
+
     /// The value an answer kind gives, as a Lua type; empty for none.
     std::string LuaAnswer(const std::string& k)
     {
@@ -294,7 +304,9 @@ namespace
         const std::string listed = Inside(k, "list");
         if (!listed.empty()) return (listed == "wxl_str" ? std::string("string") : ClassOf(listed.c_str())) + "[]|nil";
         const std::string out = Inside(k, "out");
-        if (!out.empty()) return out == "str" ? "string|nil" : out == "vec3" ? "wxl.Vec3|nil" : "integer|nil";
+        if (!out.empty()) return ValueType(out) + "|nil";
+        const std::string found = Inside(k, "found");
+        if (!found.empty()) return ValueType(found) + "|nil";
         const std::string named = Inside(k, "enumeration");
         if (!named.empty())
             if (const wxl::reflect::Enum* e = wxl::reflect::FindEnum(named.c_str())) return AliasOf(*e) + "|integer|nil";
@@ -451,6 +463,24 @@ namespace
                    "---goes; the highest threshold any mod holds is the one the runtime watches.\n"
                    "---@param bytes integer\n---@return true|nil ok\n---@return string|nil reason\n"
                    "function " + owner + ".WatchPressure(bytes) end\n\n";
+        if (name == "SetView")
+            return "---Places the world camera from now on, for this mod: where it is, the direction it looks, and\n"
+                   "---the field of view in radians, 0 to keep the client's. Set again each frame from OnCameraUpdate\n"
+                   "---to move it with the frame. It stays until ReleaseView, or until the mod is disabled, reloads\n"
+                   "---or unloads; when two mods set one, the later is applied and the earlier comes back after it.\n"
+                   "---@param position wxl.Vec3\n---@param forward wxl.Vec3\n---@param fov number\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".SetView(position, forward, fov) end\n\n";
+        if (name == "ReleaseView")
+            return "---Gives the world camera this mod placed back to the client; nil, \"not_found\" when it holds none.\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".ReleaseView() end\n\n";
+        if (name == "CaptureCursor")
+            return "---Hides the pointer and holds it at the centre of the window (true), where the game still picks\n"
+                   "---and clicks, or lets this mod's hold go (false). Held while any mod holds it, and let go when\n"
+                   "---the mod is disabled, reloads or unloads. The motion arrives as OnMouseMotion.\n"
+                   "---@param captured boolean\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".CaptureCursor(captured) end\n\n";
         if (name == "Begin")
             return "---Opens a zone named `name` on the profiler's timeline, inside the handler or callback running\n"
                    "---now; End closes it. Zones nest. Whatever this call left open is closed when it returns or\n"

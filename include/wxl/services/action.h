@@ -20,6 +20,8 @@
 //   follow        follows a unit, as /follow does
 //   assist        targets what a unit targets, as /assist does
 //   move_to       walks the player to a point, as a click-to-move click on the ground does
+//   face          turns the player to a facing, as steering with the mouse does, and tells the
+//                 server
 //
 // Main thread only: an action is refused off it with WXL_E_INVALID, and the runtime's log says
 // why. Each answers WXL_OK when the client took the action, WXL_E_FAILED when the client
@@ -86,6 +88,17 @@ typedef struct wxl_action_api
     /// Walks the player to a point, as a click-to-move click on the ground does:
     /// CGPlayer_C::ClickToMove. WXL_E_FAILED for a point the client will not walk to.
     wxl_result(WXL_CALL* move_to)(wxl_vec3 point);
+
+    /**
+     * @brief Turns the player to a facing, as steering with the mouse does:
+     *        CGInputControl::CameraTurnPlayer, which moves the character at once and tells the
+     *        server.
+     * @param facing  radians, the client's: 0 is north (+x), growing towards the west (+y)
+     *
+     * WXL_E_FAILED when the client will not turn the player now: dead, stunned, sitting, on a
+     * flight path, or following a script's spline. Abi 0.1.23.
+     */
+    wxl_result(WXL_CALL* face)(double facing);
 } wxl_action_api;
 
 #ifdef __cplusplus

@@ -1369,6 +1369,18 @@ WXL_ARGS_FIELD(wxl_file_missing_args, pending, bool)              ///< a provide
 WXL_ARGS_FIELD(wxl_file_missing_args, loader, bool)               ///< asked off the client's main thread: a loader thread
 WXL_ARGS_END(wxl_file_missing_args)
 
+/// The mouse moved, in the device's counts, before any acceleration or pointer speed applies.
+WXL_ARGS(wxl_mouse_motion_args)
+WXL_ARGS_FIELD(wxl_mouse_motion_args, dx, i32) ///< right is positive
+WXL_ARGS_FIELD(wxl_mouse_motion_args, dy, i32) ///< towards the player is positive, as on the screen
+WXL_ARGS_END(wxl_mouse_motion_args)
+
+/// The mouse wheel turned.
+WXL_ARGS(wxl_mouse_wheel_args)
+WXL_ARGS_FIELD(wxl_mouse_wheel_args, delta, f32) ///< in notches: away from the player is positive, a fraction for a fine wheel
+WXL_ARGS_ANSWER(wxl_mouse_wheel_args, handled)   ///< write WXL_TRUE to keep the game from seeing the turn
+WXL_ARGS_END(wxl_mouse_wheel_args)
+
 #ifdef WXL_ARGS_ENUM_DEFAULTED
     #undef WXL_ARGS_ENUM
     #undef WXL_ARGS_ENUM_DEFAULTED

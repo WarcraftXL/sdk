@@ -234,3 +234,7 @@
         /// Whether it is falling, as the client's IsFalling reads it.
         /// Came with abi 0.1.18: WXL_E_UNSUPPORTED on an older runtime.
         Expected<bool> IsFalling() const { return ReadAs<bool>(&wxl_object_api::unit_is_falling); }
+
+        /// Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused.
+        /// Came with abi 0.1.23: WXL_E_UNSUPPORTED on an older runtime.
+        Expected<bool> IsOutdoors() const { return ReadAs<bool>(&wxl_object_api::unit_is_outdoors); }

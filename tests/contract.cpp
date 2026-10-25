@@ -10,6 +10,7 @@
 #include <cstring>
 #include <set>
 #include <stdexcept>
+#include <optional>
 #include <string>
 #include <unordered_set>
 #include <utility>
@@ -1041,6 +1042,9 @@ int main()
         host.Table()->publish_service(WXL_M2FILE_SERVICE, WXL_M2FILE_SERVICE_VERSION, wxltest::FakeModels::FileTable());
         host.Table()->publish_service(WXL_GX_SERVICE, WXL_GX_SERVICE_VERSION, wxltest::FakeModels::GxTable());
         host.Table()->publish_service(WXL_ENGINE_SERVICE, WXL_ENGINE_SERVICE_VERSION, wxltest::FakeEngine::Table());
+        host.Table()->publish_service(WXL_CAMERA_SERVICE, WXL_CAMERA_SERVICE_VERSION, wxltest::FakeView::CameraTable());
+        host.Table()->publish_service(WXL_INPUT_SERVICE, WXL_INPUT_SERVICE_VERSION, wxltest::FakeView::InputTable());
+        host.Table()->publish_service(WXL_WORLD_SERVICE, WXL_WORLD_SERVICE_VERSION, wxltest::FakeView::WorldTable());
     }
 
     Section("reads that can fail");
@@ -1419,6 +1423,38 @@ int main()
                   calls[5].target == FakeObjects::kBoar,
               "on the object they are called on");
         Check(wxl::Unit(FakeObjects::kStale).Select() == WXL_E_NOT_FOUND, "a stale object's action is gone");
+    }
+
+    Section("wxl.camera, wxl.input and wxl.world, and the facing");
+    {
+        using wxltest::FakeView;
+        FakeView::Calls().clear();
+        const wxl::Expected<wxl_vec3> position = wxl::CameraService::Position();
+        const wxl::Expected<double>   fov      = wxl::CameraService::Fov();
+        const wxl::Expected<wxl_vec3> pivot    = wxl::CameraService::Pivot();
+        Check(position && position->z == 3.0f && fov && *fov == 1.5 && pivot && pivot->z == 1.75f &&
+                  wxl::CameraService::Forward() && wxl::CameraService::Up() && !wxl::CameraService::Cinematic(),
+              "the camera's reads answer through the facade");
+        Check(wxl::CameraService::SetView(wxl_vec3{7, 8, 9}, wxl_vec3{0, 1, 0}, 1.2) == WXL_OK &&
+                  wxl::CameraService::ReleaseView() == WXL_OK,
+              "a view is set and released");
+        Check(wxl::InputService::CaptureCursor(true) == WXL_OK && wxl::InputService::CursorCaptured() &&
+                  wxl::InputService::PointerOverWorld() && wxl::InputService::CaptureCursor(false) == WXL_OK &&
+                  !wxl::InputService::CursorCaptured(),
+              "the pointer is captured and let go");
+        const std::optional<wxl_vec3> hit   = wxl::WorldService::Trace(wxl_vec3{0, 4, 0}, wxl_vec3{20, 4, 0});
+        const std::optional<wxl_vec3> clear = wxl::WorldService::Trace(wxl_vec3{0, 0, 0}, wxl_vec3{5, 0, 0},
+                                                                       WXL_TRACE_LINE_OF_SIGHT);
+        Check(hit && hit->x == 10.0f && hit->y == 4.0f && !clear, "a trace answers the point met, or nothing");
+        const auto& calls = FakeView::Calls();
+        Check(calls.size() == 6 && calls[0].name == "set_view" && calls[0].position.x == 7.0f && calls[0].fov == 1.2 &&
+                  calls[1].name == "release_view" && calls[2].name == "capture" && calls[3].name == "free" &&
+                  calls[4].fov == WXL_TRACE_CAMERA && calls[5].fov == WXL_TRACE_LINE_OF_SIGHT,
+              "with their arguments, the camera's mask when a trace names none");
+        wxltest::FakeActions::Calls().clear();
+        Check(wxl::ActionService::Face(1.25) == WXL_OK && wxltest::FakeActions::Calls().size() == 1 &&
+                  wxltest::FakeActions::Calls()[0].point.x == 1.25f,
+              "Face reaches wxl.action with its facing");
     }
 
     Section("objects in handlers, and data kept per object");

@@ -1310,6 +1310,8 @@
 ---@field OnMouseoverChanged fun(self: WorldScript, previous: wxl.Object|nil, previous_guid: wxl.Guid, current: wxl.Object|nil, current_guid: wxl.Guid)
 ---@field OnCVarChanged fun(self: WorldScript, name: string, previous: string, value: string)
 ---@field OnMemoryPressure fun(self: WorldScript, largest_free: integer, free: integer, committed: integer, threshold: integer)
+---@field OnMouseMotion fun(self: WorldScript, dx: integer, dy: integer)
+---@field OnMouseWheel fun(self: WorldScript, delta: number, handled: boolean|nil): boolean|nil answers through handled
 WorldScript = {}
 
 ---@class RenderScript
@@ -1321,6 +1323,7 @@ WorldScript = {}
 ---@field OnSwapchainLost fun(self: RenderScript, width: integer, height: integer)
 ---@field OnSwapchainRestored fun(self: RenderScript, width: integer, height: integer)
 ---@field OnModelBatchDrawn fun(self: RenderScript, model: lightuserdata|nil, root_model: lightuserdata|nil, primitive_type: integer, base_vertex: integer, min_index: integer, vertex_count: integer, start_index: integer, primitive_count: integer, blend_mode: integer, viewport_x: integer, viewport_y: integer, viewport_width: integer, viewport_height: integer, viewport_min_z: number, viewport_max_z: number)
+---@field OnCameraUpdate fun(self: RenderScript, index: integer, delta: number)
 RenderScript = {}
 
 ---@class ObjectScript
@@ -1630,6 +1633,9 @@ SocialScript = {}
 ---@overload fun(family: "ObjectScript", method: "OnAppearanceChanged", handler: fun(change: wxl.AppearanceChange|integer, wearer: lightuserdata|nil, model: lightuserdata|nil, race_id: integer, sex_id: integer, item_slot: integer, display_id: integer, npc: boolean)): integer
 ---@overload fun(family: "RenderScript", method: "OnModelBatchDrawn", handler: fun(model: lightuserdata|nil, root_model: lightuserdata|nil, primitive_type: integer, base_vertex: integer, min_index: integer, vertex_count: integer, start_index: integer, primitive_count: integer, blend_mode: integer, viewport_x: integer, viewport_y: integer, viewport_width: integer, viewport_height: integer, viewport_min_z: number, viewport_max_z: number)): integer
 ---@overload fun(family: "AssetScript", method: "OnFileMissing", handler: fun(path: string, base: string, scope: string, kind: wxl.AssetKind|integer, open: boolean, pending: boolean, loader: boolean)): integer
+---@overload fun(family: "WorldScript", method: "OnMouseMotion", handler: fun(dx: integer, dy: integer)): integer
+---@overload fun(family: "WorldScript", method: "OnMouseWheel", handler: fun(delta: number, handled: boolean|nil)): integer
+---@overload fun(family: "RenderScript", method: "OnCameraUpdate", handler: fun(index: integer, delta: number)): integer
 ---@param family wxl.Family
 ---@param method string
 ---@param handler function
@@ -1650,6 +1656,7 @@ function Observe(family, method, handler) end
 ---@overload fun(family: "GroupScript", method: "OnGroupInvite", handler: fun(inviter: string, can_accept: boolean, accept: boolean|nil, decline: boolean|nil): boolean|nil, boolean|nil): integer
 ---@overload fun(family: "SocialScript", method: "OnDuelRequested", handler: fun(challenger: wxl.Object|nil, challenger_guid: wxl.Guid, arbiter_guid: wxl.Guid, accept: boolean|nil, decline: boolean|nil): boolean|nil, boolean|nil): integer
 ---@overload fun(family: "SocialScript", method: "OnResurrectRequest", handler: fun(offerer: wxl.Object|nil, offerer_guid: wxl.Guid, name: string, sickness: boolean, accept: boolean|nil, decline: boolean|nil): boolean|nil, boolean|nil): integer
+---@overload fun(family: "WorldScript", method: "OnMouseWheel", handler: fun(delta: number, handled: boolean|nil): boolean|nil): integer
 ---@param family wxl.Family
 ---@param method string
 ---@param handler function
@@ -2393,6 +2400,12 @@ function Object:SellPrice() end
 ---@return wxl.Object|nil value, string|nil reason
 function Object:SlotItem(index) end
 
+---Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused.
+---For Unit, Player (unit_is_outdoors).
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---@return boolean|nil value, string|nil reason
+function Object:IsOutdoors() end
+
 ---Every aura on a unit, in slot order, as Aura(slot) answers each. Came with abi 0.1.18.
 ---@return wxl.Aura[]|nil auras, string|nil reason
 function Object:Auras() end
@@ -3012,6 +3025,13 @@ function action.Assist(unit) end
 ---@return string|nil reason
 function action.MoveTo(point) end
 
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---Turns the player to a facing in radians (0 north, growing towards the west), as steering with the mouse does, and tells the server.
+---@param facing number
+---@return true|nil ok
+---@return string|nil reason
+function action.Face(facing) end
+
 ---wxl.point. Functions of the engine a mod runs code before, instead of or after.
 ---Came with abi 0.1.16: a mod whose mod.json asks for an older abi cannot use it.
 ---@class wxl.point
@@ -3132,6 +3152,93 @@ function relay.Fail(request, reason) end
 ---@return string|nil reason
 function relay.Cancel(request) end
 
+---wxl.camera. Where the world camera is, and placing it instead of the client. Main thread only.
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.camera
+local camera = {}
+
+---Where the world camera is this frame, in world coordinates.
+---@return wxl.Vec3|nil
+---@return string|nil reason
+function camera.Position() end
+
+---The direction the world camera looks, of unit length.
+---@return wxl.Vec3|nil
+---@return string|nil reason
+function camera.Forward() end
+
+---The direction the top of the screen is, of unit length.
+---@return wxl.Vec3|nil
+---@return string|nil reason
+function camera.Up() end
+
+---The field of view the world camera draws with, in radians.
+---@return number|nil
+---@return string|nil reason
+function camera.Fov() end
+
+---The point the client's camera turns around: the followed object's position at the height the client looks from.
+---@return wxl.Vec3|nil
+---@return string|nil reason
+function camera.Pivot() end
+
+---Whether a cinematic or a model camera of the client's has the view; a view set by a mod waits for it to end.
+---@return boolean|nil
+---@return string|nil reason
+function camera.Cinematic() end
+
+---Places the world camera from now on, for this mod: where it is, the direction it looks, and
+---the field of view in radians, 0 to keep the client's. Set again each frame from OnCameraUpdate
+---to move it with the frame. It stays until ReleaseView, or until the mod is disabled, reloads
+---or unloads; when two mods set one, the later is applied and the earlier comes back after it.
+---@param position wxl.Vec3
+---@param forward wxl.Vec3
+---@param fov number
+---@return true|nil ok
+---@return string|nil reason
+function camera.SetView(position, forward, fov) end
+
+---Gives the world camera this mod placed back to the client; nil, "not_found" when it holds none.
+---@return true|nil ok
+---@return string|nil reason
+function camera.ReleaseView() end
+
+---wxl.input. The pointer, for a mod that steers with the mouse: captured at the centre of the window, or free. Main thread only.
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.input
+local input = {}
+
+---Hides the pointer and holds it at the centre of the window (true), where the game still picks
+---and clicks, or lets this mod's hold go (false). Held while any mod holds it, and let go when
+---the mod is disabled, reloads or unloads. The motion arrives as OnMouseMotion.
+---@param captured boolean
+---@return true|nil ok
+---@return string|nil reason
+function input.CaptureCursor(captured) end
+
+---Whether some mod holds the pointer.
+---@return boolean|nil
+---@return string|nil reason
+function input.CursorCaptured() end
+
+---Whether the pointer is over the world rather than a frame of the interface.
+---@return boolean|nil
+---@return string|nil reason
+function input.PointerOverWorld() end
+
+---wxl.world. Questions about the world's geometry. Main thread only.
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.world
+local world = {}
+
+---The first point of the world's geometry (ground, buildings, doodads) between two points, or nil when the way is clear; flags is the client's hit-test mask, the camera's when left out.
+---@param start wxl.Vec3
+---@param finish wxl.Vec3
+---@param flags? integer 0 when left out
+---@return wxl.Vec3|nil
+---@return string|nil reason
+function world.Trace(start, finish, flags) end
+
 ---@class wxl.ModInfo
 ---@field id string
 ---@field name string
@@ -3206,6 +3313,9 @@ function object.Unwatch(type, name) end
 ---@field m2 wxl.m2
 ---@field engine wxl.engine
 ---@field relay wxl.relay
+---@field camera wxl.camera
+---@field input wxl.input
+---@field world wxl.world
 ---@field events table<wxl.Family, string[]> every family's events, as On<Event>
 wxl = {}
 

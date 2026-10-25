@@ -479,6 +479,8 @@ typedef struct wxl_object_api
     wxl_result(WXL_CALL* item_sell_price)(wxl_handle item, uint32_t* out);
     /// The item in a slot of the bag; none for an empty one, invalid past NumSlots.
     wxl_result(WXL_CALL* container_slot_item)(wxl_handle container, uint32_t slot, wxl_handle* out);
+    /// Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused.
+    wxl_result(WXL_CALL* unit_is_outdoors)(wxl_handle unit, wxl_bool* out);
 } wxl_object_api;
 
 #ifdef __cplusplus

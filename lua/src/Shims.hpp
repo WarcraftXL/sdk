@@ -53,6 +53,17 @@
 // A mod that goes takes its overrides and services back and cancels its requests; an answer that
 // comes for it afterwards finds nobody.
 
+// Three keep the camera and the pointer a mod holds, also seen by the host as wxl.lua's:
+//
+//   wxl.camera.SetView(position, forward, fov)          the view; the last Lua mod to set one
+//   wxl.camera.ReleaseView()                            has it applied, the one set before
+//                                                       comes back when it lets go, and the
+//                                                       runtime's view goes with the last
+//   wxl.input.CaptureCursor(captured)                   the pointer, held while one Lua mod
+//                                                       holds it
+//
+// They are let go when the mod is disabled or its state closes.
+
 #ifndef WXL_LUA_SHIMS_HPP
 #define WXL_LUA_SHIMS_HPP
 
@@ -80,7 +91,8 @@ namespace wxl::lua
         void Forget(ScriptMod& mod);
 
         /// What a mod holds goes: the folders it added leave the search path, its footprint
-        /// reports and its pressure threshold are taken back. It is disabled, or its state closes.
+        /// reports and its pressure threshold are taken back, its camera view and its hold on the
+        /// pointer are let go. It is disabled, or its state closes.
         void ReleaseHeld(ScriptMod& mod);
 
         /// Whether a registered function is running, inside the client's script: no mod's state

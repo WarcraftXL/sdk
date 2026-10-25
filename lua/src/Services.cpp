@@ -722,6 +722,24 @@ namespace wxl::lua
             }
         };
 
+        /// A value that may not be there: the value, or nil when the call found none.
+        template <class K>
+        struct Reply<kind::found<K>>
+        {
+            template <class F>
+            static int Call(lua_State* L, Reader&, F&& f)
+            {
+                typename wxl::api::Value<K>::type value{};
+                if (f(&value) != WXL_TRUE)
+                {
+                    lua_pushnil(L);
+                    return 1;
+                }
+                PushValue<K>(L, value);
+                return 1;
+            }
+        };
+
         /// The whole of something whose size the call says: asked, then read, once more if it
         /// grew in between.
         template <>

@@ -24,7 +24,9 @@
 #include "wxl/sdk.hpp"
 #include "wxl/services/rows.hpp"
 #include "wxl/services/script.h"
+#include "wxl/services/camera.h"
 #include "wxl/services/footprint.h"
+#include "wxl/services/input.h"
 #include "wxl/services/relay.h"
 #include "wxl/services/storage.h"
 
@@ -1425,6 +1427,137 @@ namespace wxl::lua::shims
                     g_waiting.erase(g_waiting.begin() + static_cast<std::ptrdiff_t>(i));
             }
         }
+        // --- wxl.camera and wxl.input: the view and the pointer each mod holds ---------------
+
+        const wxl_camera_api* Camera() { return wxl::api::Table<wxl_camera_api>(); }
+        const wxl_input_api*  Input() { return wxl::api::Table<wxl_input_api>(); }
+
+        /// A view a Lua mod holds, as it last set it.
+        struct View
+        {
+            ScriptMod* mod;
+            wxl_vec3   position;
+            wxl_vec3   forward;
+            double     fov;
+        };
+
+        /// The Lua mods holding a view, the last set first: the runtime sees them all as
+        /// wxl.lua, which holds one view, the first mod's here.
+        std::vector<View> g_viewers;
+
+        bool HoldsView(const View& view, const ScriptMod& mod) { return view.mod == &mod; }
+        /// The Lua mods holding the pointer: wxl.lua holds it while one does.
+        std::vector<ScriptMod*> g_capturers;
+
+        /// A point argument: a table with numbers x, y and z.
+        wxl_vec3 CheckPoint(lua_State* L, int index, const char* function, const char* name)
+        {
+            if (lua_isnoneornil(L, index))
+                luaL_error(L, "wxl.camera.%s: '%s' (argument %d) is missing; it takes a point, a table with x, y and z",
+                           function, name, index);
+            luaL_checktype(L, index, LUA_TTABLE);
+            lua_getfield(L, index, "x");
+            lua_getfield(L, index, "y");
+            lua_getfield(L, index, "z");
+            if (!lua_isnumber(L, -3) || !lua_isnumber(L, -2) || !lua_isnumber(L, -1))
+                luaL_argerror(L, index, "a point: a table with numbers x, y and z");
+            const wxl_vec3 point{static_cast<float>(lua_tonumber(L, -3)), static_cast<float>(lua_tonumber(L, -2)),
+                                 static_cast<float>(lua_tonumber(L, -1))};
+            lua_pop(L, 3);
+            return point;
+        }
+
+        int L_SetView(lua_State* L)
+        {
+            ScriptMod&     mod      = Self(L);
+            const wxl_vec3 position = CheckPoint(L, 1, "SetView", "position");
+            const wxl_vec3 forward  = CheckPoint(L, 2, "SetView", "forward");
+            if (lua_isnoneornil(L, 3))
+                return luaL_error(L, "wxl.camera.SetView: 'fov' (argument 3) is missing; it takes a number of radians, "
+                                     "0 to keep the client's");
+            const lua_Number fov = luaL_checknumber(L, 3);
+
+            const wxl_camera_api* api = Camera();
+            if (!api || !wxl::detail::Carries(api, &wxl_camera_api::set_view))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set_view(position, forward, static_cast<double>(fov));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            g_viewers.erase(std::remove_if(g_viewers.begin(), g_viewers.end(),
+                                           [&](const View& view) { return HoldsView(view, mod); }),
+                            g_viewers.end());
+            g_viewers.insert(g_viewers.begin(), View{&mod, position, forward, static_cast<double>(fov)});
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// A mod lets its view go: the view set before it, by a Lua mod still holding one,
+        /// becomes the runtime's again; with none left, the runtime's goes.
+        wxl_result LetGoView(ScriptMod& mod)
+        {
+            const auto held = std::find_if(g_viewers.begin(), g_viewers.end(),
+                                           [&](const View& view) { return HoldsView(view, mod); });
+            if (held == g_viewers.end()) return WXL_E_NOT_FOUND;
+            const bool applied = held == g_viewers.begin();
+            g_viewers.erase(held);
+            if (!applied) return WXL_OK;
+            const wxl_camera_api* api = Camera();
+            if (!api) return WXL_E_UNSUPPORTED;
+            if (!g_viewers.empty() && wxl::detail::Carries(api, &wxl_camera_api::set_view))
+            {
+                const View& next = g_viewers.front();
+                return api->set_view(next.position, next.forward, next.fov);
+            }
+            if (!wxl::detail::Carries(api, &wxl_camera_api::release_view)) return WXL_E_UNSUPPORTED;
+            return api->release_view();
+        }
+
+        int L_ReleaseView(lua_State* L)
+        {
+            const wxl_result result = LetGoView(Self(L));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// The runtime holds the pointer for wxl.lua while one Lua mod does.
+        wxl_result CaptureFor(ScriptMod& mod, bool captured)
+        {
+            const wxl_input_api* api = Input();
+            if (!api || !wxl::detail::Carries(api, &wxl_input_api::capture_cursor)) return WXL_E_UNSUPPORTED;
+            const auto held = std::find(g_capturers.begin(), g_capturers.end(), &mod);
+            if (captured)
+            {
+                if (held != g_capturers.end()) return WXL_OK;
+                if (g_capturers.empty())
+                {
+                    const wxl_result result = api->capture_cursor(WXL_TRUE);
+                    if (result != WXL_OK) return result;
+                }
+                g_capturers.push_back(&mod);
+                return WXL_OK;
+            }
+            if (held == g_capturers.end()) return WXL_OK;
+            g_capturers.erase(held);
+            return g_capturers.empty() ? api->capture_cursor(WXL_FALSE) : WXL_OK;
+        }
+
+        int L_CaptureCursor(lua_State* L)
+        {
+            if (lua_isnone(L, 1))
+                return luaL_error(L, "wxl.input.CaptureCursor: 'captured' (argument 1) is missing; it takes a boolean");
+            luaL_checktype(L, 1, LUA_TBOOLEAN);
+            const wxl_result result = CaptureFor(Self(L), lua_toboolean(L, 1) != 0);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// A mod's view and its hold on the pointer go with it.
+        void ReleaseViewAndPointer(ScriptMod& mod)
+        {
+            LetGoView(mod);
+            CaptureFor(mod, false);
+        }
     } // namespace
 
     lua_CFunction Find(std::string_view service, std::string_view name)
@@ -1452,6 +1585,9 @@ namespace wxl::lua::shims
         if (service == "footprint" && name == "Snapshot") return &L_Snapshot;
         if (service == "footprint" && name == "Report") return &L_Report;
         if (service == "footprint" && name == "WatchPressure") return &L_WatchPressure;
+        if (service == "camera" && name == "SetView") return &L_SetView;
+        if (service == "camera" && name == "ReleaseView") return &L_ReleaseView;
+        if (service == "input" && name == "CaptureCursor") return &L_CaptureCursor;
         if (service == "profile" && name == "Begin") return &profile::L_Begin;
         if (service == "profile" && name == "End") return &profile::L_End;
         if (service == "profile" && name == "Text") return &profile::L_Text;
@@ -1461,6 +1597,7 @@ namespace wxl::lua::shims
     void ReleaseHeld(ScriptMod& mod)
     {
         ReleaseFootprint(mod);
+        ReleaseViewAndPointer(mod);
         ReleaseStorage(mod);
         ReleaseRelay(mod);
         for (size_t i = g_folders.size(); i-- > 0;)

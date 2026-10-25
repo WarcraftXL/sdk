@@ -49,6 +49,7 @@ namespace wxl
      *   Follow(unit)          follows it
      *   Assist(unit)          targets what it targets
      *   MoveTo(point)         walks there, as click-to-move does
+     *   Face(radians)         turns the player that way, as steering with the mouse does (abi 0.1.23)
      *
      * The objects have the same as methods: unit.Select(), unit.Interact(), unit.CastAt(id),
      * item.Use(), unit.Follow(), unit.Assist().

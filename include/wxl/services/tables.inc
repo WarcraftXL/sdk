@@ -20,3 +20,6 @@
 #include "wxl/services/gx.def"
 #include "wxl/services/engine.def"
 #include "wxl/services/relay.def"
+#include "wxl/services/camera.def"
+#include "wxl/services/input.def"
+#include "wxl/services/world.def"

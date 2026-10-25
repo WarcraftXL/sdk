@@ -27,6 +27,9 @@
 #include "wxl/objects.hpp"
 #include "wxl/scoped_name.hpp"
 #include "wxl/services/action.h"
+#include "wxl/services/camera.h"
+#include "wxl/services/input.h"
+#include "wxl/services/world.h"
 #include "wxl/services/data.h"
 #include "wxl/services/hook.h"
 #include "wxl/services/net.h"
@@ -515,6 +518,10 @@ namespace wxltest
             return FakeObjects::IsUnit(u) ? Record("assist", u) : WXL_E_INVALID;
         }
         static wxl_result WXL_CALL MoveTo(wxl_vec3 point) { return Record("move_to", WXL_HANDLE_NONE, WXL_HANDLE_NONE, 0, point); }
+        static wxl_result WXL_CALL Face(double facing)
+        {
+            return Record("face", WXL_HANDLE_NONE, WXL_HANDLE_NONE, 0, wxl_vec3{static_cast<float>(facing), 0.0f, 0.0f});
+        }
 
         static const wxl_action_api* Table()
         {
@@ -530,6 +537,112 @@ namespace wxltest
                 t.follow       = &Follow;
                 t.assist       = &Assist;
                 t.move_to      = &MoveTo;
+                t.face         = &Face;
+                return t;
+            }();
+            return &api;
+        }
+    };
+
+    // --- wxl.camera, wxl.input, wxl.world ------------------------------------------------------
+    //
+    // A camera at (1, 2, 3) looking north with a field of view of 1.5; the views set and
+    // released, the captures and the traces are recorded. A wall stands at x = 10.
+
+    struct FakeView
+    {
+        struct Call
+        {
+            std::string name;
+            wxl_vec3    position{};
+            wxl_vec3    forward{};
+            double      fov = 0.0;
+        };
+
+        static std::vector<Call>& Calls()
+        {
+            static std::vector<Call> calls;
+            return calls;
+        }
+
+        static int& Captures()
+        {
+            static int held = 0;
+            return held;
+        }
+
+        static wxl_result WXL_CALL Position(wxl_vec3* out) { *out = wxl_vec3{1.0f, 2.0f, 3.0f}; return WXL_OK; }
+        static wxl_result WXL_CALL Forward(wxl_vec3* out) { *out = wxl_vec3{1.0f, 0.0f, 0.0f}; return WXL_OK; }
+        static wxl_result WXL_CALL Up(wxl_vec3* out) { *out = wxl_vec3{0.0f, 0.0f, 1.0f}; return WXL_OK; }
+        static wxl_result WXL_CALL Fov(double* out) { *out = 1.5; return WXL_OK; }
+        static wxl_result WXL_CALL Pivot(wxl_vec3* out) { *out = wxl_vec3{5.0f, 5.0f, 1.75f}; return WXL_OK; }
+        static wxl_bool WXL_CALL Cinematic() { return WXL_FALSE; }
+        static wxl_result WXL_CALL SetView(wxl_vec3 position, wxl_vec3 forward, double fov)
+        {
+            if (fov < 0.0) return WXL_E_INVALID;
+            Calls().push_back(Call{"set_view", position, forward, fov});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL ReleaseView()
+        {
+            Calls().push_back(Call{"release_view"});
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL CaptureCursor(wxl_bool captured)
+        {
+            Calls().push_back(Call{captured ? "capture" : "free"});
+            Captures() = captured ? 1 : 0;
+            return WXL_OK;
+        }
+        static wxl_bool WXL_CALL CursorCaptured() { return Captures() ? WXL_TRUE : WXL_FALSE; }
+        static wxl_bool WXL_CALL PointerOverWorld() { return WXL_TRUE; }
+
+        static wxl_bool WXL_CALL Trace(wxl_vec3 start, wxl_vec3 finish, uint32_t flags, wxl_vec3* hit)
+        {
+            Calls().push_back(Call{"trace", start, finish, static_cast<double>(flags)});
+            if ((start.x < 10.0f) == (finish.x < 10.0f)) return WXL_FALSE;
+            *hit = wxl_vec3{10.0f, start.y, start.z};
+            return WXL_TRUE;
+        }
+
+        static const wxl_camera_api* CameraTable()
+        {
+            static const wxl_camera_api api = [] {
+                wxl_camera_api t{};
+                t.struct_size  = sizeof t;
+                t.position     = &Position;
+                t.forward      = &Forward;
+                t.up           = &Up;
+                t.fov          = &Fov;
+                t.pivot        = &Pivot;
+                t.cinematic    = &Cinematic;
+                t.set_view     = &SetView;
+                t.release_view = &ReleaseView;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_input_api* InputTable()
+        {
+            static const wxl_input_api api = [] {
+                wxl_input_api t{};
+                t.struct_size        = sizeof t;
+                t.capture_cursor     = &CaptureCursor;
+                t.cursor_captured    = &CursorCaptured;
+                t.pointer_over_world = &PointerOverWorld;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_world_api* WorldTable()
+        {
+            static const wxl_world_api api = [] {
+                wxl_world_api t{};
+                t.struct_size = sizeof t;
+                t.trace       = &Trace;
                 return t;
             }();
             return &api;

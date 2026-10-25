@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.input as data: one row per member of wxl_input_api, in member order. The shapes and their
+// columns are described in wxl/services/rows.hpp.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including input.def"
+#endif
+
+WXL_API_SERVICE(input, WXL_INPUT_SERVICE, WXL_INPUT_SERVICE_VERSION, (0, 1, 23), open,
+                "The pointer, for a mod that steers with the mouse: captured at the centre of the window, or free. Main thread only.")
+
+WXL_API(input, capture_cursor, CaptureCursor, result, (boolean captured), shim, generated,
+        "Hides the pointer and holds it at the centre of the window, where the game still picks and clicks (true), or gives the mod's capture back (false).")
+WXL_API(input, cursor_captured, CursorCaptured, boolean, (), generated, generated,
+        "Whether some mod holds the pointer.")
+WXL_API(input, pointer_over_world, PointerOverWorld, boolean, (), generated, generated,
+        "Whether the pointer is over the world rather than a frame of the interface.")

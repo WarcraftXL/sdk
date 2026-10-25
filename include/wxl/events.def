@@ -526,6 +526,19 @@ WXL_EVENTS_SINCE(0, 1, 22, 140)
     calls raise nothing. */
 WXL_EVENT(Asset, FileMissing,       140, wxl_file_missing_args)
 
+// --- The mouse and the camera ----------------------------------------------------------------
+
+WXL_EVENTS_SINCE(0, 1, 23, 141)
+
+/** The mouse moved, in the device's own counts, as Windows' raw input reports them: raised for
+    every report while a mod listens, whether the pointer moves or is held by wxl.input. */
+WXL_EVENT(World, MouseMotion,      141, wxl_mouse_motion_args)
+/** The mouse wheel turned. A handler may keep the turn from the game. */
+WXL_EVENT(World, MouseWheel,       142, wxl_mouse_wheel_args)
+/** The client has placed the world camera for this frame, before anything is drawn from it:
+    where a mod places it instead, through wxl.camera. */
+WXL_EVENT(Render, CameraUpdate,    143, wxl_frame_args)
+
 // Give back whatever was defaulted above, so the file can be included again right after with a
 // different selector. What the consumer defined itself is left alone: undefining it here would
 // break the consumer that includes the table twice on purpose.

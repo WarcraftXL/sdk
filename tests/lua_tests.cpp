@@ -2366,6 +2366,95 @@ wxl.script.RegisterFunction("BrickAsk", function(method) Ask(method) end)
         if (g_failures) sink.Dump();
     }
 
+    Section("the camera, the pointer and the world in Lua");
+    {
+        using wxltest::FakeView;
+        const fs::path mods = MakeTree(scratch, "camera", binary, fs::path());
+        WriteFile(mods / "aim-a" / "mod.json", LuaManifest("wxl.aim-a"));
+        WriteFile(mods / "aim-a" / "init.lua", R"(
+local p = wxl.camera.Position()
+print("position " .. p.x .. " " .. p.z .. " fov " .. wxl.camera.Fov() .. " pivot " .. wxl.camera.Pivot().z)
+print("cinematic " .. tostring(wxl.camera.Cinematic()))
+print("set " .. tostring(wxl.camera.SetView({ x = 1, y = 2, z = 3 }, { x = 1, y = 0, z = 0 }, 0)))
+print("capture " .. tostring(wxl.input.CaptureCursor(true)) .. " " .. tostring(wxl.input.CursorCaptured()))
+print("hit " .. wxl.world.Trace({ x = 0, y = 4, z = 0 }, { x = 20, y = 4, z = 0 }).x)
+print("clear " .. tostring(wxl.world.Trace({ x = 0, y = 0, z = 0 }, { x = 5, y = 0, z = 0 }, 0x100111)))
+print("face " .. tostring(wxl.action.Face(2.5)))
+print("missing " .. tostring(select(2, pcall(function() return wxl.camera.SetView({ x = 1, y = 2, z = 3 }) end))))
+Observe("WorldScript", "OnMouseMotion", function(dx, dy) print("motion " .. dx .. " " .. dy) end)
+Override("WorldScript", "OnMouseWheel", function(delta) print("wheel " .. delta) return true end)
+Observe("RenderScript", "OnCameraUpdate", function(index, delta) print("camera " .. index) end)
+)");
+        WriteFile(mods / "aim-b" / "mod.json", LuaManifest("wxl.aim-b", "\"loadAfter\": [ \"wxl.aim-a\" ]"));
+        WriteFile(mods / "aim-b" / "init.lua", R"(
+print("b set " .. tostring(wxl.camera.SetView({ x = 9, y = 9, z = 9 }, { x = 0, y = 1, z = 0 }, 1.2)))
+print("b capture " .. tostring(wxl.input.CaptureCursor(true)))
+Observe("WorldScript", "OnMouseMotion", function(dx)
+    if dx ~= 99 then return end
+    print("b release " .. tostring(wxl.camera.ReleaseView()) .. " " .. tostring(wxl.input.CaptureCursor(false)))
+    print("b again " .. tostring(select(2, wxl.camera.ReleaseView())))
+end)
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_CAMERA_SERVICE, WXL_CAMERA_SERVICE_VERSION, FakeView::CameraTable()});
+        config.services.push_back(PublishedService{WXL_INPUT_SERVICE, WXL_INPUT_SERVICE_VERSION, FakeView::InputTable()});
+        config.services.push_back(PublishedService{WXL_WORLD_SERVICE, WXL_WORLD_SERVICE_VERSION, FakeView::WorldTable()});
+        FakeView::Calls().clear();
+        wxltest::FakeActions::Calls().clear();
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            Check(sink.Has("[wxl.aim-a] position 1 3 fov 1.5 pivot 1.75") && sink.Has("[wxl.aim-a] cinematic false"),
+                  "the camera's reads answer numbers and points");
+            Check(sink.Has("[wxl.aim-a] set true") && sink.Has("[wxl.aim-a] capture true true") &&
+                      sink.Has("[wxl.aim-b] b set true") && sink.Has("[wxl.aim-b] b capture true"),
+                  "two mods set a view and capture the pointer");
+            Check(sink.Has("[wxl.aim-a] hit 10") && sink.Has("[wxl.aim-a] clear nil") && sink.Has("[wxl.aim-a] face true"),
+                  "a trace answers the point met or nil, Face answers true");
+            Check(sink.Has("[wxl.aim-a] missing") && sink.Has("'forward' (argument 2) is missing"),
+                  "a view without its direction is an error naming it");
+            const auto& actions = wxltest::FakeActions::Calls();
+            Check(!actions.empty() && actions.back().name == "face" && actions.back().point.x == 2.5f,
+                  "Face reaches wxl.action");
+
+            const wxl_mouse_motion_args motion{3, -4};
+            host.Raise(WXL_EV_MouseMotion, &motion);
+            wxl_bool                   kept = WXL_FALSE;
+            const wxl_mouse_wheel_args wheel{-1.0f, &kept};
+            host.Raise(WXL_EV_MouseWheel, &wheel);
+            const wxl_frame_args frame{7, 0.016f};
+            host.Raise(WXL_EV_CameraUpdate, &frame);
+            Check(sink.Has("[wxl.aim-a] motion 3 -4") && sink.Has("[wxl.aim-a] wheel -1") && kept == WXL_TRUE &&
+                      sink.Has("[wxl.aim-a] camera 7"),
+                  "the mouse's events and the camera's update reach Lua; an Override keeps the wheel");
+
+            // b, the later, holds the view applied; giving it back brings a's back.
+            FakeView::Calls().clear();
+            const wxl_mouse_motion_args release{99, 0};
+            host.Raise(WXL_EV_MouseMotion, &release);
+            const auto& calls = FakeView::Calls();
+            Check(sink.Has("[wxl.aim-b] b release true true") && sink.Has("[wxl.aim-b] b again not_found") &&
+                      calls.size() == 1 && calls[0].name == "set_view" && calls[0].position.x == 1.0f,
+                  "a mod letting its view go brings back the one set before; the pointer stays held for the other");
+            Check(FakeView::Captures() == 1, "the pointer is held while one Lua mod holds it");
+            FakeView::Calls().clear();
+            host.Shutdown();
+        }
+        const auto& calls = FakeView::Calls();
+        bool released = false, freed = false;
+        for (const auto& call : calls)
+        {
+            if (call.name == "release_view") released = true;
+            if (call.name == "free") freed = true;
+        }
+        Check(released && freed && FakeView::Captures() == 0,
+              "the last mod's view and capture go when it unloads");
+        if (g_failures) sink.Dump();
+    }
+
     Section("what a mod's abi lets it use");
     {
         const wxl::reflect::Version since = wxl::reflect::SinceOf(WXL_EV_ChatMessage);
