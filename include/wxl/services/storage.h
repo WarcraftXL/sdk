@@ -375,7 +375,9 @@ typedef struct wxl_storage_api
      * WXL_E_UNSUPPORTED here; nor is a character's baked skin painted again from the texture of
      * a part (it is, at its next change of appearance), nor a texture of the client's atlas.
      * Main thread only (WXL_E_INVALID elsewhere). WXL_E_NOT_FOUND when the client holds nothing
-     * of that name; WXL_E_PENDING when all it holds is still loading.
+     * of that name; WXL_E_PENDING when all it holds is still loading (ask again in a moment);
+     * WXL_E_UNSUPPORTED too when all it holds of a texture are blocks of the interface's atlas,
+     * where the client keeps the square interface textures of 64 pixels or less it shares.
      */
     wxl_result(WXL_CALL* reload_asset)(wxl_str path, wxl_asset_reload* out);
 } wxl_storage_api;

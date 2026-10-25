@@ -1131,7 +1131,9 @@ use reads the file again, and the units and players in view drawn with it are ma
 Other kinds answer `nil, "unsupported"`: map tiles and buildings are read again when their area
 loads again, sounds when they play. Two things are not painted again: a character's skin, baked
 from the textures of its parts (it is, at its next change of appearance), and a texture of the
-client's atlas. `nil, "pending"` means the texture is still loading: ask again in a moment.
+client's atlas -- a square interface texture of 64 pixels or less, an icon, most buttons --, which
+answers `nil, "unsupported"`. `nil, "pending"` means the texture is still loading: ask again in a
+moment.
 
 Put together, a fetch on demand reads: `OnFileMissing` (or a request from another mod) says what is
 needed; the file is fetched and served under the path you chose; `HashFile` compares it with the client's when

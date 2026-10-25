@@ -1020,7 +1020,10 @@ A texture (`.blp`) is read again in place; a model (`.m2`, `.mdx`, a `.skin`) is
 client's model cache -- every cached model of that file name, since the cache knows models by file
 name -- and the units and players in view drawn with it are made again. Map tiles, buildings and
 sounds are read again when the client next loads them (`WXL_E_UNSUPPORTED` here), and so is a
-character's baked skin; `WXL_E_PENDING` means the texture is still loading. Main thread only.
+character's baked skin; `WXL_E_PENDING` means the texture is still loading (ask again in a
+moment). A small square interface texture (64 pixels or less: icons, most buttons) is kept in a
+block of the client's shared atlas, which is not read again in place: `WXL_E_UNSUPPORTED`. Main
+thread only.
 
 **6. Services between mods.** A fetching mod publishes a service; the mods that want assets call it
 and are answered later, on the main thread:
