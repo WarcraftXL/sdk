@@ -1049,6 +1049,126 @@ end
 the bytes the client is about to parse, transforms applied. These events came with `0.1.19`: a mod
 using them, or `Serve`, asks for `"abi": "0.1.19"`.
 
+### Assets on demand: missing names, hashes, scopes, overrides, reloads
+
+A mod that fetches assets while the game runs -- from a server, a cache, another mod -- needs five
+things from the platform, and each is a small call.
+
+**Knowing what the client did not find.** `AssetScript`'s `OnFileMissing` comes whenever the
+client looks for a file and no layer has it: not its archives, not its folder, no search folder,
+no provider, nothing served.
+
+```lua
+function AssetScript:OnFileMissing(path, base, scope, kind, open, pending, loader)
+    -- kind: "model", "skin", "texture", "terrain", "sound", "interface", ... (by the extension)
+    -- open: the client wanted to read it; false: it only asked whether it exists
+    -- pending: a provider said "not yet" for it
+    print("missing " .. path .. " (" .. kind .. ")")
+end
+```
+
+It may come on one of the client's loading threads; a Lua mod gets it at the next update, as
+every event raised elsewhere. Your own `wxl.storage` calls never raise it. The client probes many
+optional files (a texture's other format, an item's texture for each sex), so expect names it can
+live without, and the same name more than once.
+
+**Knowing what a file holds.** `wxl.storage.HashFile(name)` answers the MD5 of a file as the client
+would read it, from whichever layer holds it, with its length:
+
+```lua
+local hash = wxl.storage.HashFile("Interface\\FrameXML\\FrameXML.toc")
+print(hash.md5, hash.size, hash.layer, hash.source) -- 32 hex digits, bytes, "archive", "Data\\...MPQ"
+```
+
+`layer` is `"archive"`, `"disk"`, `"folder"`, `"provider"` or `"served"`; `source` names the
+archive, the file on the disk or the mod that serves it. The MD5 is the one a content
+distribution network keys a file by, so a mod can tell whether its copy differs from the client's.
+The answer is kept, so asking twice is cheap; `HashFile(name, true)` reads the file again. Reading
+a large file takes as long as reading it: `wxl.storage.HashFileAsync(name, fn)` hashes on a thread
+of the runtime's and calls `fn(hash)` (or `fn(nil, reason)`) at a later update.
+
+**A name of your own for a file.** Many paths are the same in this client and in later ones, with
+other contents. A file you bring in should not replace the client's by surprise, so it lives under
+a name in your mod's *scope*: your mod's id in brackets before the extension.
+
+```lua
+local mine = wxl.storage.ScopedName("Creature\\Murloc\\Murloc.m2")
+-- "Creature\\Murloc\\Murloc[my.mod].m2"
+wxl.storage.Serve(mine, bytes, 0)
+```
+
+Hand the scoped name to the client -- a model you make, a texture you set -- and it reads your
+copy. Until your copy is there, the scoped name reads as the client's own file, so the client
+always shows something. What the client derives from a model's name (its skins
+`Murloc[my.mod]00.skin`, its sequence files) stays in the scope the same way. The scope sits in the
+file name rather than in a folder because the client keeps its models by file name alone:
+`[my.mod]` keeps your model apart from its own. `ScopedName(path, "other.mod")` names another mod's
+scope, which is how a mod that fetches for others serves each in its own.
+
+**Replacing a file, when you mean it.** `wxl.storage.OverrideFile(name, other)` makes every open of
+`name`, and every check that it exists, get `other` instead, on every thread, above every layer:
+
+```lua
+wxl.storage.OverrideFile("Creature\\Murloc\\Murloc.m2", mine)
+-- ...
+wxl.storage.RestoreFile("Creature\\Murloc\\Murloc.m2")
+```
+
+It is logged, it lasts until `RestoreFile` or until your mod is disabled, reloads or unloads, and
+the latest of two mods' wins. One file at a time: that is the only way to replace a file of the
+client with one you serve at priority 0.
+
+**Making the client read again.** What the client loaded stays loaded. `wxl.storage.ReloadAsset(name)`
+makes it read a model or a texture again:
+
+```lua
+local done = wxl.storage.ReloadAsset("Creature\\Murloc\\Murloc.m2")
+print(done.textures, done.models, done.objects, done.busy)
+```
+
+A texture (`.blp`) is read again in place: everything drawing it shows the new pixels. A model
+(`.m2`, `.mdx`, or one of its `.skin` files) is dropped from the client's model cache, so its next
+use reads the file again, and the units and players in view drawn with it are made again at once.
+Other kinds answer `nil, "unsupported"`: map tiles and buildings are read again when their area
+loads again, sounds when they play. Two things are not painted again: a character's skin, baked
+from the textures of its parts (it is, at its next change of appearance), and a texture of the
+client's atlas. `nil, "pending"` means the texture is still loading: ask again in a moment.
+
+Put together, a fetch on demand reads: `OnFileMissing` (or a request from another mod) says what is
+needed; the file is fetched and served in a scope; `HashFile` compares it with the client's when
+both exist; `OverrideFile` puts it in place if it should replace the client's; `ReloadAsset` shows
+it. All of this came with abi `0.1.22`.
+
+### Services between mods: `wxl.relay`
+
+A mod can offer a service to the others, and answer when it is ready rather than at once.
+
+```lua
+-- The mod that serves.
+wxl.relay.Publish("my.fetcher.fetch", function(request, method, path)
+    if method == "has" then return wxl.storage.Exists(path) end -- answered at once
+    pending[#pending + 1] = request                             -- answered later
+end)
+-- ... later, maybe many updates later:
+wxl.relay.Answer(request, scopedName, md5)   -- or wxl.relay.Fail(request, "no such file")
+```
+
+```lua
+-- The mod that asks.
+wxl.relay.Call("my.fetcher.fetch", "get", { "Creature\\Murloc\\Murloc.m2" }, function(ok, name, md5)
+    if not ok then print("not fetched: " .. tostring(name)) return end
+    print("ready as " .. name)
+end)
+```
+
+Everything is handed over at an update, on the main thread, never inside the call that caused it:
+a request reaches the service at the next update, an answer reaches the caller at the update after
+it is given. Values are numbers, strings, booleans and `nil`. A C++ mod publishes and calls the same
+services. Either side may go with requests in flight: a service that goes fails what it had not
+answered (`false, "not_found"`), a caller that goes has its requests cancelled -- the service's
+optional `cancelled(request)` function is told -- and nothing is handed to a mod that went.
+`wxl.relay.Cancel(request)` takes one back by hand. The module came with abi `0.1.22`.
+
 ### Models: `wxl.m2`
 
 What a character wears comes as an event, and a model of your own can be hung on any model the
@@ -1570,6 +1690,13 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.storage.Unredirect(name)` | `true`: the mod's redirect of `name` is taken back; `nil, "not_found"` for one it did not make (abi `0.1.15`) |
 | `wxl.storage.Serve(name, data, priority)` | `true`: the client reads `data` as the file `name`, on every thread, until the mod takes it back or goes; the higher priority of two mods' wins, then the later (abi `0.1.19`) |
 | `wxl.storage.Unserve(name)` | `true`: what the mod serves under `name` is taken back; `nil, "not_found"` for a name it does not serve (abi `0.1.19`) |
+| `wxl.storage.HashFile(name, fresh)`, `.HashFileAsync(name, fn, fresh)` | `{ md5, size, layer, source }` of a file as the client would read it; the same later, to `fn` (abi `0.1.22`) |
+| `wxl.storage.OverrideFile(name, other)`, `.RestoreFile(name)` | `true`: `other` replaces the client's `name` for opens and existence checks, on every thread, until restored or the mod goes |
+| `wxl.storage.ScopedName(name, mod)` | the name of a file in this mod's scope (or `mod`'s): `"Foo[my.mod].m2"` |
+| `wxl.storage.ReloadAsset(name)` | `{ textures, models, objects, busy }`: a texture or a model the client holds, read again |
+| `wxl.relay.Publish(name, fn, cancelled)`, `.Unpublish(name)`, `.Published(name)` | a service of the mod's, its requests to `fn(request, method, ...)`; taken back; whether one is published (abi `0.1.22`) |
+| `wxl.relay.Call(name, method, args, fn)` | the request's number; `fn(true, ...)` or `fn(false, reason)` at a later update |
+| `wxl.relay.Answer(request, ...)`, `.Fail(request, reason)`, `.Cancel(request)` | `true`: a request the mod's service received answered, or failed; one the mod made taken back |
 | `wxl.data.ServeTable(table, path)`, `.RestoreTable(table)` | `true`: the client reads the table from `path`, or its own again |
 | `wxl.data.ServedFrom(table)`, `.IsLoaded(table)` | where a table comes from, `""` for the client's own; whether the client read it already |
 | `wxl.script.RegisterFunction(name, fn, context)` | `true`: `name` calls `fn` from the client's Lua, in every context or in `"glue"` or `"game"` |
@@ -1823,6 +1950,7 @@ A few to start from:
 | `AssetScript` | `OnTerrainTileLoad`, `OnMapObjectGroupLoad`, `OnSkinProfileLoad`, `OnTextureDecode`, `OnShaderLoad`, `OnSoundFileLoad` | see [Serving and converting assets](#serving-and-converting-assets) | the engine read a tile, a building's group, a skin, a texture, a shader, a sound (abi `0.1.19`) |
 | `ObjectScript` | `OnAppearanceChanged` | `change`, `wearer`, `model`, `race_id`, `sex_id`, `item_slot`, `display_id`, `npc` | a character's appearance put an item on, is taking one off (`"worn"`, `"removed"`), or goes away (`"freed"`) (abi `0.1.20`) |
 | `AssetScript` | `OnModelParsed`, `OnSkinProfileParsed`, `OnModelSequenceLoad` | `path`, `file`, then the header, the skin or the sequence | the model loader's stages; see [Models](#models-wxlm2) (abi `0.1.20`) |
+| `AssetScript` | `OnFileMissing` | `path`, `base`, `scope`, `kind`, `open`, `pending`, `loader` | the client looked for a file no layer has; see [Assets on demand](#assets-on-demand-missing-names-hashes-scopes-overrides-reloads) (abi `0.1.22`) |
 | `RenderScript` | `OnModelBatchDrawn` | `model`, `root_model`, then the numbers of the draw | the device drew one batch of a model (abi `0.1.20`) |
 
 The families `PlayerScript`, `GlueScript` and `ChatScript`, and `WorldScript`'s `OnZoneChanged`,
@@ -1849,6 +1977,8 @@ The [gameplay events](#gameplay-events), with the families `LootScript`, `ItemSc
 `ObjectScript`'s `OnAppearanceChanged`, `AssetScript`'s `OnModelParsed`, `OnSkinProfileParsed` and
 `OnModelSequenceLoad`, `RenderScript`'s `OnModelBatchDrawn` and the `wxl.m2` module came with
 `0.1.20`.
+`AssetScript`'s `OnFileMissing`, `wxl.storage`'s `HashFile`, `HashFileAsync`, `OverrideFile`,
+`RestoreFile`, `ScopedName` and `ReloadAsset`, and the `wxl.relay` module came with `0.1.22`.
 
 ### Gameplay events
 

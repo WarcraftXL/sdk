@@ -938,6 +938,110 @@ They come on the main thread, and only while someone listens. The bytes they sho
 transforms left; to change bytes, write a transform. `OnModelLoad` still lets a handler answer a
 model's bytes on the main thread, after the transforms of `m2` ran.
 
+### Assets on demand: missing names, hashes, scopes, overrides, reloads, services
+
+A mod that brings assets in while the game runs -- downloads them, builds them, gets them from
+another mod -- rests on six pieces of the platform. Here they are in the order such a mod uses them.
+
+**1. What the client did not find.** `AssetScript::OnFileMissing` comes whenever the client looks
+for a name and no layer has it (archives, disk, search folders, providers, served bytes):
+
+```cpp
+class Wants final : public wxl::AssetScript
+{
+public:
+    void OnFileMissing(std::string_view path, std::string_view base, std::string_view scope,
+                       wxl_asset_kind kind, bool open, bool pending, bool loader) override
+    {
+        // Often a loader thread (loader): hand the name to your own thread, do not fetch here.
+        if (open && kind == WXL_ASSET_MODEL) queue_.Push(std::string(base));
+    }
+};
+```
+
+`kind` is what the file is for, by its extension; `open` says the client wanted to read it (false:
+it only asked whether it exists); `pending` says a provider of yours answered "not yet". The event
+is raised for the client's asks only, never for your own `StorageService` calls, and once per ask:
+the client probes optional files, so the same name may come again and many never matter.
+
+**2. "Not yet."** A provider whose `Lookup` answers `wxl::AssetState::Pending` lets the client go on
+without the file (it finds nothing, or the next layer's) and makes `OnFileMissing` carry `pending`.
+When the bytes arrive, the provider answers `Present` from then on.
+
+**3. A name of your own.** A file you bring in should not take the place of the client's by
+surprise -- many paths are the same in this client and in later ones, with other contents -- so it
+lives in a *scope*: a mod id in brackets before the extension.
+
+```cpp
+const wxl::StorageService storage;
+const std::string mine = storage.ScopedName("Creature\\Murloc\\Murloc.m2");     // ...Murloc[my.mod].m2
+const std::string theirs = wxl::ScopedName("their.mod", "Creature\\Murloc\\Murloc.m2"); // the rule, in wxl/scoped_name.hpp
+```
+
+A scoped name reads as the file served under it when there is one, and as the client's own file
+otherwise, so it is always safe to hand to the client. What the client derives from a model's name
+(`Murloc[my.mod]00.skin`, the sequence files) stays in the scope. A provider reads the names it is
+asked with `wxl::SplitScopedName(name, &parts)`: `parts.mod` is whose scope, `parts.base` the name
+without it. The scope sits in the file name because the client keeps its models by file name alone.
+
+**4. What a file holds.** `HashFile` answers the MD5 of a file as the client would read it, from the
+layer that has it, with its length -- the key a content network files it under:
+
+```cpp
+const auto hash = storage.HashFile("Creature\\Murloc\\Murloc.m2");
+if (hash && hash->Hex() != expected) { /* the client's copy differs: fetch ours */ }
+```
+
+`hash->layer` (`WXL_FILE_LAYER_ARCHIVE`, `_DISK`, `_FOLDER`, `_PROVIDER`, `_SERVED`) and
+`hash->source` (the archive, the disk path, or the mod that serves it) say where the bytes came
+from. The digest is computed by Windows' own MD5 (CNG, `BCrypt`) and kept by name and layer;
+`HashFile(name, true)` reads again. `HashFileAsync(name, [](wxl::Expected<wxl::FileHash> hash) {...})`
+hashes on the runtime's thread and calls you back on the main thread.
+
+**5. Replacing, explicitly, and showing it.** `OverrideFile(name, other)` puts `other` in place of
+`name` for every open and every existence check, on every thread, above every layer, until
+`RestoreFile(name)` or your mod goes. Then `ReloadAsset(name)` makes the client read what it holds
+again:
+
+```cpp
+storage.OverrideFile("Creature\\Murloc\\Murloc.m2", mine);
+const auto done = storage.ReloadAsset("Creature\\Murloc\\Murloc.m2");
+// done->models: dropped from the model cache; done->objects: units made again with the new file
+```
+
+A texture (`.blp`) is read again in place; a model (`.m2`, `.mdx`, a `.skin`) is dropped from the
+client's model cache -- every cached model of that file name, since the cache knows models by file
+name -- and the units and players in view drawn with it are made again. Map tiles, buildings and
+sounds are read again when the client next loads them (`WXL_E_UNSUPPORTED` here), and so is a
+character's baked skin; `WXL_E_PENDING` means the texture is still loading. Main thread only.
+
+**6. Services between mods.** A fetching mod publishes a service; the mods that want assets call it
+and are answered later, on the main thread:
+
+```cpp
+// The fetcher.
+auto published = wxl::RelayService().Publish("my.fetcher.fetch",
+    [](const wxl::RelayRequest& request, std::string_view method, wxl::RelayValues args) {
+        // Keep the request (it is a value: copy it to your thread) and answer when ready:
+        // request.Answer({wxl::Value::String(scopedName), wxl::Value::String(md5)});
+        // or request.Fail("no such file");
+    });
+
+// A consumer.
+wxl::RelayService().Call("my.fetcher.fetch", "get", {wxl::Value::String("Creature\\Murloc\\Murloc.m2")},
+    [](wxl_result result, wxl::RelayValues values) {
+        if (result == WXL_OK) wxl::Log(WXL_LOG_INFO, "consumer", "ready as {}", values.String(0));
+    });
+```
+
+`Answer` and `Fail` may be called from any thread; requests, answers and cancellations are handed
+over at the next update, never from inside the call that made them. Values are numbers, strings,
+booleans and nil, copied. The `RelayPublication` takes the service back when it goes. Either side
+may go with requests in flight: a service that goes fails what it had not answered
+(`WXL_E_NOT_FOUND`), a caller that goes has its requests cancelled (the service's `cancelled`
+function is told), and nothing is ever handed to a mod that went. All of this came with abi
+`0.1.22`.
+
 ### Models: what characters wear, models of your own, model files
 
 Three things about models reach a mod, from the simplest to the most technical. This part of the

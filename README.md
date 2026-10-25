@@ -5,7 +5,7 @@
 **The contract a WarcraftXL mod is written against**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![ABI](https://img.shields.io/badge/ABI-0.1.21-blue.svg)](include/wxl/abi.h)
+[![ABI](https://img.shields.io/badge/ABI-0.1.22-blue.svg)](include/wxl/abi.h)
 [![C++](https://img.shields.io/badge/C%2B%2B-17%20and%20up-blue.svg)](#-getting-started)
 [![Header only](https://img.shields.io/badge/header--only-yes-lightgrey.svg)](include/wxl)
 
@@ -206,7 +206,8 @@ Beyond events, a runtime publishes services, and a mod asks for the ones it need
 |---|---|---|
 | `wxl.object` | units, players, game objects | yes |
 | `wxl.script` | the client's Lua | yes |
-| `wxl.storage` | archives and files, and folders a mod adds to them | yes |
+| `wxl.storage` | archives and files, folders, providers and bytes a mod adds to them, content hashes, scoped names, overrides, reloads | yes |
+| `wxl.relay` | services mods publish for each other, answered later on the main thread | yes |
 | `wxl.data` | the client's databases, served from a mod's files | yes |
 | `wxl.net` | messages to and from the server | yes; no runtime publishes it yet |
 | `wxl.ui` | frames and the interface | yes; no runtime publishes it yet |
@@ -299,7 +300,7 @@ supplies only the bindings that reach its own client.
 
 ## 🔢 Versioning
 
-`major.minor.feature`, in [`abi.h`](include/wxl/abi.h): today `0.1.21`.
+`major.minor.feature`, in [`abi.h`](include/wxl/abi.h): today `0.1.22`.
 
 - **Major** changes when an existing field, signature or id changes meaning. A runtime refuses a
   mod built against a different major.

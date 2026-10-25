@@ -22,7 +22,7 @@ world with a character, wait about two minutes without touching anything, and re
 | `wxl.test-throw-ready/` | C++ | an exception thrown by `OnReady` disables the mod, and none of its code runs again |
 | `wxl.test-manifest/` | C++ | puts back the `mod.json` `wxl.test-reload` broke, which that mod cannot do once it is unloaded; `TestManifestRepair()` |
 | `wxl.test-points/` | C++ | attaches to `CM2Shared::FinishLoading` and the de-inlined `M2Init` on request and counts them, reading each model through the engine headers (phase 12) |
-| `wxl.test-assets/` | C++ | serves the add-on `WxlProvided` and `Interface\WxlTest\lower.wxltest` through an asset provider; one transform rewrites the add-on's Lua, another upper-cases `.wxltest` files (phase 10); plays a downloader through its `wxl.relay` service `wxl.test-assets.fetch`, and keeps the last name the client could not find (phase 12) |
+| `wxl.test-assets/` | C++ | serves the add-on `WxlProvided` and `Interface\WxlTest\lower.wxltest` through an asset provider; one transform rewrites the add-on's Lua, another upper-cases `.wxltest` files (phase 10); plays a downloader through its `wxl.relay` service `wxl.test-assets.fetch`, and keeps the last name the client could not find (phase 13) |
 | `steps.txt` | text | the plan the probe shows with `/mark`: the few steps a person still plays |
 
 `wxl.selftest` also calls into four of the SDK's examples: `scout` (`ScoutCount()` and the others),
