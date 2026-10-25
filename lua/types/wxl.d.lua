@@ -1376,7 +1376,7 @@ ObjectScript = {}
 ---@field OnModelParsed fun(self: AssetScript, path: string, file: lightuserdata|nil, header: lightuserdata|nil, size: integer)
 ---@field OnSkinProfileParsed fun(self: AssetScript, path: string, file: lightuserdata|nil, header: lightuserdata|nil, skin: lightuserdata|nil)
 ---@field OnModelSequenceLoad fun(self: AssetScript, path: string, file: lightuserdata|nil, sequence_index: integer, data: wxl.Bytes)
----@field OnFileMissing fun(self: AssetScript, path: string, base: string, scope: string, kind: wxl.AssetKind|integer, open: boolean, pending: boolean, loader: boolean)
+---@field OnFileMissing fun(self: AssetScript, path: string, kind: wxl.AssetKind|integer, open: boolean, pending: boolean, loader: boolean)
 AssetScript = {}
 
 ---@class NetScript
@@ -1632,7 +1632,7 @@ SocialScript = {}
 ---@overload fun(family: "AssetScript", method: "OnModelSequenceLoad", handler: fun(path: string, file: lightuserdata|nil, sequence_index: integer, data: wxl.Bytes)): integer
 ---@overload fun(family: "ObjectScript", method: "OnAppearanceChanged", handler: fun(change: wxl.AppearanceChange|integer, wearer: lightuserdata|nil, model: lightuserdata|nil, race_id: integer, sex_id: integer, item_slot: integer, display_id: integer, npc: boolean)): integer
 ---@overload fun(family: "RenderScript", method: "OnModelBatchDrawn", handler: fun(model: lightuserdata|nil, root_model: lightuserdata|nil, primitive_type: integer, base_vertex: integer, min_index: integer, vertex_count: integer, start_index: integer, primitive_count: integer, blend_mode: integer, viewport_x: integer, viewport_y: integer, viewport_width: integer, viewport_height: integer, viewport_min_z: number, viewport_max_z: number)): integer
----@overload fun(family: "AssetScript", method: "OnFileMissing", handler: fun(path: string, base: string, scope: string, kind: wxl.AssetKind|integer, open: boolean, pending: boolean, loader: boolean)): integer
+---@overload fun(family: "AssetScript", method: "OnFileMissing", handler: fun(path: string, kind: wxl.AssetKind|integer, open: boolean, pending: boolean, loader: boolean)): integer
 ---@overload fun(family: "WorldScript", method: "OnMouseMotion", handler: fun(dx: integer, dy: integer)): integer
 ---@overload fun(family: "WorldScript", method: "OnMouseWheel", handler: fun(delta: number, handled: boolean|nil)): integer
 ---@overload fun(family: "RenderScript", method: "OnCameraUpdate", handler: fun(index: integer, delta: number)): integer
@@ -2755,7 +2755,7 @@ function storage.HashFileAsync(path, fn, fresh) end
 ---Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
 ---Replaces a file of the client with another name, for this mod: every open of `path`, and every
 ---check that it exists, gets `with` instead, on every thread, above every layer. The way to
----put a mod's own copy (ScopedName) in place of the client's file. It stays until RestoreFile,
+---put a file of the mod's own in place of the client's file. It stays until RestoreFile,
 ---or until the mod is disabled, reloads or unloads; when two mods override one name, the later
 ---wins. What the client already loaded stays: ReloadAsset makes it read the file again.
 ---@param path string
@@ -2770,17 +2770,6 @@ function storage.OverrideFile(path, with) end
 ---@return true|nil ok
 ---@return string|nil reason
 function storage.RestoreFile(path) end
-
----Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
----The name of `path` in a mod's scope, this mod's when `mod` is nil: the mod's id in brackets
----before the extension, "Creature\\Foo\\Foo[my.mod].m2". The client reads a scoped name
----as the file served under it when one is, else as the client's own file: hand it to the
----client to show a mod's copy without replacing the client's.
----@param path string
----@param mod? string
----@return string|nil name
----@return string|nil reason
-function storage.ScopedName(path, mod) end
 
 ---Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
 ---Makes the client read again a model or a texture it holds, so a file that changed shows: a

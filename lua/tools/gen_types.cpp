@@ -385,7 +385,7 @@ namespace
         if (name == "OverrideFile")
             return "---Replaces a file of the client with another name, for this mod: every open of `path`, and every\n"
                    "---check that it exists, gets `with` instead, on every thread, above every layer. The way to\n"
-                   "---put a mod's own copy (ScopedName) in place of the client's file. It stays until RestoreFile,\n"
+                   "---put a file of the mod's own in place of the client's file. It stays until RestoreFile,\n"
                    "---or until the mod is disabled, reloads or unloads; when two mods override one name, the later\n"
                    "---wins. What the client already loaded stays: ReloadAsset makes it read the file again.\n"
                    "---@param path string\n---@param with string\n"
@@ -395,14 +395,6 @@ namespace
             return "---Takes this mod's override of a name back; nil, \"not_found\" for one it did not override.\n"
                    "---@param path string\n---@return true|nil ok\n---@return string|nil reason\n"
                    "function " + owner + ".RestoreFile(path) end\n\n";
-        if (name == "ScopedName")
-            return "---The name of `path` in a mod's scope, this mod's when `mod` is nil: the mod's id in brackets\n"
-                   "---before the extension, \"Creature\\\\Foo\\\\Foo[my.mod].m2\". The client reads a scoped name\n"
-                   "---as the file served under it when one is, else as the client's own file: hand it to the\n"
-                   "---client to show a mod's copy without replacing the client's.\n"
-                   "---@param path string\n---@param mod? string\n"
-                   "---@return string|nil name\n---@return string|nil reason\n"
-                   "function " + owner + ".ScopedName(path, mod) end\n\n";
         if (name == "ReloadAsset")
             return "---Makes the client read again a model or a texture it holds, so a file that changed shows: a\n"
                    "---texture is read again in place, a model is dropped from the model cache and the units drawn\n"

@@ -206,7 +206,7 @@ Beyond events, a runtime publishes services, and a mod asks for the ones it need
 |---|---|---|
 | `wxl.object` | units, players, game objects | yes |
 | `wxl.script` | the client's Lua | yes |
-| `wxl.storage` | archives and files, folders, providers and bytes a mod adds to them, content hashes, scoped names, overrides, reloads | yes |
+| `wxl.storage` | archives and files, folders, providers and bytes a mod adds to them, content hashes, overrides, reloads | yes |
 | `wxl.relay` | services mods publish for each other, answered later on the main thread | yes |
 | `wxl.data` | the client's databases, served from a mod's files | yes |
 | `wxl.net` | messages to and from the server | yes; no runtime publishes it yet |

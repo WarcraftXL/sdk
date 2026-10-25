@@ -39,7 +39,6 @@
 //   wxl.storage.HashFile(name [, fresh])                a table: md5 (hex), size, layer, source
 //   wxl.storage.HashFileAsync(name, fn [, fresh])       fn called at a later update, unless the
 //                                                       mod went first
-//   wxl.storage.ScopedName(name [, mod])                this mod's scope when mod is nil
 //   wxl.storage.ReloadAsset(name)                       a table: textures, models, objects, busy
 //
 // And wxl.relay's keep each Lua mod's services and requests:

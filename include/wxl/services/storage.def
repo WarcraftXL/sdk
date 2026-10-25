@@ -63,7 +63,5 @@ WXL_API(storage, override_file, OverrideFile, result, (str path, str with), shim
         "until the mod restores it or goes: the latest of two mods' wins.")
 WXL_API(storage, restore_file, RestoreFile, result, (str path), shim, generated,
         "Takes the mod's override of a name back; not_found for one it did not override.")
-WXL_API(storage, scoped_name, ScopedName, str, (str mod, str path), shim, by_hand,
-        "The name of a file in a mod's scope: the mod's own copy when one is served, else the client's.")
 WXL_API(storage, reload_asset, ReloadAsset, out<asset_reload>, (str path), shim, by_hand,
         "Makes the client read a model or a texture it holds again, so a file that changed shows.")

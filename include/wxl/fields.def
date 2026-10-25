@@ -1352,17 +1352,9 @@ WXL_ARGS_FIELD(wxl_model_batch_args, viewport_min_z, f32)
 WXL_ARGS_FIELD(wxl_model_batch_args, viewport_max_z, f32)
 WXL_ARGS_END(wxl_model_batch_args)
 
-/**
- * @brief A name the client looked for that no layer has.
- *
- * A name in a mod's scope ("Creature\\Foo\\Foo[my.mod].m2", wxl.storage's scoped_name) that no
- * source serves is looked for as its base name: the event comes when neither has it, `path`
- * the scoped name, `scope` the mod, `base` the name without the scope.
- */
+/// A name the client looked for that no layer has.
 WXL_ARGS(wxl_file_missing_args)
 WXL_ARGS_FIELD(wxl_file_missing_args, path, str)                  ///< the name as the client asked for it
-WXL_ARGS_FIELD(wxl_file_missing_args, base, str)                  ///< the name without its scope; `path` when it has none
-WXL_ARGS_FIELD(wxl_file_missing_args, scope, str)                 ///< the mod whose scope `path` is in; empty for none
 WXL_ARGS_ENUM(wxl_file_missing_args, kind, wxl_asset_kind)        ///< what the file is for, by its extension
 WXL_ARGS_FIELD(wxl_file_missing_args, open, bool)                 ///< asked to open it; false: only whether it exists
 WXL_ARGS_FIELD(wxl_file_missing_args, pending, bool)              ///< a provider answered "not yet" (WXL_E_PENDING) for it

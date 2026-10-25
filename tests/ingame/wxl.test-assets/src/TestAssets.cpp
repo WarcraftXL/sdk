@@ -5,8 +5,8 @@
 //
 // It also plays a downloader, as a mod fetching assets from a CDN would: its provider answers
 // "not yet" for Interface\WxlTest\Later.blp, and its wxl.relay service wxl.test-assets.fetch
-// "downloads" a file on a thread of its own (an icon the client has, copied) and serves it in the
-// scope of the mod that asked, answering with the scoped name and its MD5. It keeps the last name
+// "downloads" a file on a thread of its own (an icon the client has, copied) and serves it under the
+// path the mod that asked chose, answering with that path and its MD5. It keeps the last name
 // the client could not find (FileMissing) for wxl.selftest to ask about.
 
 #include <cctype>
@@ -80,11 +80,12 @@ namespace
             }
         }
 
-        /// A download arrived: served under its scoped name; its base name no longer pending.
-        void Arrived(const std::string& base, const std::string& scoped, std::string bytes)
+        /// A download arrived: served under the path its asker chose; the name it was fetched for
+        /// no longer pending.
+        void Arrived(const std::string& base, const std::string& chosen, std::string bytes)
         {
             std::lock_guard<std::mutex> lock(lock_);
-            files_[Key(scoped)] = std::move(bytes);
+            files_[Key(chosen)] = std::move(bytes);
             pending_.erase(Key(base));
         }
 
@@ -133,8 +134,7 @@ namespace
     class Missing final : public wxl::AssetScript
     {
     public:
-        void OnFileMissing(std::string_view path, std::string_view, std::string_view, wxl_asset_kind kind, bool open,
-                           bool pending, bool) override
+        void OnFileMissing(std::string_view path, wxl_asset_kind kind, bool open, bool pending, bool) override
         {
             // The client probes many optional files; only the selftest's own names are kept.
             if (Key(path).find("wxltest") == std::string::npos) return;
@@ -185,34 +185,33 @@ namespace
         }
 
     private:
-        /// The service's methods: fetch(path, scope) downloads, never() is never answered,
+        /// The service's methods: fetch(path, local) downloads path and serves it as local, never() is never answered,
         /// cancelled() counts what callers took back, missing() is the last name not found.
         void Serve(const wxl::RelayRequest& request, std::string_view method, wxl::RelayValues args)
         {
             if (method == "fetch")
             {
                 const std::string path(args.String(0));
-                const std::string scope(args.String(1));
-                if (path.empty() || scope.empty())
+                const std::string chosen(args.String(1));
+                if (path.empty() || chosen.empty())
                 {
-                    request.Fail("fetch takes a path and the scope to serve it in");
+                    request.Fail("fetch takes a path and the local path to serve it under");
                     return;
                 }
                 // The download, on a thread of its own: the answer goes out from there.
-                downloads_.emplace_back([request, path, scope] {
+                downloads_.emplace_back([request, path, chosen] {
                     std::this_thread::sleep_for(std::chrono::milliseconds(300));
                     const wxl::StorageService storage;
-                    const std::string         scoped = storage.ScopedName(path, scope);
-                    const auto                bytes  = storage.Read(kDownloaded);
-                    if (scoped.empty() || !bytes)
+                    const auto                bytes = storage.Read(kDownloaded);
+                    if (!bytes)
                     {
                         request.Fail("the download failed");
                         return;
                     }
-                    g_provided.Arrived(path, scoped, std::string(bytes->begin(), bytes->end()));
-                    const auto        hash = storage.HashFile(scoped);
+                    g_provided.Arrived(path, chosen, std::string(bytes->begin(), bytes->end()));
+                    const auto        hash = storage.HashFile(chosen);
                     const std::string md5  = hash ? hash->Hex() : std::string();
-                    request.Answer({wxl::Value::String(scoped), wxl::Value::String(md5),
+                    request.Answer({wxl::Value::String(chosen), wxl::Value::String(md5),
                                     wxl::Value::Number(static_cast<double>(bytes->size()))});
                 });
                 return;

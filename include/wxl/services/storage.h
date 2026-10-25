@@ -172,9 +172,6 @@ typedef struct wxl_asset_reload
     uint32_t busy;     ///< textures still loading, left alone: ask again in a moment
 } wxl_asset_reload;
 
-/// The longest scoped name scoped_name makes, terminator excluded: the client's paths are 260.
-#define WXL_SCOPED_NAME_MAX 259
-
 typedef struct wxl_storage_api
 {
     uint32_t struct_size;
@@ -324,9 +321,8 @@ typedef struct wxl_storage_api
      * @brief The content hash of a file as the client would read it: its MD5 and its length,
      *        and the layer that holds it.
      *
-     * The name is resolved as the client resolves it -- a mod's override and redirect, a scope,
-     * the folders of the search path, the providers, the bytes mods serve, the archives, the
-     * disk -- and the bytes of the layer that wins are hashed, before any transform: the bytes
+     * The name is resolved as the client resolves it -- a mod's override and redirect, the folders
+     * of the search path, the providers, the bytes mods serve, the archives, the disk -- and the bytes of the layer that wins are hashed, before any transform: the bytes
      * a CDN's content key is the MD5 of. The digest is computed by the system's own MD5
      * (Windows CNG, BCrypt), and kept by name and layer, so a second ask of a file that did not
      * change answers without reading it; WXL_HASH_FRESH in @p flags reads it again. Any thread;
@@ -351,11 +347,11 @@ typedef struct wxl_storage_api
      *        override.
      *
      * From here on, whatever opens @p path or asks whether it exists -- the client on any of its
-     * threads, or a mod -- gets @p with instead, above every layer: a name in the mod's scope
-     * that a provider or served bytes answer, typically, or any other name. Nothing else is
-     * replaced: a source of 0 priority and below only fills names the client lacks, and a name
-     * in a scope never takes the place of the client's own, so replacing one file is always this
-     * call. Logged. The override is the mod's until restore_file or until the mod goes --
+     * threads, or a mod -- gets @p with instead, above every layer: a name of the mod's own
+     * that a provider or served bytes answer, typically, or any other name. A source of 0
+     * priority and below only fills names the client lacks, so this is the way to put one file
+     * of the mod's in place of one the client has without taking every name the source holds.
+     * Logged. The override is the mod's until restore_file or until the mod goes --
      * disabled or unloaded --; when two mods override one name the latest wins and taking it back
      * uncovers the earlier. What the client already loaded stays as it is: reload_asset makes it
      * read the file again. Applied before redirect; a FileOpen handler still has the last word.
@@ -365,25 +361,6 @@ typedef struct wxl_storage_api
 
     /// Takes the calling mod's override of a name back: WXL_E_NOT_FOUND when it holds none.
     wxl_result(WXL_CALL* restore_file)(wxl_str path);
-
-    /**
-     * @brief The name of @p path in a mod's scope: what a mod hands the client to read its own
-     *        copy of a file without replacing the client's.
-     *
-     * The scope is the mod's id in brackets before the extension of the file name:
-     * "Creature\\Foo\\Foo.m2" in the scope of "my.mod" is "Creature\\Foo\\Foo[my.mod].m2". A
-     * scoped name is resolved as itself first -- a provider, served bytes, a folder of the search
-     * path that holds that name --, and, when nothing has it, as its base name: the client's own
-     * file. The client derives other files from a model's name (its skin profiles
-     * "Foo[my.mod]00.skin", its sequence files), and those resolve the same way. The scope sits
-     * in the file name, not in a folder, because the client keeps its models by file name alone.
-     *
-     * @param mod  the scope's mod; empty for the calling mod's.
-     * @return the scoped name, valid until the next scoped_name call on the same thread; empty
-     *         for an empty @p path, a mod id the scope cannot hold (brackets, separators) or a
-     *         name longer than WXL_SCOPED_NAME_MAX.
-     */
-    wxl_str(WXL_CALL* scoped_name)(wxl_str mod, wxl_str path);
 
     /**
      * @brief Makes the client read again a model or a texture it already holds, so that a file

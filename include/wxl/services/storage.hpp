@@ -15,7 +15,6 @@
 #include <string_view>
 #include <vector>
 
-#include "wxl/scoped_name.hpp"
 #include "wxl/sdk.hpp"
 #include "wxl/services/rows.hpp"
 #include "wxl/services/storage.h"
@@ -627,17 +626,6 @@ namespace wxl
             if (result != WXL_OK) return Unexpected{result};
             callback.release(); // the answer frees it
             return request;
-        }
-
-        /// The name of @p path in a mod's scope -- this mod's when @p mod is empty --, which the
-        /// client reads as the mod's own copy when one is served, else as its own file. Empty
-        /// when there is none (see wxl::ScopedName).
-        std::string ScopedName(std::string_view path, std::string_view mod = {}) const
-        {
-            const wxl_storage_api* api = Raw();
-            if (!detail::Carries(api, &wxl_storage_api::scoped_name)) return std::string();
-            const wxl_str scoped = api->scoped_name(Str(mod), Str(path));
-            return scoped.data ? std::string(scoped.data, scoped.size) : std::string();
         }
 
         /// Makes the client read again a model or a texture it holds; what it did.

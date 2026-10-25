@@ -963,27 +963,7 @@ namespace wxl::lua::shims
             return PushResultFailure(L, WXL_E_NOT_FOUND);
         }
 
-        // --- wxl.storage: scoped names, hashes, reloads -----------------------------------------
-
-        int L_ScopedName(lua_State* L)
-        {
-            ScriptMod&        mod  = Self(L);
-            const std::string path = CheckName(L, 1, "ScopedName", "path");
-            std::string       owner = mod.Id();
-            if (!lua_isnoneornil(L, 2))
-            {
-                size_t      size = 0;
-                const char* text = luaL_checklstring(L, 2, &size);
-                owner.assign(text, size);
-            }
-            const wxl_storage_api* api = Storage();
-            if (!api || !wxl::detail::Carries(api, &wxl_storage_api::scoped_name))
-                return PushResultFailure(L, WXL_E_UNSUPPORTED);
-            const wxl_str scoped = api->scoped_name(Str(owner), Str(path));
-            if (!scoped.data || !scoped.size) return PushResultFailure(L, WXL_E_INVALID);
-            lua_pushlstring(L, scoped.data, scoped.size);
-            return 1;
-        }
+        // --- wxl.storage: hashes, reloads -------------------------------------------------------
 
         const char* LayerName(uint32_t layer)
         {
@@ -1574,7 +1554,6 @@ namespace wxl::lua::shims
         if (service == "storage" && name == "HashFileAsync") return &L_HashFileAsync;
         if (service == "storage" && name == "OverrideFile") return &L_OverrideFile;
         if (service == "storage" && name == "RestoreFile") return &L_RestoreFile;
-        if (service == "storage" && name == "ScopedName") return &L_ScopedName;
         if (service == "storage" && name == "ReloadAsset") return &L_ReloadAsset;
         if (service == "relay" && name == "Publish") return &L_Publish;
         if (service == "relay" && name == "Unpublish") return &L_Unpublish;

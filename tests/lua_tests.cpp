@@ -2241,7 +2241,7 @@ end)
         if (g_failures) sink.Dump();
     }
 
-    Section("hashes, overrides, scoped names, reloads and the relay in Lua");
+    Section("hashes, overrides, reloads and the relay in Lua");
     {
         using wxltest::FakeRelay;
         using wxltest::FakeStorage;
@@ -2249,8 +2249,6 @@ end)
         WriteFile(mods / "fetcher" / "mod.json", LuaManifest("wxl.fetcher"));
         WriteFile(mods / "fetcher" / "init.lua", R"(
 local s = wxl.storage
-print("scoped " .. tostring(s.ScopedName("Creature\\Foo\\Foo.m2")) .. " " .. tostring(s.ScopedName("A.blp", "other.mod")) ..
-      " " .. tostring(select(2, s.ScopedName("A.blp", "bad]id"))))
 local h = s.HashFile("Interface\\hello.txt")
 print("hash " .. h.md5 .. " " .. h.size .. " " .. h.layer .. " " .. h.source)
 print("nohash " .. tostring(select(2, s.HashFile("Interface\\none.txt"))))
@@ -2265,7 +2263,7 @@ print("async " .. tostring(type(s.HashFileAsync("Interface\\hello.txt", function
     print("hashed " .. tostring(hash and hash.size) .. " " .. tostring(why))
 end))))
 wxl.relay.Publish("wxl.fetcher.fetch", function(request, method, path)
-    if method == "now" then return s.ScopedName(path), 7 end
+    if method == "now" then return "Fetched\\" .. path, 7 end
     if method == "bad" then error("on purpose") end
     pending = request
 end, function(request) print("told cancelled " .. tostring(request == cancelme)) end)
@@ -2304,8 +2302,6 @@ wxl.script.RegisterFunction("BrickAsk", function(method) Ask(method) end)
         const wxl_lua_api* api =
             static_cast<const wxl_lua_api*>(host.Table()->get_service(WXL_LUA_SERVICE, WXL_LUA_SERVICE_VERSION));
 
-        Check(sink.Has("[wxl.fetcher] scoped Creature\\Foo\\Foo[wxl.fetcher].m2 A[other.mod].blp invalid"),
-              "ScopedName names the mod's own scope, or another's; an id a scope cannot hold is invalid");
         Check(sink.Has("[wxl.fetcher] hash 050102030405060708090a0b0c0d0e0f 5 archive Data\\fake.MPQ"),
               "HashFile answers the digest as hex, the size, the layer by name and the source");
         Check(sink.Has("[wxl.fetcher] nohash not_found"), "a name nobody has is not_found");
@@ -2320,7 +2316,7 @@ wxl.script.RegisterFunction("BrickAsk", function(method) Ask(method) end)
 
         FakeRelay::Pump();
         FakeRelay::Pump();
-        Check(sink.Has("[wxl.asker] now true Creature\\Foo\\Foo[wxl.fetcher].m2 7"),
+        Check(sink.Has("[wxl.asker] now true Fetched\\Creature\\Foo\\Foo.m2 7"),
               "a service that returns values answers at once: the caller gets true and them");
         Check(sink.Has("[wxl.asker] nobody false not_found"), "a name nobody publishes fails with not_found");
         Check(sink.Has("[wxl.asker] bad false the service's Lua function errored") &&

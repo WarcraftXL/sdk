@@ -1642,9 +1642,6 @@ int main()
                   storage.HashFile("Interface\\big.bin").ValueOr(wxl::FileHash{}).size == 5 &&
                   storage.RestoreFile("Interface\\big.bin") == WXL_OK && storage.RestoreFile("Interface\\big.bin") == WXL_E_NOT_FOUND,
               "OverrideFile and RestoreFile are generated from the table");
-        Check(storage.ScopedName("Creature\\Foo\\Foo.m2", "my.mod") == "Creature\\Foo\\Foo[my.mod].m2" &&
-                  wxl::ScopedName("my.mod", "Foo.m2") == "Foo[my.mod].m2",
-              "a scoped name from the runtime and from the header agree");
         const wxl::Expected<wxl_asset_reload> reloaded = storage.ReloadAsset("Textures\\a.blp");
         Check(reloaded && reloaded->textures == 3 && reloaded->busy == 1 && storage.ReloadAsset("World\\x.wmo").IsUnsupported(),
               "ReloadAsset answers what was done, or why nothing was");

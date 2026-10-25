@@ -25,7 +25,6 @@
 #include <vector>
 
 #include "wxl/objects.hpp"
-#include "wxl/scoped_name.hpp"
 #include "wxl/services/action.h"
 #include "wxl/services/camera.h"
 #include "wxl/services/input.h"
@@ -1144,7 +1143,7 @@ namespace wxltest
             return Served().erase(NameKey(Key(path))) ? WXL_OK : WXL_E_NOT_FOUND;
         }
 
-        // --- hashes, overrides, scoped names, reloads (0.1.22) ------------------------------
+        // --- hashes, overrides, reloads (0.1.22) ------------- ------------------------------
         //
         // A hash is no MD5 here: its sixteen bytes are the file's length, then 1, 2, 3...; the
         // runtime's MD5 is checked by core's harness. An asynchronous one waits for PumpHashes.
@@ -1224,13 +1223,6 @@ namespace wxltest
             return Overrides().erase(NameKey(Key(path))) ? WXL_OK : WXL_E_NOT_FOUND;
         }
 
-        static wxl_str WXL_CALL ScopedName(wxl_str mod, wxl_str path)
-        {
-            static std::string scoped;
-            scoped = wxl::ScopedName(mod.size ? Key(mod) : std::string("wxl.lua"), Key(path));
-            return wxl_str{scoped.c_str(), static_cast<uint32_t>(scoped.size())};
-        }
-
         static wxl_result WXL_CALL ReloadAsset(wxl_str path, wxl_asset_reload* out)
         {
             const std::string name = NameKey(Key(path));
@@ -1280,7 +1272,6 @@ namespace wxltest
                 t.hash_file_async = &HashFileAsync;
                 t.override_file   = &OverrideFile;
                 t.restore_file    = &RestoreFile;
-                t.scoped_name     = &ScopedName;
                 t.reload_asset    = &ReloadAsset;
                 return t;
             }();

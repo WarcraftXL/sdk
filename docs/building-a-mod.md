@@ -946,7 +946,7 @@ They come on the main thread, and only while someone listens. The bytes they sho
 transforms left; to change bytes, write a transform. `OnModelLoad` still lets a handler answer a
 model's bytes on the main thread, after the transforms of `m2` ran.
 
-### Assets on demand: missing names, hashes, scopes, overrides, reloads, services
+### Assets on demand: missing names, hashes, paths of your own, overrides, reloads, services
 
 A mod that brings assets in while the game runs -- downloads them, builds them, gets them from
 another mod -- rests on six pieces of the platform. Here they are in the order such a mod uses them.
@@ -958,11 +958,11 @@ for a name and no layer has it (archives, disk, search folders, providers, serve
 class Wants final : public wxl::AssetScript
 {
 public:
-    void OnFileMissing(std::string_view path, std::string_view base, std::string_view scope,
-                       wxl_asset_kind kind, bool open, bool pending, bool loader) override
+    void OnFileMissing(std::string_view path, wxl_asset_kind kind, bool open, bool pending,
+                       bool loader) override
     {
         // Often a loader thread (loader): hand the name to your own thread, do not fetch here.
-        if (open && kind == WXL_ASSET_MODEL) queue_.Push(std::string(base));
+        if (open && kind == WXL_ASSET_MODEL) queue_.Push(std::string(path));
     }
 };
 ```
@@ -976,21 +976,18 @@ the client probes optional files, so the same name may come again and many never
 without the file (it finds nothing, or the next layer's) and makes `OnFileMissing` carry `pending`.
 When the bytes arrive, the provider answers `Present` from then on.
 
-**3. A name of your own.** A file you bring in should not take the place of the client's by
-surprise -- many paths are the same in this client and in later ones, with other contents -- so it
-lives in a *scope*: a mod id in brackets before the extension.
+**3. A path of your own.** A file you bring in goes under the path you choose. Many paths are the
+same in this client and in later ones, with other contents: a new path lives beside the client's
+file, and the same path replaces it only when you say so (5, below). Serve it, or have your provider
+answer it:
 
 ```cpp
 const wxl::StorageService storage;
-const std::string mine = storage.ScopedName("Creature\\Murloc\\Murloc.m2");     // ...Murloc[my.mod].m2
-const std::string theirs = wxl::ScopedName("their.mod", "Creature\\Murloc\\Murloc.m2"); // the rule, in wxl/scoped_name.hpp
+storage.Serve("Creature\\Murloc\\MurlocModern.m2", bytes.data(), size, 0); // beside the client's Murloc.m2
 ```
 
-A scoped name reads as the file served under it when there is one, and as the client's own file
-otherwise, so it is always safe to hand to the client. What the client derives from a model's name
-(`Murloc[my.mod]00.skin`, the sequence files) stays in the scope. A provider reads the names it is
-asked with `wxl::SplitScopedName(name, &parts)`: `parts.mod` is whose scope, `parts.base` the name
-without it. The scope sits in the file name because the client keeps its models by file name alone.
+The client keeps its models by file name alone, without the folder: give a model of your own a file
+name of its own.
 
 **4. What a file holds.** `HashFile` answers the MD5 of a file as the client would read it, from the
 layer that has it, with its length -- the key a content network files it under:
@@ -1012,7 +1009,7 @@ hashes on the runtime's thread and calls you back on the main thread.
 again:
 
 ```cpp
-storage.OverrideFile("Creature\\Murloc\\Murloc.m2", mine);
+storage.OverrideFile("Creature\\Murloc\\Murloc.m2", "Creature\\Murloc\\MurlocModern.m2");
 const auto done = storage.ReloadAsset("Creature\\Murloc\\Murloc.m2");
 // done->models: dropped from the model cache; done->objects: units made again with the new file
 ```
@@ -1031,7 +1028,7 @@ and are answered later, on the main thread:
 auto published = wxl::RelayService().Publish("my.fetcher.fetch",
     [](const wxl::RelayRequest& request, std::string_view method, wxl::RelayValues args) {
         // Keep the request (it is a value: copy it to your thread) and answer when ready:
-        // request.Answer({wxl::Value::String(scopedName), wxl::Value::String(md5)});
+        // request.Answer({wxl::Value::String(localPath), wxl::Value::String(md5)});
         // or request.Fail("no such file");
     });
 
