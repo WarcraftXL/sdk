@@ -22,7 +22,7 @@ world with a character, wait about two minutes without touching anything, and re
 | `wxl.test-throw-ready/` | C++ | an exception thrown by `OnReady` disables the mod, and none of its code runs again |
 | `wxl.test-manifest/` | C++ | puts back the `mod.json` `wxl.test-reload` broke, which that mod cannot do once it is unloaded; `TestManifestRepair()` |
 | `wxl.test-points/` | C++ | attaches to `CM2Shared::FinishLoading` and the de-inlined `M2Init` on request and counts them, reading each model through the engine headers (phase 12) |
-| `wxl.test-assets/` | C++ | serves the add-on `WxlProvided` and `Interface\WxlTest\lower.wxltest` through an asset provider; one transform rewrites the add-on's Lua, another upper-cases `.wxltest` files (phase 10) |
+| `wxl.test-assets/` | C++ | serves the add-on `WxlProvided` and `Interface\WxlTest\lower.wxltest` through an asset provider; one transform rewrites the add-on's Lua, another upper-cases `.wxltest` files (phase 10); plays a downloader through its `wxl.relay` service `wxl.test-assets.fetch`, and keeps the last name the client could not find (phase 12) |
 | `steps.txt` | text | the plan the probe shows with `/mark`: the few steps a person still plays |
 
 `wxl.selftest` also calls into four of the SDK's examples: `scout` (`ScoutCount()` and the others),
@@ -64,6 +64,21 @@ in the stock client, which its runtime then runs recompiled with M2Init a call o
 four boss models are made, which the starting zones do not show. Both handlers must fire, read the
 model through the engine headers (its file name, version 264) and the models must still parse
 (`ModelParsed`). Without `wxl.test-points` in `Mods/` the phase is a FAIL.
+Phase 13 checks the bricks a mod fetching assets on demand is built from (abi 0.1.22): a texture
+nobody has raises `FileMissing` (a mod's own `wxl.storage` lookup does not); `ScopedName` names the
+selftest's copy of `Interface\FrameXML\FrameXML.toc`, which reads as the client's file until the
+selftest serves it, and then only under the scoped name; `OverrideFile` puts it in place of the
+client's and `RestoreFile` takes it back; `HashFile` hashes served bytes (a known MD5) and the
+archive's file, `HashFileAsync` answers the same a moment later; `ReloadAsset` reads the
+question-mark icon again from the bag icon an override puts in its place (left of the screen's
+centre, a bag for two seconds) and makes the player's model again (it blinks); a map object is
+`unsupported`. Then `wxl.relay`: a Lua service answering at once and later, taken back
+(`not_found`); and, with `wxl.test-assets`, a texture its provider has not yet (`FileMissing`,
+pending), fetched by its service on a thread of its own and served in the selftest's scope
+(`Later[wxl.selftest].blp`, hashed as the downloader reported), shown by its scoped name and, through
+an override, by the name it lacked (right of the centre: two bags for three seconds, a NOTE to look
+at), and a request cancelled (the C++ service is told). Without `wxl.test-assets`, the downloader's
+checks are a SKIP.
 
 ## Building it
 

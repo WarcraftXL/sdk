@@ -23,7 +23,12 @@
 --  12. the model loader's points: wxl.test-points attaches to CM2Shared::FinishLoading and to
 --      M2Init (inlined in the stock client, de-inlined by its runtime), models the starting zones
 --      rarely show are asked for, and both handlers must fire and read the models through the
---      engine headers while the models still parse.
+--      engine headers while the models still parse;
+--  13. the asset bricks: FileMissing for a texture nobody has, scoped names, an override, content
+--      hashes (served bytes, an archive's file, asynchronously), textures and the player's model read
+--      again, a service of its own through wxl.relay, then wxl.test-assets' downloader: a pending
+--      texture fetched on its thread, served in the selftest's scope, put in place by an override,
+--      a request cancelled.
 --
 -- Each check is one line in the log: PASS, FAIL, SKIP (what it needs is not there: a class
 -- without a cast-time spell, say) or NOTE (an event the server may not send). The chat box shows
@@ -1114,6 +1119,237 @@ step(function()
     TestPointsDisarm()
     for _, model in ipairs(pointModels) do model:Release() end
     pointModels = {}
+end)
+
+-- 13. The asset bricks ------------------------------------------------------------------------------
+
+-- The names the client looked for and nobody had, those of this run only (the client probes many
+-- optional files of its own).
+local missing = {}
+Observe("AssetScript", "OnFileMissing", function(path, base, scope, kind, open, pending, loader)
+    local low = path:lower()
+    if not (low:find("wxltest", 1, true) or low:find("wxlselftest", 1, true)) then return end
+    missing[#missing + 1] = { path = path, base = base, scope = scope, kind = kind, open = open, pending = pending }
+end)
+
+local function missingText(list)
+    local shown = {}
+    for _, m in ipairs(list) do
+        shown[#shown + 1] = string.format("%s (%s, %s%s)", m.path, tostring(m.kind), m.open and "open" or "exists",
+                                          m.pending and ", pending" or "")
+    end
+    return #shown > 0 and table.concat(shown, "; ") or "none"
+end
+
+local function anyMissing(test)
+    for _, m in ipairs(missing) do
+        if test(m) then return m end
+    end
+    return nil
+end
+
+local BASE = "Interface\\FrameXML\\FrameXML.toc"
+local QUESTION, BAG = "Interface\\Icons\\INV_Misc_QuestionMark.blp", "Interface\\Icons\\INV_Misc_Bag_08.blp"
+local LATER = "Interface\\WxlTest\\Later.blp"
+local hashed, echoNow, echoLater, echoRequest, echoNobody, fetched, cancelledCount, cppMissing, neverAnswered
+
+step(function()
+    print("phase 13: names nobody has, content hashes, scopes, overrides, reloads, the relay")
+    local s = wxl.storage
+    if not (s and s.HashFile) then
+        result("wxl.storage.HashFile", false, "this runtime has no asset bricks")
+        return
+    end
+    missing = {}
+    run("WxlSelfTestNone = WxlSelfTestNone or UIParent:CreateTexture() " ..
+        "WxlSelfTestNone:SetTexture('Interface\\\\WxlSelfTest\\\\NoSuchTexture')")
+    local before = #missing
+    s.Exists("Interface\\WxlSelfTest\\NoSuchFile.blp")
+    result("a mod's own wxl.storage lookup raises no FileMissing", #missing == before)
+    wait(0.5)
+end)
+
+step(function()
+    local seen = anyMissing(function(m) return m.kind == "texture" and m.base:lower():find("nosuchtexture", 1, true) end)
+    result("FileMissing: the texture the client asked for and no layer has", seen ~= nil, missingText(missing))
+
+    local s        = wxl.storage
+    local original = s.Read(BASE)
+    if not original then
+        skip("scopes, overrides and hashes", BASE .. " is not in this client's archives")
+        return
+    end
+    local scoped = s.ScopedName(BASE)
+    result("ScopedName: this mod's own name for a file", scoped == "Interface\\FrameXML\\FrameXML[wxl.selftest].toc",
+           tostring(scoped))
+    result("a scoped name nothing serves reads as the client's own file", s.Read(scoped) == original)
+    s.Serve(scoped, "override text", 0)
+    result("served at 0 in its scope, the copy is the mod's and the client's file stays its own",
+           s.Read(scoped) == "override text" and s.Read(BASE) == original)
+    local h = s.HashFile(scoped)
+    result("HashFile of served bytes: the MD5 of what is served, layer served",
+           h ~= nil and h.md5 == "b43a45b5805955f0f335c0e884f18fd7" and h.layer == "served",
+           h and (h.md5 .. " " .. h.layer .. " " .. h.source) or "none")
+    local hu = s.HashFile(BASE)
+    result("HashFile of the client's file: an archive's, its size and its MPQ",
+           hu ~= nil and hu.layer == "archive" and #hu.md5 == 32 and hu.size == #original,
+           hu and (hu.md5 .. " " .. hu.size .. " " .. hu.source) or "none")
+    result("OverrideFile: the client's file reads as the mod's copy",
+           s.OverrideFile(BASE, scoped) == true and s.Read(BASE) == "override text" and s.HashFile(BASE).layer == "served")
+    local restored = s.RestoreFile(BASE)
+    local again, why = s.RestoreFile(BASE)
+    result("RestoreFile: the client's own file again; once", restored == true and s.Read(BASE) == original and
+           again == nil and why == "not_found")
+    s.Unserve(scoped)
+
+    hashed = nil
+    local request = s.HashFileAsync(BASE, function(hash, reason) hashed = hash or reason end, true)
+    result("HashFileAsync answers a request number at once", type(request) == "number")
+    waitFor(function() return hashed ~= nil end, 5)
+end)
+
+step(function()
+    local s = wxl.storage
+    if s.HashFile and s.Read(BASE) then
+        local hu = s.HashFile(BASE)
+        result("and its answer comes later, on the main thread, the same MD5", type(hashed) == "table" and hu ~= nil and
+               hashed.md5 == hu.md5, type(hashed) == "table" and hashed.md5 or tostring(hashed))
+    end
+    -- A texture on screen, read again from another file.
+    run("WxlSelfTestIcon = WxlSelfTestIcon or UIParent:CreateTexture(nil, 'OVERLAY') WxlSelfTestIcon:SetWidth(64) " ..
+        "WxlSelfTestIcon:SetHeight(64) WxlSelfTestIcon:SetPoint('CENTER', -80, 0) " ..
+        "WxlSelfTestIcon:SetTexture('Interface\\\\Icons\\\\INV_Misc_QuestionMark') WxlSelfTestIcon:Show()")
+    wait(1)
+end)
+
+step(function()
+    local s = wxl.storage
+    s.OverrideFile(QUESTION, BAG)
+    local r, why = s.ReloadAsset(QUESTION)
+    result("ReloadAsset of a texture the client holds: read again in place (left of the screen's centre, the " ..
+           "question mark shows a bag for two seconds)", r ~= nil and r.textures > 0,
+           r and (r.textures .. " texture(s), " .. r.busy .. " still loading") or why)
+    local unsupported, reason = s.ReloadAsset("World\\wmo\\Azeroth\\Buildings\\Inn\\Inn.wmo")
+    result("ReloadAsset of a map object: unsupported", unsupported == nil and reason == "unsupported", tostring(reason))
+    wait(2)
+end)
+
+step(function()
+    local s = wxl.storage
+    s.RestoreFile(QUESTION)
+    s.ReloadAsset(QUESTION)
+    run("WxlSelfTestIcon:Hide()")
+    local asked, race, sex = ask("return select(2, UnitRace('player')), UnitSex('player')")
+    if not asked or type(race) ~= "string" then
+        skip("ReloadAsset of the player's model", "the client did not say the player's race")
+        return
+    end
+    local gender = sex == 3 and "Female" or "Male"
+    local path   = "Character\\" .. race .. "\\" .. gender .. "\\" .. race .. gender .. ".m2"
+    local r, why = s.ReloadAsset(path)
+    result("ReloadAsset of the player's model: dropped from the model cache and the player made again (it blinks)",
+           r ~= nil and r.models > 0 and r.objects > 0,
+           path .. ": " .. (r and (r.models .. " file(s), " .. r.objects .. " unit(s)") or tostring(why)))
+end)
+
+step(function()
+    local relay = wxl.relay
+    echoNow, echoLater, echoRequest = nil, nil, nil
+    result("wxl.relay.Publish: a Lua mod publishes a service", relay.Publish("wxl.selftest.echo", function(request, method, a)
+        if method == "now" then return "echo " .. tostring(a) end
+        echoRequest = request
+    end) == true and relay.Published("WXL.SELFTEST.ECHO") == true)
+    relay.Call("wxl.selftest.echo", "now", { "hi" }, function(ok, v) echoNow = { ok, v } end)
+    relay.Call("wxl.selftest.echo", "later", nil, function(ok, v) echoLater = { ok, v } end)
+    waitFor(function() return echoNow ~= nil and echoRequest ~= nil end, 3)
+end)
+
+step(function()
+    local relay = wxl.relay
+    result("a service that returns values answers at once: true and them", echoNow ~= nil and echoNow[1] == true and
+           echoNow[2] == "echo hi", echoNow and tostring(echoNow[2]) or "never answered")
+    result("one that returns nothing answers later through Answer", echoRequest ~= nil and echoLater == nil and
+           relay.Answer(echoRequest, "done") == true)
+    waitFor(function() return echoLater ~= nil end, 3)
+end)
+
+step(function()
+    local relay = wxl.relay
+    result("and the answer reaches the caller at a later update", echoLater ~= nil and echoLater[1] == true and
+           echoLater[2] == "done", echoLater and tostring(echoLater[2]) or "never answered")
+    relay.Unpublish("wxl.selftest.echo")
+    echoNobody = nil
+    relay.Call("wxl.selftest.echo", "now", { "x" }, function(ok, why) echoNobody = { ok, why } end)
+    waitFor(function() return echoNobody ~= nil end, 3)
+end)
+
+step(function()
+    local nobody = echoNobody
+    result("a service taken back answers nothing: the caller is told not_found", nobody ~= nil and nobody[1] == false and
+           nobody[2] == "not_found", nobody and tostring(nobody[2]) or "never answered")
+    if not wxl.relay.Published("wxl.test-assets.fetch") then
+        skip("a C++ mod's service: a download in the selftest's scope", "wxl.test-assets is not in Mods")
+        return
+    end
+    -- The client asks for a texture the downloader has not yet: missing, and pending.
+    missing = {}
+    run("WxlSelfTestLater = WxlSelfTestLater or UIParent:CreateTexture(nil, 'OVERLAY') WxlSelfTestLater:SetWidth(64) " ..
+        "WxlSelfTestLater:SetHeight(64) WxlSelfTestLater:SetPoint('CENTER', 80, 0) " ..
+        "WxlSelfTestLater:SetTexture('Interface\\\\WxlTest\\\\Later') WxlSelfTestLater:Show()")
+    fetched = nil
+    wxl.relay.Call("wxl.test-assets.fetch", "fetch", { LATER, "wxl.selftest" }, function(ok, scoped, md5, size)
+        fetched = { ok, scoped, md5, size }
+    end)
+    waitFor(function() return fetched ~= nil end, 5)
+end)
+
+step(function()
+    if not wxl.relay.Published("wxl.test-assets.fetch") then return end
+    local s    = wxl.storage
+    local seen = anyMissing(function(m) return m.base:lower() == LATER:lower() and m.pending end)
+    result("FileMissing for a name a provider has not yet: pending", seen ~= nil, missingText(missing))
+    local scoped = "Interface\\WxlTest\\Later[wxl.selftest].blp"
+    result("wxl.relay: a C++ service answers later from a thread of its own, the file served in the selftest's scope",
+           fetched ~= nil and fetched[1] == true and fetched[2] == scoped,
+           fetched and (tostring(fetched[2]) .. " " .. tostring(fetched[4]) .. " bytes") or "never answered")
+    if not (fetched and fetched[1]) then return end
+    local h = s.HashFile(scoped)
+    result("HashFile of a provider's file: the MD5 the downloader reported, layer provider",
+           h ~= nil and h.md5 == fetched[3] and h.layer == "provider" and h.source == "wxl.test-assets",
+           h and (h.md5 .. " " .. h.layer .. " " .. h.source) or "none")
+    result("the base name is not replaced: nobody has it", s.Exists(LATER) == false)
+    run("WxlSelfTestScoped = WxlSelfTestScoped or UIParent:CreateTexture(nil, 'OVERLAY') " ..
+        "WxlSelfTestScoped:SetWidth(64) WxlSelfTestScoped:SetHeight(64) WxlSelfTestScoped:SetPoint('CENTER', 160, 0) " ..
+        "WxlSelfTestScoped:SetTexture('Interface\\\\WxlTest\\\\Later[wxl.selftest]') WxlSelfTestScoped:Show()")
+    result("OverrideFile puts the fetched file in place of the missing one", s.OverrideFile(LATER, scoped) == true and
+           s.Exists(LATER) == true)
+    run("WxlSelfTestLater:SetTexture(nil) WxlSelfTestLater:SetTexture('Interface\\\\WxlTest\\\\Later')")
+    print("NOTE look: right of the screen's centre, two bags for three seconds -- the fetched file by its " ..
+          "scoped name, and by the name it overrides")
+    neverAnswered, cancelledCount = false, nil
+    local request = wxl.relay.Call("wxl.test-assets.fetch", "never", nil, function() neverAnswered = true end)
+    result("Cancel: a request taken back by its caller", wxl.relay.Cancel(request) == true)
+    wait(3)
+end)
+
+step(function()
+    if not wxl.relay.Published("wxl.test-assets.fetch") then return end
+    wxl.relay.Call("wxl.test-assets.fetch", "cancelled", nil, function(ok, n) cancelledCount = n end)
+    wxl.relay.Call("wxl.test-assets.fetch", "missing", nil, function(ok, path, kind, open, pending, count)
+        cppMissing = { path = path, kind = kind, open = open, pending = pending, count = count }
+    end)
+    waitFor(function() return cancelledCount ~= nil and cppMissing ~= nil end, 3)
+end)
+
+step(function()
+    if not wxl.relay.Published("wxl.test-assets.fetch") then return end
+    result("the C++ service is told of the cancel, and the caller never answered", (cancelledCount or 0) >= 1 and
+           not neverAnswered, "cancelled " .. tostring(cancelledCount))
+    result("a C++ mod's OnFileMissing saw the names nobody had", cppMissing ~= nil and (cppMissing.count or 0) > 0,
+           cppMissing and string.format("%d, last %s kind %s", cppMissing.count, tostring(cppMissing.path),
+                                        tostring(cppMissing.kind)) or "no answer")
+    wxl.storage.RestoreFile(LATER)
+    run("WxlSelfTestLater:Hide() WxlSelfTestScoped:Hide()")
 end)
 
 -- The end ----------------------------------------------------------------------------------------
