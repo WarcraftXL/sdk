@@ -19,7 +19,11 @@
 --      asset events seen since the start;
 --  11. models: the loader's events and the appearance changes phase 4 caused, then wxl.m2 hangs a
 --      murloc on the player's head and takes it off again, and ModelBatchDrawn counts the batches
---      drawn meanwhile, for two seconds.
+--      drawn meanwhile, for two seconds;
+--  12. the model loader's points: wxl.test-points attaches to CM2Shared::FinishLoading and to
+--      M2Init (inlined in the stock client, de-inlined by its runtime), models the starting zones
+--      rarely show are asked for, and both handlers must fire and read the models through the
+--      engine headers while the models still parse.
 --
 -- Each check is one line in the log: PASS, FAIL, SKIP (what it needs is not there: a class
 -- without a cast-time spell, say) or NOTE (an event the server may not send). The chat box shows
@@ -761,26 +765,16 @@ step(function()
         result("wxl.point.Points", false, tostring(why))
         return
     end
-    result("wxl.point lists the six points of W1", #points >= 6, #points .. " listed")
+    result("wxl.point lists the seven points", #points >= 7, #points .. " listed")
     local byName = {}
     for _, p in ipairs(points) do byName[p.name] = p end
     for _, name in ipairs({ "CGCamera::UpdateCallback", "CM2Cache::CreateShared", "CGWorldFrame::RenderWorld",
-                            "vFrameScript_SignalEvent", "NetClient::ProcessMessage" }) do
+                            "vFrameScript_SignalEvent", "NetClient::ProcessMessage", "CM2Shared::FinishLoading",
+                            "M2Init(uint8_t*,uint32_t,M2Data&)" }) do
         local p = byName[name]
-        result("point " .. name .. " is here", p ~= nil and p.point ~= 0 and flag(p.flags, 4),
+        local id = p and wxl.point.Find(name)
+        result("point " .. name .. " is here", p ~= nil and p.point ~= 0 and flag(p.flags, 4) and id == p.point,
                p and (p.absent ~= "" and p.absent or p.signature) or "not listed")
-    end
-    local finish = byName["CM2Shared::FinishLoading"]
-    if finish then
-        local id, reason = wxl.point.Find(finish.name)
-        if flag(finish.flags, 4) then
-            result("CM2Shared::FinishLoading is a point here (x64)", id == finish.point, tostring(reason))
-        else
-            result("CM2Shared::FinishLoading is absent here, x64 only (x86)",
-                   id == nil and finish.absent:find("x64 only", 1, true) == 1, finish.absent)
-        end
-    else
-        result("CM2Shared::FinishLoading is listed", false, "not listed")
     end
 end)
 
@@ -1075,6 +1069,51 @@ step(function()
     result("Model:Detach takes it off", hat:Parent() == nil)
     hat:Release()
     hat = nil
+end)
+
+-- 12. A de-inlined point --------------------------------------------------------------------------
+
+-- Models the starting zones rarely show, so that at least one is read while the points are armed.
+local POINT_MODELS = { "Creature\\Ragnaros\\Ragnaros.m2", "Creature\\Illidan\\Illidan.m2",
+                       "Creature\\KelThuzad\\KelThuzad.m2", "Creature\\Arthaslichking\\ArthasLichKing.m2" }
+local pointModels, parsedBefore = {}, 0
+
+step(function()
+    print("phase 12: the model loader's points, M2Init de-inlined on the stock client")
+    if not TestPointsArm then
+        result("wxl.test-points is loaded", false, "TestPointsArm is not registered")
+        return
+    end
+    local ok, armed, why = pcall(TestPointsArm)
+    result("CM2Shared::FinishLoading and M2Init(uint8_t*,uint32_t,M2Data&) attached", ok and armed == true,
+           ok and why or tostring(armed))
+    if not (ok and armed) then return end
+    parsedBefore = modelCount.ModelParsed
+    local body = wxl.m2.ObjectModel(wxl.object.LocalPlayer())
+    for _, path in ipairs(POINT_MODELS) do
+        local model = body and wxl.m2.CreateModel(body, path)
+        if model then pointModels[#pointModels + 1] = model end
+    end
+    result("models of the mod's own asked for while the points are attached", #pointModels > 0,
+           #pointModels .. " of " .. #POINT_MODELS)
+    wait(3)
+end)
+
+step(function()
+    if not TestPointsCounts then return end
+    local finishes, inits, name, version, size = TestPointsCounts()
+    result("a handler on CM2Shared::FinishLoading fired (" .. tostring(finishes) .. " model(s))",
+           (finishes or 0) > 0, "no model finished loading in three seconds")
+    result("a handler on M2Init fired (" .. tostring(inits) .. "), de-inlined on the stock client",
+           (inits or 0) > 0 and inits <= finishes, "FinishLoading " .. tostring(finishes))
+    result("the handlers read the model through the engine headers: " .. tostring(name),
+           version == 264 and (size or 0) > 0 and type(name) == "string" and name ~= "",
+           string.format("version %s, %s bytes", tostring(version), tostring(size)))
+    result("models still parse with the recompiled FinishLoading (ModelParsed " ..
+           (modelCount.ModelParsed - parsedBefore) .. ")", modelCount.ModelParsed > parsedBefore)
+    TestPointsDisarm()
+    for _, model in ipairs(pointModels) do model:Release() end
+    pointModels = {}
 end)
 
 -- The end ----------------------------------------------------------------------------------------

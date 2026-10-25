@@ -1,0 +1,19 @@
+{
+  "$schema": "../../../schema/mod.json",
+  "id": "wxl.test-points",
+  "name": "Test points",
+  "version": "1.0.0",
+  "abi": "0.1.21",
+  "description": "Attaches to CM2Shared::FinishLoading and to M2Init, which the stock client inlines and its runtime de-inlines, when wxl.selftest asks, counts their calls and reads each model through the engine headers.",
+  "binaries": {
+    "win-x64": "bin/x64/test-points.dll",
+    "win-x86": "bin/x86/test-points.dll"
+  },
+  "requires": [
+    { "service": "wxl.point", "version": 1 },
+    { "service": "wxl.engine", "version": 1 }
+  ],
+  "optional": [
+    { "service": "wxl.script", "version": 1 }
+  ]
+}

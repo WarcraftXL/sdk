@@ -33,11 +33,12 @@ set(ingame_lua_mods
     wxl.test-watch-other)
 
 # The C++ mods of the suite, wxl.<name>/ each, built as <name>.dll from their sources.
-set(ingame_cpp_mods test-throw test-throw-ready test-manifest test-assets)
+set(ingame_cpp_mods test-throw test-throw-ready test-manifest test-assets test-points)
 set(ingame_test-throw_sources src/TestThrow.cpp)
 set(ingame_test-throw-ready_sources src/TestThrowReady.cpp)
 set(ingame_test-manifest_sources src/TestManifest.cpp)
 set(ingame_test-assets_sources src/TestAssets.cpp)
+set(ingame_test-points_sources src/TestPoints.cpp)
 
 # The Lua examples selftest calls into, copied from examples/ under their manifest ids.
 set(ingame_examples lua-services memory-report probe)
@@ -60,6 +61,8 @@ foreach(mod IN LISTS ingame_cpp_mods)
     endforeach()
     # WXL_MOD_ARCH is this tree's (tests/CMakeLists.txt): the library target alone.
     wxl_add_mod(${target} SOURCES ${sources} MANIFEST "${folder}/mod.json" OUTPUT_NAME ${mod})
+    # The engine headers: test-points reads the model through them.
+    target_link_libraries(${target} PRIVATE wxl::engine)
     if(MSVC)
         target_compile_options(${target} PRIVATE /WX)
     else()

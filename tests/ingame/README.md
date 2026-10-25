@@ -21,6 +21,7 @@ world with a character, wait about two minutes without touching anything, and re
 | `wxl.test-throw/` | C++ | an exception thrown by a handler or a script function costs that call only; `TestThrow()` |
 | `wxl.test-throw-ready/` | C++ | an exception thrown by `OnReady` disables the mod, and none of its code runs again |
 | `wxl.test-manifest/` | C++ | puts back the `mod.json` `wxl.test-reload` broke, which that mod cannot do once it is unloaded; `TestManifestRepair()` |
+| `wxl.test-points/` | C++ | attaches to `CM2Shared::FinishLoading` and the de-inlined `M2Init` on request and counts them, reading each model through the engine headers (phase 12) |
 | `wxl.test-assets/` | C++ | serves the add-on `WxlProvided` and `Interface\WxlTest\lower.wxltest` through an asset provider; one transform rewrites the add-on's Lua, another upper-cases `.wxltest` files (phase 10) |
 | `steps.txt` | text | the plan the probe shows with `/mark`: the few steps a person still plays |
 
@@ -57,6 +58,12 @@ taken off again. While it hangs, `ModelBatchDrawn` counts the batches the device
 seconds, then the selftest stops listening (the event comes thousands of times a frame): a PASS on
 both clients, a FAIL when none came or the runtime does not raise it. With `model-swap` in
 `Mods/`, the murloc is drawn as a gnoll.
+Phase 12 checks the model loader's points (abi 0.1.21): the C++ mod `wxl.test-points` attaches to
+`CM2Shared::FinishLoading` and to `M2Init(uint8_t*,uint32_t,M2Data&)` -- inlined into FinishLoading
+in the stock client, which its runtime then runs recompiled with M2Init a call of its own -- and
+four boss models are made, which the starting zones do not show. Both handlers must fire, read the
+model through the engine headers (its file name, version 264) and the models must still parse
+(`ModelParsed`). Without `wxl.test-points` in `Mods/` the phase is a FAIL.
 
 ## Building it
 
