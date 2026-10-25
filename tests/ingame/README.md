@@ -87,6 +87,12 @@ back. `MouseMotion` is a NOTE (move the mouse during those two seconds to see it
 `wxl.world.Trace` meets the ground under the player and nothing in the sky, `IsOutdoors` agrees
 with the client's `IsIndoors`, and `wxl.action.Face` turns the player half a radian and back.
 
+Phase 15 checks the game kept out of its mouse look and a head turned (abi 0.1.24): with
+`wxl.input.BlockMouseLook(true)`, the game's `MouselookStart()` leaves `IsMouselooking()` false;
+once the block is given back it works again. `wxl.pose.Head` turns the player's head left and up
+for a second (watch it), then `ReleaseHead` gives it back. `ImGuiFrame` raised by the runtime is a
+NOTE.
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the

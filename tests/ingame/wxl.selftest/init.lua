@@ -31,7 +31,10 @@
 --      selftest chose, put in place by an override, a request cancelled;
 --  14. the camera: wxl.camera places it ten yards above the head for two seconds while wxl.input
 --      holds the pointer, then gives both back; a trace meets the ground under the player,
---      IsOutdoors agrees with the client's IsIndoors, and wxl.action.Face turns the player and back.
+--      IsOutdoors agrees with the client's IsIndoors, and wxl.action.Face turns the player and back;
+--  15. the mouse look kept out: MouselookStart while wxl.input blocks it leaves the game out of
+--      its mouse look, and works again once the block is given back; wxl.pose turns the player's
+--      head for a second and gives it back; ImGuiFrame is raised by the runtime.
 --
 -- Each check is one line in the log: PASS, FAIL, SKIP (what it needs is not there: a class
 -- without a cast-time spell, say) or NOTE (an event the server may not send). The chat box shows
@@ -1428,6 +1431,43 @@ step(function()
     result("wxl.action.Face turned the player", now ~= nil and math.abs(now - faceTo) < 0.01,
            string.format("%s, asked %.3f", tostring(now), faceTo))
     wxl.action.Face(faceFrom)
+end)
+
+-- 15. The mouse look kept out, a head turned, Dear ImGui ----------------------------------------
+
+step(function()
+    print("phase 15: the mouse look kept out, a head turned, the runtime's Dear ImGui")
+    local input = wxl.input
+    if not (input and input.BlockMouseLook) then
+        result("wxl.input.BlockMouseLook", false, "this runtime is older than abi 0.1.24")
+        return
+    end
+    local ok, why = input.BlockMouseLook(true)
+    result("wxl.input.BlockMouseLook(true)", ok == true and input.MouseLookBlocked() == true, tostring(why))
+    run("MouselookStart()")
+    local asked, looking = ask("return IsMouselooking()")
+    result("MouselookStart while blocked leaves the game out of its mouse look", asked and not looking,
+           "IsMouselooking " .. tostring(looking))
+    run("MouselookStop()")
+    input.BlockMouseLook(false)
+    result("the block is given back", input.MouseLookBlocked() == false)
+    run("MouselookStart()")
+    asked, looking = ask("return IsMouselooking()")
+    result("and MouselookStart works again", asked and looking ~= nil, "IsMouselooking " .. tostring(looking))
+    run("MouselookStop()")
+
+    local me = wxl.object.LocalPlayer()
+    local turned, why2 = wxl.pose.Head(me, 0.6, 0.2, 0.1)
+    result("wxl.pose.Head turns the player's head (look: left and up, for a second)", turned == true, tostring(why2))
+    note("event ImGuiFrame is raised by this runtime", wxl.runtime.Raises("RenderScript", "OnImGuiFrame") == true,
+         "an older runtime")
+    wait(1)
+end)
+
+step(function()
+    if not (wxl.pose and wxl.pose.ReleaseHead) then return end
+    local released, why = wxl.pose.ReleaseHead(wxl.object.LocalPlayer())
+    result("wxl.pose.ReleaseHead gives the head back", released == true, tostring(why))
 end)
 
 -- The end ----------------------------------------------------------------------------------------
