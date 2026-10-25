@@ -741,7 +741,9 @@ Each service has a typed facade with its name and version sealed in: `wxl::Objec
 `wxl::ScriptService`, `wxl::StorageService`, `wxl::DataService`, `wxl::NetService`,
 `wxl::UiService`, `wxl::HookService`, `wxl::RawHookService`, `wxl::PatchService`, `wxl::PointService`,
 `wxl::ActionService`, `wxl::M2Service`, `wxl::M2FileService`, `wxl::GxService`,
-`wxl::CameraService`, `wxl::InputService`, `wxl::WorldService`
+`wxl::CameraService`, `wxl::InputService`, `wxl::WorldService`, `wxl::PoseService`,
+`wxl::ImGuiService` (`include/wxl/services/imgui.hpp`, which compiles Dear ImGui in: not in
+`services.hpp`)
 (`include/wxl/services/*.hpp`, or all of them through `include/wxl/services.hpp`). A facade is stateless -- construct one
 wherever it is needed -- and resolves its table on first use. It tests false while the runtime
 does not publish the service, and every call through it then answers `WXL_E_UNSUPPORTED` or the
@@ -1478,6 +1480,69 @@ answers it: false in a building or a cave the world marks indoors, where a mount
 
 The three services and `Face` run on the main thread, where your handlers of world events run;
 from another thread they are refused with `WXL_E_INVALID`.
+
+**Keeping the game out of its mouse look.** With the left button held the game turns its own
+camera, with the right one it turns the character, and either way it hides the pointer and
+forgets what is under it. A mod that steers the camera itself keeps the game out of that with
+`wxl::InputService::BlockMouseLook(true)` (abi `0.1.24`): a held button then turns nothing, hides
+nothing and starts no turn, and a click still does what a click does -- the left one selects, the
+right one talks, loots or attacks -- when it is let go within the game's click time (0.8 s), on
+what was under the pointer when it was pressed. A longer hold does nothing, as in the game, and
+the game's `MouselookStart` and its move with both buttons are kept out too. `BlockMouseLook(false)`
+gives it back; it holds while any mod blocks it, and goes with the mod.
+
+**Turning a head.** `wxl::PoseService::Head(unit, yaw, pitch, smoothing)` (abi `0.1.24`) turns a
+unit's head from where its body faces and holds it there, over whatever its animation does:
+radians, a positive yaw to the unit's left, a positive pitch up, `smoothing` the seconds to cover
+half the way (0 at once). The runtime holds the angles to what a neck allows (100 degrees of yaw,
+80 of pitch); keep your own narrower limits and turn the body (`Face`) past them.
+`ReleaseHead(unit)` gives the head back to the animation as smoothly. A head is the last mod's to
+turn it; a mod's heads go back when it goes, and a unit's when it leaves view.
+
+```cpp
+// The player looks where the camera aims, within 70 degrees either way.
+const float yaw = AngleBetween(playerFacing, cameraYaw);
+wxl::PoseService::Head(wxl::Player::Local(), std::clamp(yaw, -1.22f, 1.22f), pitch, 0.08);
+```
+
+### Windows of your own: Dear ImGui
+
+The runtime carries [Dear ImGui](https://github.com/ocornut/imgui) and
+[ImPlot](https://github.com/epezent/implot) (abi `0.1.24`) and draws them over the game's frame,
+after its interface, with the game's own Direct3D 9 device, on both clients. A mod adds its
+windows from `RenderScript::OnImGuiFrame`, which comes once a frame while some mod listens:
+
+```cpp
+#include "wxl/services/imgui.hpp"   // and target_link_libraries(<mod> PRIVATE wxl::imgui)
+
+class Panel : public wxl::RenderScript
+{
+    void OnImGuiFrame(uint64_t, float) override
+    {
+        if (!shown_ || !wxl::ImGuiService::Bind()) return;
+        ImGui::Begin("My mod", &shown_);
+        ImGui::SliderFloat("Speed", &speed_, 0.0f, 10.0f);
+        ImGui::End();
+    }
+    bool  shown_ = true;
+    float speed_ = 1.0f;
+};
+```
+
+Your mod compiles its own copy of Dear ImGui and ImPlot from the SDK (`wxl::imgui`), and
+`Bind()` points that copy at the runtime's contexts and allocator, which is how every mod's
+windows end up in one frame. It answers false, and logs once why, on a runtime without
+`wxl.imgui` or with another version of Dear ImGui: build against that runtime's SDK. Call it
+first in each `OnImGuiFrame`. Nothing is drawn, and nothing is set up, while no mod listens to
+the event: listen to it only while your windows are open, or return at once.
+
+The game window's mouse and keys reach Dear ImGui first: what it wants -- the pointer over one of
+its windows, a text field being typed in -- the game and the other mods do not see. Show the
+pointer while your windows are open (`wxl::InputService::CaptureCursor(false)` if your mod holds
+it). Text and spacing are sized for the window: the monitor's DPI scale, or a quarter step per
+1080 lines of height, from 1 to 3. The windows' places are not saved. The device going away and
+coming back (a resize, Alt+Tab out of full screen) is handled by the runtime. An `ImGui::Begin`
+without its `End` is mended at the end of the frame rather than ending the game.
 
 ### Profiling memory
 

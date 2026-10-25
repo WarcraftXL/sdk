@@ -1399,6 +1399,15 @@ keeps from the game. The pointer is let go while the game's window is not in fro
 and its hold on the pointer go when it reloads, is disabled or unloads. Whether a unit stands
 indoors is `unit:IsOutdoors()`. Everything here runs on the game's thread, where your handlers run.
 
+`wxl.input.BlockMouseLook(true)` (abi `0.1.24`) keeps the game out of its own mouse look: a held
+mouse button turns no camera and no character, hides no pointer, and a click let go within 0.8 s
+still selects (left) or talks, loots, attacks (right). `wxl.pose.Head(unit, yaw, pitch, smoothing)`
+turns a unit's head from where its body faces (radians: yaw positive to its left, pitch up;
+`smoothing` the seconds to cover half the way), held until `wxl.pose.ReleaseHead(unit)`; the
+runtime holds the angles to 100 degrees of yaw and 80 of pitch. Both are let go when the mod
+reloads, is disabled or unloads. Dear ImGui windows (`wxl.imgui`, `OnImGuiFrame`) are a C++ mod's:
+see "Windows of your own" in [Building a mod](building-a-mod.md).
+
 ### Where the memory goes: `wxl.footprint`
 
 The original client is a 32-bit program: it has 4 GB of addresses, and it fails when it cannot
@@ -1765,6 +1774,8 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.input.CaptureCursor(captured)`, `.CursorCaptured()`, `.PointerOverWorld()` | `true`: the pointer held at the centre, or let go; whether some mod holds it; whether it is over the world (abi `0.1.23`) |
 | `wxl.world.Trace(start, finish, flags)` | the first point of the world's geometry between two points, or `nil` (abi `0.1.23`) |
 | `wxl.action.Face(radians)` | `true`: your player turns that way and the server is told, as mouse look does (abi `0.1.23`) |
+| `wxl.input.BlockMouseLook(blocked)`, `.MouseLookBlocked()` | `true`: the game kept out of its own mouse look, clicks still act; whether some mod keeps it out (abi `0.1.24`) |
+| `wxl.pose.Head(unit, yaw, pitch, smoothing)`, `.ReleaseHead(unit)` | `true`: a unit's head turned from where its body faces and held, or given back (abi `0.1.24`) |
 
 ### Object methods
 
@@ -2000,6 +2011,7 @@ A few to start from:
 | `RenderScript` | `OnModelBatchDrawn` | `model`, `root_model`, then the numbers of the draw | the device drew one batch of a model (abi `0.1.20`) |
 | `WorldScript` | `OnMouseMotion`, `OnMouseWheel` | `dx`, `dy`; `delta`, `handled` | the mouse moved, in its own counts; the wheel turned, in notches, which an `Override` keeps from the game (abi `0.1.23`) |
 | `RenderScript` | `OnCameraUpdate` | `index`, `delta` | the client placed the world camera for the frame: set a view with `wxl.camera.SetView` here (abi `0.1.23`) |
+| `RenderScript` | `OnImGuiFrame` | `index`, `delta` | a frame of the runtime's Dear ImGui is open, for a C++ mod's windows (abi `0.1.24`) |
 
 The families `PlayerScript`, `GlueScript` and `ChatScript`, and `WorldScript`'s `OnZoneChanged`,
 `OnMouseoverChanged` and `OnCVarChanged`, came with `0.1.6`: a mod that uses one asks for
@@ -2029,7 +2041,8 @@ The [gameplay events](#gameplay-events), with the families `LootScript`, `ItemSc
 `RestoreFile` and `ReloadAsset`, and the `wxl.relay` module came with `0.1.22`.
 `WorldScript`'s `OnMouseMotion` and `OnMouseWheel`, `RenderScript`'s `OnCameraUpdate`,
 the `wxl.camera`, `wxl.input` and `wxl.world` modules, `wxl.action.Face` and `IsOutdoors` came with
-`0.1.23`.
+`0.1.23`. `wxl.input.BlockMouseLook` and `MouseLookBlocked`, the `wxl.pose` module and
+`RenderScript`'s `OnImGuiFrame` came with `0.1.24`.
 
 ### Gameplay events
 

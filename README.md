@@ -5,7 +5,7 @@
 **The contract a WarcraftXL mod is written against**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![ABI](https://img.shields.io/badge/ABI-0.1.23-blue.svg)](include/wxl/abi.h)
+[![ABI](https://img.shields.io/badge/ABI-0.1.24-blue.svg)](include/wxl/abi.h)
 [![C++](https://img.shields.io/badge/C%2B%2B-17%20and%20up-blue.svg)](#-getting-started)
 [![Header only](https://img.shields.io/badge/header--only-yes-lightgrey.svg)](include/wxl)
 
@@ -219,6 +219,8 @@ Beyond events, a runtime publishes services, and a mod asks for the ones it need
 | `wxl.camera` | the world camera: where it is, and placing it instead of the client each frame | yes |
 | `wxl.input` | the pointer held at the centre of the window, for a mod that steers with the mouse | yes |
 | `wxl.world` | the world's geometry: the first point of it on a segment | yes |
+| `wxl.pose` | a unit's head turned over its animation | yes |
+| `wxl.imgui` | Dear ImGui and ImPlot drawn in the game's frame, for a native mod's windows | yes |
 | `wxl.hook` | hook points a runtime names and keeps working | yes |
 | `wxl.hook.raw` | a detour at a raw address | no: runtimes that load into a shipped binary |
 | `wxl.patch` | bytes written into the image | no: runtimes that load into a shipped binary |
@@ -303,7 +305,7 @@ supplies only the bindings that reach its own client.
 
 ## 🔢 Versioning
 
-`major.minor.feature`, in [`abi.h`](include/wxl/abi.h): today `0.1.23`.
+`major.minor.feature`, in [`abi.h`](include/wxl/abi.h): today `0.1.24`.
 
 - **Major** changes when an existing field, signature or id changes meaning. A runtime refuses a
   mod built against a different major.
