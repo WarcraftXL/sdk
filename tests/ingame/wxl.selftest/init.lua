@@ -28,7 +28,10 @@
 --      hashes (served bytes, an archive's file, asynchronously), textures and the player's model read
 --      again, a service of its own through wxl.relay, then wxl.test-assets' downloader: a pending
 --      texture fetched on its thread, served in the selftest's scope, put in place by an override,
---      a request cancelled.
+--      a request cancelled;
+--  14. the camera: wxl.camera places it ten yards above the head for two seconds while wxl.input
+--      holds the pointer, then gives both back; a trace meets the ground under the player,
+--      IsOutdoors agrees with the client's IsIndoors, and wxl.action.Face turns the player and back.
 --
 -- Each check is one line in the log: PASS, FAIL, SKIP (what it needs is not there: a class
 -- without a cast-time spell, say) or NOTE (an event the server may not send). The chat box shows
@@ -1350,6 +1353,84 @@ step(function()
                                         tostring(cppMissing.kind)) or "no answer")
     wxl.storage.RestoreFile(LATER)
     run("WxlSelfTestLater:Hide() WxlSelfTestScoped:Hide()")
+end)
+
+-- 14. The camera, the pointer and the world ------------------------------------------------------
+
+local cameraFrames, placedSeen, mouseMoves = 0, nil, 0
+local cameraId, motionId, placedAt = nil, nil, nil
+local faceFrom, faceTo = nil, nil
+
+step(function()
+    print("phase 14: the camera, the pointer and the world")
+    local camera = wxl.camera
+    if not (camera and camera.Position) then
+        result("wxl.camera", false, "this runtime has no camera service")
+        return
+    end
+    local position, fov, pivot = camera.Position(), camera.Fov(), camera.Pivot()
+    result("wxl.camera.Position, Fov and Pivot read the world camera", position ~= nil and fov ~= nil and pivot ~= nil,
+           string.format("%s %s %s", tostring(position and position.z), tostring(fov), tostring(pivot and pivot.z)))
+    result("wxl.camera.Cinematic: none while playing", camera.Cinematic() == false)
+    if not pivot then return end
+    -- Ten yards above the head, looking down: set at every update, read back at the next.
+    placedAt = { x = pivot.x, y = pivot.y, z = pivot.z + 10 }
+    cameraId = Observe("RenderScript", "OnCameraUpdate", function()
+        cameraFrames = cameraFrames + 1
+        local now = camera.Position()
+        if now and math.abs(now.z - placedAt.z) < 0.01 then placedSeen = true end
+        camera.SetView(placedAt, { x = 0.01, y = 0, z = -1 }, 0)
+    end)
+    motionId = Observe("WorldScript", "OnMouseMotion", function() mouseMoves = mouseMoves + 1 end)
+    local held, why = wxl.input.CaptureCursor(true)
+    result("wxl.input.CaptureCursor(true)", held == true and wxl.input.CursorCaptured() == true, tostring(why))
+    note("wxl.input.PointerOverWorld at the centre", wxl.input.PointerOverWorld() == true,
+         "a frame of the interface may stand at the centre of the screen")
+    wait(2)
+end)
+
+step(function()
+    if not cameraId then return end
+    Unobserve(cameraId)
+    cameraId = nil
+    local camera = wxl.camera
+    result("event CameraUpdate (" .. cameraFrames .. " in two seconds)", cameraFrames > 10)
+    result("wxl.camera.SetView: the camera is where the view put it", placedSeen == true)
+    result("wxl.camera.ReleaseView", camera.ReleaseView() == true)
+    wxl.input.CaptureCursor(false)
+    result("wxl.input.CaptureCursor(false) lets the pointer go", wxl.input.CursorCaptured() == false)
+    Unobserve(motionId)
+    note("event MouseMotion (" .. mouseMoves .. " while held)", mouseMoves > 0, "nobody moved the mouse")
+
+    local me = wxl.object.LocalPlayer()
+    local feet = me and me:Position()
+    if feet then
+        local ground = wxl.world.Trace({ x = feet.x, y = feet.y, z = feet.z + 3 }, { x = feet.x, y = feet.y, z = feet.z - 10 })
+        result("wxl.world.Trace meets the ground under the player", ground ~= nil and math.abs(ground.z - feet.z) < 2,
+               ground and string.format("%.2f under %.2f", ground.z, feet.z) or "nothing met")
+        local sky = wxl.world.Trace({ x = feet.x, y = feet.y, z = feet.z + 500 }, { x = feet.x, y = feet.y, z = feet.z + 501 })
+        result("and nothing in the empty sky", sky == nil)
+        local outdoors = me:IsOutdoors()
+        local asked, indoors = ask("return IsIndoors()")
+        result("Unit:IsOutdoors agrees with the client's IsIndoors", type(outdoors) == "boolean" and asked and
+               (outdoors == (indoors == nil)), tostring(outdoors) .. " / IsIndoors " .. tostring(indoors))
+        faceFrom = me:Facing()
+        if faceFrom then
+            faceTo = (faceFrom + 0.5) % (2 * math.pi)
+            local done, why = wxl.action.Face(faceTo)
+            result("wxl.action.Face answers true", done == true, tostring(why))
+            wait(0.5)
+        end
+    end
+end)
+
+step(function()
+    if not faceTo then return end
+    local me  = wxl.object.LocalPlayer()
+    local now = me and me:Facing()
+    result("wxl.action.Face turned the player", now ~= nil and math.abs(now - faceTo) < 0.01,
+           string.format("%s, asked %.3f", tostring(now), faceTo))
+    wxl.action.Face(faceFrom)
 end)
 
 -- The end ----------------------------------------------------------------------------------------

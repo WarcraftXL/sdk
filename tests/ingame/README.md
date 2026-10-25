@@ -80,6 +80,13 @@ an override, by the name it lacked (right of the centre: two bags for three seco
 at), and a request cancelled (the C++ service is told). Without `wxl.test-assets`, the downloader's
 checks are a SKIP.
 
+Phase 14 checks the camera and the pointer (abi 0.1.23): `wxl.camera` reads the world camera,
+then places it ten yards above the player's head at every `CameraUpdate` for two seconds (the
+view is seen while it lasts), while `wxl.input` holds the pointer at the centre; both are given
+back. `MouseMotion` is a NOTE (move the mouse during those two seconds to see it). Then
+`wxl.world.Trace` meets the ground under the player and nothing in the sky, `IsOutdoors` agrees
+with the client's `IsIndoors`, and `wxl.action.Face` turns the player half a radian and back.
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the
