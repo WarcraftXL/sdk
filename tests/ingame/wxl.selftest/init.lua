@@ -34,7 +34,12 @@
 --      IsOutdoors agrees with the client's IsIndoors, and wxl.action.Face turns the player and back;
 --  15. the mouse look kept out: MouselookStart while wxl.input blocks it leaves the game out of
 --      its mouse look, and works again once the block is given back; wxl.pose turns the player's
---      head for a second and gives it back; ImGuiFrame is raised by the runtime.
+--      head for a second and gives it back; ImGuiFrame is raised by the runtime;
+--  16. models of the world: wxl.m2 makes a murloc in the world's scene and places it on the
+--      ground three yards in front of the player, plays its animation, fades it, reads where the
+--      player's head is in the world, then takes it away; wxl.test-bones watches the bones of the
+--      character models for a second; the casts seen since the start say where a ground spell
+--      landed.
 --
 -- Each check is one line in the log: PASS, FAIL, SKIP (what it needs is not there: a class
 -- without a cast-time spell, say) or NOTE (an event the server may not send). The chat box shows
@@ -1497,6 +1502,97 @@ step(function()
     if not (wxl.pose and wxl.pose.ReleaseHead) then return end
     local released, why = wxl.pose.ReleaseHead(wxl.object.LocalPlayer())
     result("wxl.pose.ReleaseHead gives the head back", released == true, tostring(why))
+end)
+
+-- 16. Models of the world, bone watchers, the cast's ground point -------------------------------------
+
+-- The casts that named a destination since the start (a ground spell, a blink): the point and the
+-- transport it was measured on. The args after miss_reasons came with abi 0.1.21.
+local destinations = 0
+local lastDestination
+local function onCast(...)
+    local args = { ... }
+    if args[17] == true and type(args[18]) == "table" then
+        destinations = destinations + 1
+        lastDestination = string.format("spell %d at %.1f %.1f %.1f", args[6] or 0, args[18].x, args[18].y, args[18].z)
+    end
+end
+Observe("ObjectScript", "OnSpellCastStart", onCast)
+Observe("ObjectScript", "OnSpellCastGo", onCast)
+
+local placed
+
+step(function()
+    print("phase 16: models of the world, bone watchers, the cast's ground point")
+    local m2 = wxl.m2
+    if not (m2 and m2.CreateWorldModel) then
+        result("wxl.m2.CreateWorldModel", false, "this runtime is older than abi 0.1.21")
+        return
+    end
+    local me = wxl.object.LocalPlayer()
+    local at, facing = me:Position(), me:Facing()
+    if not (at and facing) then
+        skip("models of the world", "the player has no position")
+        return
+    end
+    local ground, why = m2.GroundHeight(at, 3, 10)
+    result("wxl.m2.GroundHeight under the player", type(ground) == "number" and math.abs(ground - at.z) < 3,
+           ground and string.format("%.2f, the player at %.2f", ground, at.z) or tostring(why))
+    local body = m2.ObjectModel(me)
+    local head = body and m2.AttachmentWorld(body, 11)
+    result("wxl.m2.AttachmentWorld: the player's head in the world", type(head) == "table" and head.z > at.z,
+           head and string.format("%.2f %.2f %.2f", head.x, head.y, head.z) or "none")
+
+    placed = m2.CreateWorldModel("Creature\\Murloc\\Murloc.m2")
+    result("wxl.m2.CreateWorldModel: a model of the world's scene", placed ~= nil)
+    if not placed then return end
+    local x, y = at.x + 3 * math.cos(facing), at.y + 3 * math.sin(facing)
+    local z = m2.GroundHeight({ x = x, y = y, z = at.z }, 3, 10) or at.z
+    local ok, why2 = placed:Place({ position = { x = x, y = y, z = z }, yaw = facing + math.pi })
+    result("Model:Place three yards in front of the player, facing it (look: a murloc for two seconds)",
+           ok == true, tostring(why2))
+    result("Model:PlayAnimation (stand)", placed:PlayAnimation(0, 1) == true)
+    wait(1)
+end)
+
+step(function()
+    if not placed then return end
+    local m2 = wxl.m2
+    result("wxl.m2.ModelLoaded: the placed model has loaded", m2.ModelLoaded(placed) == true)
+    local length = m2.AnimationLength(placed, 0)
+    result("wxl.m2.AnimationLength of its stand", type(length) == "number" and length > 0, tostring(length))
+    placed:SetAlpha(0.5)
+    placed:SetEmitting(false)
+    result("Model:SetAlpha and SetEmitting (look: it fades to half)", true)
+
+    local asked, present = ask("return TestBonesArm ~= nil")
+    if asked and present then
+        local ok, armed = ask("return TestBonesArm()")
+        result("wxl.test-bones watches the bones of character models", ok and armed == true, tostring(armed))
+    else
+        result("wxl.test-bones is loaded", false, "TestBonesArm is not registered in the client's Lua")
+    end
+    wait(1)
+end)
+
+step(function()
+    local asked, counts = ask("return TestBonesCounts and TestBonesCounts()")
+    if asked and type(counts) == "string" then
+        local files, frames, bones, root, matrices = counts:match("^(%d+)|(%d+)|(%d+)|(-?%d+)|(%d)$")
+        result("the bone watcher took the character files (" .. tostring(files) .. ") and was handed " ..
+               tostring(frames) .. " frame(s)", (tonumber(files) or 0) > 0 and (tonumber(frames) or 0) > 0, counts)
+        result("each frame had its matrices, and BoneInfo read the root bone (parent -1)",
+               matrices == "1" and root == "-1" and (tonumber(bones) or 0) > 0, counts)
+        run("TestBonesDisarm()")
+    end
+    if placed then
+        placed:Release()
+        placed = nil
+        result("Model:Release takes the model out of the world", true)
+    end
+    note("a cast named its ground point (" .. destinations .. " since the start)", destinations > 0,
+         "only a ground-targeted spell or a blink names one" .. (lastDestination and (": " .. lastDestination) or ""))
+    if lastDestination then print("     " .. lastDestination) end
 end)
 
 -- The end ----------------------------------------------------------------------------------------

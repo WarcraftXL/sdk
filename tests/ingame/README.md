@@ -22,6 +22,7 @@ world with a character, wait about two minutes without touching anything, and re
 | `wxl.test-throw-ready/` | C++ | an exception thrown by `OnReady` disables the mod, and none of its code runs again |
 | `wxl.test-manifest/` | C++ | puts back the `mod.json` `wxl.test-reload` broke, which that mod cannot do once it is unloaded; `TestManifestRepair()` |
 | `wxl.test-points/` | C++ | attaches to `CM2Shared::FinishLoading` and the de-inlined `M2Init` on request and counts them, reading each model through the engine headers (phase 12) |
+| `wxl.test-bones/` | C++ | watches the bones of character models on request, on the client's animate threads, counts the files taken and the frames handed over and reads a file's root bone through `BoneInfo` (phase 16) |
 | `wxl.test-assets/` | C++ | serves the add-on `WxlProvided` and `Interface\WxlTest\lower.wxltest` through an asset provider; one transform rewrites the add-on's Lua, another upper-cases `.wxltest` files (phase 10); plays a downloader through its `wxl.relay` service `wxl.test-assets.fetch`, and keeps the last name the client could not find (phase 13) |
 | `steps.txt` | text | the plan the probe shows with `/mark`: the few steps a person still plays |
 
@@ -95,6 +96,15 @@ Phase 15 checks the game kept out of its mouse look and a head turned (abi 0.1.2
 once the block is given back it works again. `wxl.pose.Head` turns the player's head left and up
 for a second (watch it), then `ReleaseHead` gives it back. `ImGuiFrame` raised by the runtime is a
 NOTE.
+
+Phase 16 checks models of the world (abi 0.1.21): `wxl.m2.GroundHeight` finds the ground under the
+player, `AttachmentWorld` the player's head above it; a murloc made with `CreateWorldModel` stands
+on the ground three yards in front of the player, facing it, for two seconds (watch it: it fades to
+half its alpha after one), then `Release` takes it away. The C++ mod `wxl.test-bones` watches the
+bones of the character models for a second: the files its filter took, the frames handed over, the
+matrices there and the root bone read by `BoneInfo` (parent -1). A cast that named a ground point
+since the start (a ground-targeted spell, a blink) is a NOTE with the point; cast one before the
+run to see it. Without `wxl.test-bones` in `Mods/` its checks are a FAIL.
 
 ## Building it
 
