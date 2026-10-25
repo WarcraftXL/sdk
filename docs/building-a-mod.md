@@ -472,7 +472,13 @@ unit.Assist();                              // targets what it targets, as /assi
 wxl::ActionService::ClearTarget();          // as Escape
 wxl::ActionService::StopCasting();
 wxl::ActionService::MoveTo(wxl_vec3{-8913.0f, 554.0f, 93.0f}); // click-to-move to a point
+wxl::ActionService::Face(1.57);             // turns the player to face west, as mouse look does
 ```
+
+`Face` (abi `0.1.23`) takes radians as the client counts them: 0 faces north (+x), and the angle
+grows towards the west (+y). The character turns at once and the server is told, as when the
+player steers with the right mouse button; it is refused (`WXL_E_FAILED`) while the client would
+not let the player turn: dead, stunned, on a flight path.
 
 Each answers a `wxl_result`: `WXL_OK` when the client took the action, `WXL_E_FAILED` when it
 refused it, `WXL_E_UNSUPPORTED` out of the world. An action runs on the thread that runs the game,
@@ -561,6 +567,7 @@ rows as the methods, by `wxl-object-members`.
 | `IsSwimming()` | `bool` | Whether it swims, as the client's IsSwimming reads it. Came with abi 0.1.18: WXL_E_UNSUPPORTED on an older runtime. |
 | `IsFlying()` | `bool` | Whether it flies, as the client's IsFlying reads it. Came with abi 0.1.18: WXL_E_UNSUPPORTED on an older runtime. |
 | `IsFalling()` | `bool` | Whether it is falling, as the client's IsFalling reads it. Came with abi 0.1.18: WXL_E_UNSUPPORTED on an older runtime. |
+| `IsOutdoors()` | `bool` | Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused. Came with abi 0.1.23: WXL_E_UNSUPPORTED on an older runtime. |
 
 **`wxl::Player`**: Players
 
@@ -733,7 +740,8 @@ same value, in the same type: health is an `int32_t` both ways, as the client ho
 Each service has a typed facade with its name and version sealed in: `wxl::ObjectService`,
 `wxl::ScriptService`, `wxl::StorageService`, `wxl::DataService`, `wxl::NetService`,
 `wxl::UiService`, `wxl::HookService`, `wxl::RawHookService`, `wxl::PatchService`, `wxl::PointService`,
-`wxl::ActionService`, `wxl::M2Service`, `wxl::M2FileService`, `wxl::GxService`
+`wxl::ActionService`, `wxl::M2Service`, `wxl::M2FileService`, `wxl::GxService`,
+`wxl::CameraService`, `wxl::InputService`, `wxl::WorldService`
 (`include/wxl/services/*.hpp`, or all of them through `include/wxl/services.hpp`). A facade is stateless -- construct one
 wherever it is needed -- and resolves its table on first use. It tests false while the runtime
 does not publish the service, and every call through it then answers `WXL_E_UNSUPPORTED` or the
@@ -1385,6 +1393,94 @@ init_ = wxl::points::M2Init_uint8_t_uint32_t_M2Data::Replace(
 
 The runtime's recompiled body is checked against Wow.exe's own code: run on the same model files,
 both answer the same and leave the same bytes (core's `stock` test).
+
+### The camera, the mouse and the world's geometry
+
+Three services (abi `0.1.23`) let a mod take the camera and steer it with the mouse: a camera
+that follows the character from over its shoulder, a free camera, a top-down one.
+
+**Placing the camera.** The client places its world camera once a frame, and
+`RenderScript::OnCameraUpdate` comes right after, before anything is drawn from it. A view set
+there with `wxl::CameraService::SetView` is the one the frame is drawn from: where the camera is,
+where it looks, and a field of view in radians (0 keeps the client's). It stays until
+`ReleaseView()`, so set it again each frame to move with the frame.
+
+```cpp
+class Overhead : public wxl::RenderScript
+{
+    void OnCameraUpdate(uint64_t, float) override
+    {
+        // The point the client's camera turns around: the character, at the height it looks from.
+        const wxl::Expected<wxl_vec3> pivot = wxl::CameraService::Pivot();
+        if (!pivot || wxl::CameraService::Cinematic()) return;
+        const wxl_vec3 eye{pivot->x - 6.0f, pivot->y, pivot->z + 8.0f};
+        const wxl_vec3 look{pivot->x - eye.x, pivot->y - eye.y, pivot->z - eye.z};
+        wxl::CameraService::SetView(eye, look, 0.0);
+    }
+};
+```
+
+`Position()`, `Forward()`, `Up()` and `Fov()` read where the camera is this frame, `Pivot()` the
+point the client's own camera turns around (higher on a tauren than on a gnome, higher on a
+mount), `Cinematic()` whether a cinematic has the view, which a view set by a mod does not
+override. Everything the client does from the camera follows the view you set: the world drawn,
+the sound heard, and what is under the pointer. The client keeps its own camera going underneath,
+so `ReleaseView()` puts it back as the player left it. When two mods set a view, the later is
+drawn; when it lets go, the earlier comes back. A mod's view goes when the mod is disabled or
+unloaded. Coordinates are the client's world coordinates, in yards: x north, y west, z up.
+
+**Steering with the mouse.** `wxl::InputService::CaptureCursor(true)` hides the pointer and holds it
+at the centre of the game's window. The game still sees it there: what is at the centre of the
+screen is the mouseover, a left click targets it and a right click talks to it or loots it, and
+nothing tells the game a button is held. The motion arrives as `WorldScript::OnMouseMotion(dx,
+dy)`, in the mouse's own counts (right and towards you are positive), whether the pointer is held
+or not; the wheel as `WorldScript::OnMouseWheel(delta)`, in notches (away from you is positive),
+which a handler keeps from the game by answering `handled`:
+
+```cpp
+class Steer : public wxl::WorldScript
+{
+    float yaw_ = 0.0f, pitch_ = 0.0f;
+
+    void OnMouseMotion(int32_t dx, int32_t dy) override
+    {
+        if (!wxl::InputService::CursorCaptured()) return;
+        yaw_ -= dx * 0.004f;   // right turns clockwise, as facings shrink
+        pitch_ -= dy * 0.004f; // towards you looks down
+    }
+
+    void OnMouseWheel(float delta, wxl::Answer handled) override
+    {
+        zoom_ += delta;
+        handled.Set(); // the game's own zoom never sees it
+    }
+
+    float zoom_ = 0.0f;
+};
+```
+
+`CursorCaptured()` says whether some mod holds the pointer, `PointerOverWorld()` whether it is over
+the world rather than a frame of the interface. The pointer is let go while the game's window is
+not in front, and held again when it comes back; a mod's hold goes when it is disabled or unloaded.
+With the character's facing (`wxl::ActionService::Face`) and the camera above, that is all a
+third-person camera needs.
+
+**The world's geometry.** `wxl::WorldService::Trace(start, end[, flags])` answers the first point of
+the world between two points, the way the client's own camera and the spells' line of sight test
+it: the ground, buildings and the collision of placed objects, never a unit or a player. It answers
+nothing when the way is clear. `flags` is the client's hit-test mask: `WXL_TRACE_CAMERA` (the
+default: what the client's camera stops at), `WXL_TRACE_LINE_OF_SIGHT`, `WXL_TRACE_LIQUID`.
+
+```cpp
+if (const std::optional<wxl_vec3> wall = wxl::WorldService::Trace(head, eye))
+    eye = *wall;  // pull the camera in front of what is between it and the head
+```
+
+Whether the character stands indoors is `wxl::Unit::IsOutdoors()`, as the client's `IsOutdoors`
+answers it: false in a building or a cave the world marks indoors, where a mount is refused.
+
+The three services and `Face` run on the main thread, where your handlers of world events run;
+from another thread they are refused with `WXL_E_INVALID`.
 
 ### Profiling memory
 

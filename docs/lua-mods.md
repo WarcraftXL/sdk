@@ -478,6 +478,7 @@ The events that can be answered, as the SDK stands:
 | Event | Answers through | What answering does |
 |---|---|---|
 | `WorldScript:OnInput` | `handled` | the client never sees the input |
+| `WorldScript:OnMouseWheel` | `handled` | the game never sees the turn of the wheel (abi `0.1.23`) |
 | `WorldScript:OnSoundPlay` | `suppressed` | the sound does not play |
 | `AssetScript:OnFileOpen` | `redirect` | the client opens the path you return instead, for an open on the main thread; on any thread, use `wxl.storage.Redirect` |
 | `NetScript:OnMessageReceived` | `suppressed` | the client never sees the server's message |
@@ -655,8 +656,10 @@ item:Use()             -- uses an item, on what it picks itself; item:Use(unit) 
 `wxl.action` has the same and what needs no object: `wxl.action.ClearTarget()`,
 `wxl.action.StopCasting()`, `wxl.action.CastSpell(id)` at your current target, and
 `wxl.action.MoveTo({ x = ..., y = ..., z = ... })`, which walks your player there as a
-click-to-move click does. An action runs on the thread that runs the game, where your handlers
-of world events run.
+click-to-move click does, and `wxl.action.Face(radians)` (abi `0.1.23`), which turns your player
+the way steering with the mouse does and tells the server: 0 faces north, the angle grows towards
+the west. An action runs on the thread that runs the game, where your handlers of world events
+run.
 
 ### One object, one value
 
@@ -1358,6 +1361,48 @@ or `nil` and why; `patch:Restore()` puts the old bytes back. Your mod's patches 
 newest first, when it reloads or stops, so a reload starts from the client as it was. `Matches`
 checks bytes without writing, `Find(bytes, after)` searches the program's constant data for them.
 
+### The camera, the mouse and the world: `wxl.camera`, `wxl.input`, `wxl.world`
+
+Three modules (abi `0.1.23`) let a mod take the camera and steer it with the mouse. The client
+places its world camera once a frame, and `RenderScript`'s `OnCameraUpdate` comes right after,
+before anything is drawn: a view set there is the one the frame is drawn from.
+
+```lua
+local yaw, pitch = 0, -0.3
+
+Observe("WorldScript", "OnMouseMotion", function(dx, dy)
+    yaw, pitch = yaw - dx * 0.004, pitch - dy * 0.004
+end)
+
+Observe("RenderScript", "OnCameraUpdate", function(index, delta)
+    local head = wxl.camera.Pivot()                 -- the character, at the height it looks from
+    if not head or wxl.camera.Cinematic() then return end
+    local forward = { x = math.cos(pitch) * math.cos(yaw), y = math.cos(pitch) * math.sin(yaw), z = math.sin(pitch) }
+    local eye = { x = head.x - forward.x * 4, y = head.y - forward.y * 4, z = head.z - forward.z * 4 }
+    eye = wxl.world.Trace(head, eye) or eye         -- in front of a wall, never through it
+    wxl.camera.SetView(eye, forward, 0)             -- 0 keeps the client's field of view
+end)
+
+wxl.input.CaptureCursor(true)                       -- hidden, held at the centre of the window
+```
+
+| Function | Answers |
+|---|---|
+| `wxl.camera.Position()`, `.Forward()`, `.Up()` | where the camera is this frame, as `{ x, y, z }`; where it looks; the top of the screen |
+| `wxl.camera.Fov()`, `.Pivot()`, `.Cinematic()` | its field of view in radians; the point the client's camera turns around (the character at its eye height); whether a cinematic has the view |
+| `wxl.camera.SetView(position, forward, fov)` | `true`: the camera is placed there from now on, until `ReleaseView()` or the mod goes; `fov` 0 keeps the client's. Of two mods' views the later is drawn, and the earlier comes back when it lets go |
+| `wxl.camera.ReleaseView()` | `true`: the client has its camera again, as the player left it |
+| `wxl.input.CaptureCursor(captured)` | `true`: the pointer is hidden and held at the centre (`true`), or the mod's hold is let go (`false`). The game still picks and clicks at the centre: what is there is the mouseover, a left click targets it, a right click talks to it |
+| `wxl.input.CursorCaptured()`, `.PointerOverWorld()` | whether some mod holds the pointer; whether it is over the world rather than the interface |
+| `wxl.world.Trace(start, finish, flags)` | the first point of the ground, a building or a placed object between the two, or `nil` when the way is clear; `flags` (left out: the camera's) is the client's hit-test mask, `0x100111` the line of sight of spells |
+
+The mouse's motion arrives as `WorldScript`'s `OnMouseMotion(dx, dy)`, in the mouse's own counts
+(right and towards you positive), whether the pointer is held or not; the wheel as
+`OnMouseWheel(delta)`, in notches (away from you positive), which an `Override` answering `true`
+keeps from the game. The pointer is let go while the game's window is not in front. A mod's view
+and its hold on the pointer go when it reloads, is disabled or unloads. Whether a unit stands
+indoors is `unit:IsOutdoors()`. Everything here runs on the game's thread, where your handlers run.
+
 ### Where the memory goes: `wxl.footprint`
 
 The original client is a 32-bit program: it has 4 GB of addresses, and it fails when it cannot
@@ -1720,6 +1765,11 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.m2.CreateModel(model, path)` | a `Model` of your mod's in that model's scene: `:Attach`, `:AttachToBone`, `:Detach`, `:Parent`, `:SetGeosets`, `:ReplaceTexture`, `:Release` (see [Models](#models-wxlm2)) |
 | `wxl.point.Points()`, `.Find(name)` | the engine functions a C++ mod can run code before, instead of or after (name, signature, thread, flags, and `absent`: why this runtime lacks one); the id of one this runtime has (abi `0.1.16`). Attaching from Lua is to come; see "Changing the engine: points" in [Building a mod](building-a-mod.md) |
 | `wxl.engine.Layout(name)` | the layout hash of an engine structure (`"CM2Shared"`) as this runtime lays it out, for a tool comparing it with the SDK's engine headers (abi `0.1.21`); `nil, "not_found"` for a type it does not describe |
+| `wxl.camera.Position()`, `.Forward()`, `.Up()`, `.Fov()`, `.Pivot()`, `.Cinematic()` | where the world camera is and looks, its field of view, the point the client's camera turns around, whether a cinematic has the view (abi `0.1.23`) |
+| `wxl.camera.SetView(position, forward, fov)`, `.ReleaseView()` | `true`: the camera is placed from now on, until the mod releases it or goes; see [The camera, the mouse and the world](#the-camera-the-mouse-and-the-world-wxlcamera-wxlinput-wxlworld) |
+| `wxl.input.CaptureCursor(captured)`, `.CursorCaptured()`, `.PointerOverWorld()` | `true`: the pointer held at the centre, or let go; whether some mod holds it; whether it is over the world (abi `0.1.23`) |
+| `wxl.world.Trace(start, finish, flags)` | the first point of the world's geometry between two points, or `nil` (abi `0.1.23`) |
+| `wxl.action.Face(radians)` | `true`: your player turns that way and the server is told, as mouse look does (abi `0.1.23`) |
 
 ### Object methods
 
@@ -1820,6 +1870,7 @@ method, a container every item method. The tables are made from the runtime's ta
 | `IsSwimming()` | `boolean` | Whether it swims, as the client's IsSwimming reads it. Came with abi 0.1.18. |
 | `IsFlying()` | `boolean` | Whether it flies, as the client's IsFlying reads it. Came with abi 0.1.18. |
 | `IsFalling()` | `boolean` | Whether it is falling, as the client's IsFalling reads it. Came with abi 0.1.18. |
+| `IsOutdoors()` | `boolean` | Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused. Came with abi 0.1.23. |
 
 **Players**
 
@@ -1952,6 +2003,8 @@ A few to start from:
 | `AssetScript` | `OnModelParsed`, `OnSkinProfileParsed`, `OnModelSequenceLoad` | `path`, `file`, then the header, the skin or the sequence | the model loader's stages; see [Models](#models-wxlm2) (abi `0.1.20`) |
 | `AssetScript` | `OnFileMissing` | `path`, `base`, `scope`, `kind`, `open`, `pending`, `loader` | the client looked for a file no layer has; see [Assets on demand](#assets-on-demand-missing-names-hashes-scopes-overrides-reloads) (abi `0.1.22`) |
 | `RenderScript` | `OnModelBatchDrawn` | `model`, `root_model`, then the numbers of the draw | the device drew one batch of a model (abi `0.1.20`) |
+| `WorldScript` | `OnMouseMotion`, `OnMouseWheel` | `dx`, `dy`; `delta`, `handled` | the mouse moved, in its own counts; the wheel turned, in notches, which an `Override` keeps from the game (abi `0.1.23`) |
+| `RenderScript` | `OnCameraUpdate` | `index`, `delta` | the client placed the world camera for the frame: set a view with `wxl.camera.SetView` here (abi `0.1.23`) |
 
 The families `PlayerScript`, `GlueScript` and `ChatScript`, and `WorldScript`'s `OnZoneChanged`,
 `OnMouseoverChanged` and `OnCVarChanged`, came with `0.1.6`: a mod that uses one asks for
@@ -1979,6 +2032,9 @@ The [gameplay events](#gameplay-events), with the families `LootScript`, `ItemSc
 `0.1.20`.
 `AssetScript`'s `OnFileMissing`, `wxl.storage`'s `HashFile`, `HashFileAsync`, `OverrideFile`,
 `RestoreFile`, `ScopedName` and `ReloadAsset`, and the `wxl.relay` module came with `0.1.22`.
+`WorldScript`'s `OnMouseMotion` and `OnMouseWheel`, `RenderScript`'s `OnCameraUpdate`,
+the `wxl.camera`, `wxl.input` and `wxl.world` modules, `wxl.action.Face` and `IsOutdoors` came with
+`0.1.23`.
 
 ### Gameplay events
 
