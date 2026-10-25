@@ -69,15 +69,18 @@ nobody has raises `FileMissing` (a mod's own `wxl.storage` lookup does not); byt
 serves at 0 under a path of its own (`Interface\WxlSelfTest\FrameXML.toc`) live beside the
 client's `Interface\FrameXML\FrameXML.toc`; `OverrideFile` puts them in place of the client's and
 `RestoreFile` takes them back; `HashFile` hashes served bytes (a known MD5) and the archive's file,
-`HashFileAsync` answers the same a moment later; `ReloadAsset` reads the question-mark icon again
-from the bag icon an override puts in its place (left of the screen's centre, a bag for two
-seconds) and makes the player's model again (it blinks); a map object is `unsupported`. Then
+`HashFileAsync` answers the same a moment later; `ReloadAsset` reads the target frame's texture
+again from the elite one an override puts in its place (up left of the screen's centre, the elite
+dragon for two seconds), answers `unsupported` for an icon (the interface keeps small square
+textures in its shared atlas, which is not read again) and makes the player's model again (it
+blinks); a map object is `unsupported`. Then
 `wxl.relay`: a Lua service answering at once and later, taken back (`not_found`); and, with
 `wxl.test-assets`, a texture its provider has not yet (`FileMissing`, pending), fetched by its
 service on a thread of its own and served under the path the selftest chose
 (`Interface\WxlSelfTest\Fetched.blp`, hashed as the downloader reported), shown by that path and,
 through an override, by the name it lacked (right of the centre: two bags for three seconds, a NOTE
-to look at), and a request cancelled (the C++ service is told). Without `wxl.test-assets`, the
+to look at), and a request cancelled once the C++ service has it (the service is told; a request cancelled
+before it is handed over is dropped without a word to anyone). Without `wxl.test-assets`, the
 downloader's checks are a SKIP.
 
 Phase 14 checks the camera and the pointer (abi 0.1.23): `wxl.camera` reads the world camera,

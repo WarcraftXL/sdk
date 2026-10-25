@@ -1091,13 +1091,15 @@ local pointModels, parsedBefore = {}, 0
 
 step(function()
     print("phase 12: the model loader's points, M2Init de-inlined on the stock client")
-    if not TestPointsArm then
-        result("wxl.test-points is loaded", false, "TestPointsArm is not registered")
+    -- wxl.test-points registers its functions in the client's Lua, where they are called.
+    local asked, present = ask("return TestPointsArm ~= nil")
+    if not (asked and present) then
+        result("wxl.test-points is loaded", false, "TestPointsArm is not registered in the client's Lua")
         return
     end
-    local ok, armed, why = pcall(TestPointsArm)
+    local ok, armed, why = ask("return TestPointsArm()")
     result("CM2Shared::FinishLoading and M2Init(uint8_t*,uint32_t,M2Data&) attached", ok and armed == true,
-           ok and why or tostring(armed))
+           ok and tostring(why) or tostring(armed))
     if not (ok and armed) then return end
     parsedBefore = modelCount.ModelParsed
     local body = wxl.m2.ObjectModel(wxl.object.LocalPlayer())
@@ -1111,8 +1113,11 @@ step(function()
 end)
 
 step(function()
-    if not TestPointsCounts then return end
-    local finishes, inits, name, version, size = TestPointsCounts()
+    local asked, counts = ask("local f, i, n, v, s = TestPointsCounts() " ..
+                              "return string.format('%d|%d|%s|%d|%d', f or 0, i or 0, n or '', v or 0, s or 0)")
+    if not (asked and type(counts) == "string") then return end
+    local f, i, n, v, z = counts:match("^(%d+)|(%d+)|(.-)|(%d+)|(%d+)$")
+    local finishes, inits, name, version, size = tonumber(f), tonumber(i), n, tonumber(v), tonumber(z)
     result("a handler on CM2Shared::FinishLoading fired (" .. tostring(finishes) .. " model(s))",
            (finishes or 0) > 0, "no model finished loading in three seconds")
     result("a handler on M2Init fired (" .. tostring(inits) .. "), de-inlined on the stock client",
@@ -1122,7 +1127,7 @@ step(function()
            string.format("version %s, %s bytes", tostring(version), tostring(size)))
     result("models still parse with the recompiled FinishLoading (ModelParsed " ..
            (modelCount.ModelParsed - parsedBefore) .. ")", modelCount.ModelParsed > parsedBefore)
-    TestPointsDisarm()
+    run("TestPointsDisarm()")
     for _, model in ipairs(pointModels) do model:Release() end
     pointModels = {}
 end)
@@ -1156,8 +1161,12 @@ end
 
 local BASE = "Interface\\FrameXML\\FrameXML.toc"
 local QUESTION, BAG = "Interface\\Icons\\INV_Misc_QuestionMark.blp", "Interface\\Icons\\INV_Misc_Bag_08.blp"
+-- A texture larger than the interface's atlas takes (square, 64 pixels or less), so read again in
+-- place, and another of the same size to put in its place.
+local FRAME, ELITE = "Interface\\TargetingFrame\\UI-TargetingFrame.blp", "Interface\\TargetingFrame\\UI-TargetingFrame-Elite.blp"
 local LATER, FETCHED = "Interface\\WxlTest\\Later.blp", "Interface\\WxlSelfTest\\Fetched.blp"
 local hashed, echoNow, echoLater, echoRequest, echoNobody, fetched, cancelledCount, cppMissing, neverAnswered
+local neverRequest
 
 step(function()
     print("phase 13: names nobody has, content hashes, overrides, reloads, the relay")
@@ -1223,16 +1232,23 @@ step(function()
     run("WxlSelfTestIcon = WxlSelfTestIcon or UIParent:CreateTexture(nil, 'OVERLAY') WxlSelfTestIcon:SetWidth(64) " ..
         "WxlSelfTestIcon:SetHeight(64) WxlSelfTestIcon:SetPoint('CENTER', -80, 0) " ..
         "WxlSelfTestIcon:SetTexture('Interface\\\\Icons\\\\INV_Misc_QuestionMark') WxlSelfTestIcon:Show()")
+    run("WxlSelfTestFrame = WxlSelfTestFrame or UIParent:CreateTexture(nil, 'OVERLAY') WxlSelfTestFrame:SetWidth(256) " ..
+        "WxlSelfTestFrame:SetHeight(128) WxlSelfTestFrame:SetPoint('CENTER', -220, 120) " ..
+        "WxlSelfTestFrame:SetTexture('Interface\\\\TargetingFrame\\\\UI-TargetingFrame') WxlSelfTestFrame:Show()")
     wait(1)
 end)
 
 step(function()
     local s = wxl.storage
-    s.OverrideFile(QUESTION, BAG)
-    local r, why = s.ReloadAsset(QUESTION)
-    result("ReloadAsset of a texture the client holds: read again in place (left of the screen's centre, the " ..
-           "question mark shows a bag for two seconds)", r ~= nil and r.textures > 0,
+    s.OverrideFile(FRAME, ELITE)
+    local r, why = s.ReloadAsset(FRAME)
+    result("ReloadAsset of a texture the client holds: read again in place (up left of the screen's centre, " ..
+           "the target frame shows its elite dragon for two seconds)", r ~= nil and r.textures > 0,
            r and (r.textures .. " texture(s), " .. r.busy .. " still loading") or why)
+    s.OverrideFile(QUESTION, BAG)
+    local icon, iconWhy = s.ReloadAsset(QUESTION)
+    result("ReloadAsset of an icon, held in the interface's atlas: unsupported", icon == nil and iconWhy == "unsupported",
+           tostring(icon and icon.textures or iconWhy))
     local unsupported, reason = s.ReloadAsset("World\\wmo\\Azeroth\\Buildings\\Inn\\Inn.wmo")
     result("ReloadAsset of a map object: unsupported", unsupported == nil and reason == "unsupported", tostring(reason))
     wait(2)
@@ -1241,8 +1257,9 @@ end)
 step(function()
     local s = wxl.storage
     s.RestoreFile(QUESTION)
-    s.ReloadAsset(QUESTION)
-    run("WxlSelfTestIcon:Hide()")
+    s.RestoreFile(FRAME)
+    s.ReloadAsset(FRAME)
+    run("WxlSelfTestIcon:Hide() WxlSelfTestFrame:Hide()")
     local asked, race, sex = ask("return select(2, UnitRace('player')), UnitSex('player')")
     if not asked or type(race) ~= "string" then
         skip("ReloadAsset of the player's model", "the client did not say the player's race")
@@ -1330,8 +1347,15 @@ step(function()
     print("NOTE look: right of the screen's centre, two bags for three seconds -- the fetched file by its own " ..
           "path, and by the name it overrides")
     neverAnswered, cancelledCount = false, nil
-    local request = wxl.relay.Call("wxl.test-assets.fetch", "never", nil, function() neverAnswered = true end)
-    result("Cancel: a request taken back by its caller", wxl.relay.Cancel(request) == true)
+    -- Handed to the C++ service at the runtime's next update; cancelled after that, the service is told.
+    neverRequest = wxl.relay.Call("wxl.test-assets.fetch", "never", nil, function() neverAnswered = true end)
+    wait(0.5)
+end)
+
+step(function()
+    if not neverRequest then return end
+    result("Cancel: a request taken back by its caller", wxl.relay.Cancel(neverRequest) == true)
+    neverRequest = nil
     wait(3)
 end)
 
@@ -1358,7 +1382,7 @@ end)
 -- 14. The camera, the pointer and the world ------------------------------------------------------
 
 local cameraFrames, placedSeen, mouseMoves = 0, nil, 0
-local cameraId, motionId, placedAt = nil, nil, nil
+local cameraId, motionId, placedAt, frameEndId = nil, nil, nil, nil
 local faceFrom, faceTo = nil, nil
 
 step(function()
@@ -1375,11 +1399,15 @@ step(function()
     if not pivot then return end
     -- Ten yards above the head, looking down: set at every update, read back at the next.
     placedAt = { x = pivot.x, y = pivot.y, z = pivot.z + 10 }
+    -- The view is written right after OnCameraUpdate, so it is read back at the frame's end, once the
+    -- frame was drawn from it.
     cameraId = Observe("RenderScript", "OnCameraUpdate", function()
         cameraFrames = cameraFrames + 1
+        camera.SetView(placedAt, { x = 0.01, y = 0, z = -1 }, 0)
+    end)
+    frameEndId = Observe("RenderScript", "OnFrameEnd", function()
         local now = camera.Position()
         if now and math.abs(now.z - placedAt.z) < 0.01 then placedSeen = true end
-        camera.SetView(placedAt, { x = 0.01, y = 0, z = -1 }, 0)
     end)
     motionId = Observe("WorldScript", "OnMouseMotion", function() mouseMoves = mouseMoves + 1 end)
     local held, why = wxl.input.CaptureCursor(true)
@@ -1392,7 +1420,8 @@ end)
 step(function()
     if not cameraId then return end
     Unobserve(cameraId)
-    cameraId = nil
+    Unobserve(frameEndId)
+    cameraId, frameEndId = nil, nil
     local camera = wxl.camera
     result("event CameraUpdate (" .. cameraFrames .. " in two seconds)", cameraFrames > 10)
     result("wxl.camera.SetView: the camera is where the view put it", placedSeen == true)
