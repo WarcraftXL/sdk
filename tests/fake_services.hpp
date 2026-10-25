@@ -2232,6 +2232,13 @@ namespace wxltest
             std::string texture;
             uint32_t    key_bone   = 0;
             wxl_vec3    offset{};
+            bool             world = false; ///< made in the world's scene
+            wxl_m2_placement placed{};      ///< the last Place
+            wxl_m2_placement transform{};   ///< the last SetTransform
+            uint32_t         anim  = 0;
+            float            speed = 0.0f;
+            float            alpha = 1.0f;
+            bool             emitting = true;
         };
 
         static std::map<void*, Model*>& Made()
@@ -2346,6 +2353,100 @@ namespace wxltest
             return WXL_OK;
         }
 
+        static void* WXL_CALL CreateWorldModel(wxl_str path)
+        {
+            static char scene = 0;
+            void*       made  = CreateModel(&scene, path);
+            if (Model* known = Known(made)) known->world = true;
+            return made;
+        }
+        static wxl_result WXL_CALL Place(void* model, const wxl_m2_placement* placement)
+        {
+            Model* known = Known(model);
+            if (!known || !placement) return WXL_E_INVALID;
+            known->placed = *placement;
+            known->parent = nullptr;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL SetTransform(void* model, const wxl_m2_placement* placement)
+        {
+            Model* known = Known(model);
+            if (!known || !placement) return WXL_E_INVALID;
+            known->transform = *placement;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL PlayAnimation(void* model, uint32_t anim, float speed)
+        {
+            Model* known = Known(model);
+            if (!known) return WXL_E_INVALID;
+            known->anim = anim, known->speed = speed;
+            return WXL_OK;
+        }
+        static wxl_bool WXL_CALL ModelLoaded(void* model)
+        {
+            return Known(model) || model == UnitModel() ? WXL_TRUE : WXL_FALSE;
+        }
+        static wxl_result WXL_CALL AnimationLength(void* model, uint32_t anim, uint32_t* out)
+        {
+            if (!ModelLoaded(model)) return WXL_E_FAILED;
+            *out = anim == 0 ? 1333u : 0u;
+            return WXL_OK;
+        }
+        static void WXL_CALL SetAlpha(void* model, float alpha)
+        {
+            if (Model* known = Known(model)) known->alpha = alpha;
+        }
+        static void WXL_CALL SetEmitting(void* model, wxl_bool emitting)
+        {
+            if (Model* known = Known(model)) known->emitting = emitting == WXL_TRUE;
+        }
+        static wxl_result WXL_CALL AttachmentWorld(void* model, uint32_t attachment, wxl_vec3* out)
+        {
+            if (model != UnitModel() || attachment != 32) return WXL_E_NOT_FOUND;
+            *out = wxl_vec3{10.0f, 20.0f, 31.5f};
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL GroundHeight(const wxl_vec3* at, float up, float down, float* out)
+        {
+            if (!at || up < 0.0f || down < 0.0f) return WXL_E_INVALID;
+            if (down < 2.0f) return WXL_E_NOT_FOUND;
+            *out = at->z - 2.0f;
+            return WXL_OK;
+        }
+
+        /// One bone watcher at a time, its token 7; a file of two bones.
+        struct Watch
+        {
+            wxl_m2_bones_filter_fn filter = nullptr;
+            wxl_m2_bones_fn        fn     = nullptr;
+            void*                  user   = nullptr;
+            uint32_t               token  = 0;
+        };
+        static Watch& Watching()
+        {
+            static Watch watch;
+            return watch;
+        }
+        static wxl_result WXL_CALL WatchBones(wxl_m2_bones_filter_fn filter, wxl_m2_bones_fn fn, void* user,
+                                              uint32_t* out)
+        {
+            if (!fn || Watching().token) return fn ? WXL_E_FAILED : WXL_E_INVALID;
+            Watching() = Watch{filter, fn, user, 7};
+            *out       = 7;
+            return WXL_OK;
+        }
+        static void WXL_CALL UnwatchBones(uint32_t token)
+        {
+            if (token && token == Watching().token) Watching() = Watch{};
+        }
+        static wxl_result WXL_CALL BoneInfo(void* file, uint32_t index, int16_t* parent, wxl_vec3* pivot)
+        {
+            if (!file || index >= 2) return WXL_E_NOT_FOUND;
+            *parent = index == 0 ? int16_t(-1) : int16_t(0);
+            *pivot  = wxl_vec3{0.0f, 0.0f, static_cast<float>(index)};
+            return WXL_OK;
+        }
+
         static void* WXL_CALL AllocNear(const void*, uint32_t size)
         {
             static std::vector<std::vector<uint8_t>> blocks;
@@ -2393,6 +2494,19 @@ namespace wxltest
                 t.replace_texture  = &ReplaceTexture;
                 t.attachment_point = &AttachmentPoint;
                 t.attach_to_bone   = &AttachToBone;
+                t.create_world_model  = &CreateWorldModel;
+                t.place_model         = &Place;
+                t.set_model_transform = &SetTransform;
+                t.play_animation      = &PlayAnimation;
+                t.model_loaded        = &ModelLoaded;
+                t.animation_length    = &AnimationLength;
+                t.set_alpha           = &SetAlpha;
+                t.set_emitting        = &SetEmitting;
+                t.attachment_world    = &AttachmentWorld;
+                t.ground_height       = &GroundHeight;
+                t.watch_bones         = &WatchBones;
+                t.unwatch_bones       = &UnwatchBones;
+                t.bone_info           = &BoneInfo;
                 return t;
             }();
             return &api;

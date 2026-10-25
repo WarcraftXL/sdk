@@ -1355,6 +1355,44 @@ int main()
         Check(point && point->z == 1.5f && wxl::M2Service::AttachmentPoint(body, 1).Error() == WXL_E_NOT_FOUND,
               "AttachmentPoint answers a point");
 
+        {
+            wxl::M2Model effect = wxl::M2Model::World("Spells\\Fire.m2");
+            const auto*  made   = FakeModels::Known(effect.Get());
+            Check(made && made->world && effect.Place(wxl::M2Placement(wxl_vec3{1.0f, 2.0f, 3.0f}, 0.5f)) == WXL_OK &&
+                      made->placed.struct_size == sizeof(wxl_m2_placement) && made->placed.position.z == 3.0f &&
+                      made->placed.yaw == 0.5f && made->placed.scale == 1.0f,
+                  "M2Model::World: a model of the world's scene, placed by a placement passed by address");
+            Check(effect.SetTransform(wxl::M2Placement(wxl_vec3{}, 0.0f, 0.0f, 0.0f, 2.0f)) == WXL_OK &&
+                      made->transform.scale == 2.0f && effect.PlayAnimation(158) == WXL_OK && made->anim == 158 &&
+                      made->speed == 1.0f,
+                  "SetTransform and PlayAnimation, at speed 1 unless asked");
+            effect.SetAlpha(0.5f);
+            effect.SetEmitting(false);
+            Check(made->alpha == 0.5f && !made->emitting && effect.Loaded() && effect.AnimationLength(0).ValueOr(0) == 1333,
+                  "SetAlpha, SetEmitting, Loaded, AnimationLength");
+            const auto hand   = wxl::M2Service::AttachmentWorld(body, 32);
+            const auto ground = wxl::M2Service::GroundHeight(wxl_vec3{1.0f, 2.0f, 10.0f}, 5.0f, 50.0f);
+            Check(hand && hand->z == 31.5f && ground && *ground == 8.0f &&
+                      wxl::M2Service::GroundHeight(wxl_vec3{}, 5.0f, 1.0f).Error() == WXL_E_NOT_FOUND,
+                  "AttachmentWorld answers a point, GroundHeight takes one by address and answers a height");
+        }
+        Check(FakeModels::Released() == released + 2, "a world model is given back like any other");
+        {
+            const auto Accept = [](void*, wxl_str, uint32_t, void*) -> wxl_bool { return WXL_TRUE; };
+            const auto Moved  = [](const wxl_m2_bones*, void*) {};
+            wxl::M2BoneWatch watch(Accept, Moved);
+            wxl::M2BoneWatch second(Accept, Moved);
+            Check(static_cast<bool>(watch) && !second && FakeModels::Watching().token == 7,
+                  "M2BoneWatch starts a watcher; one the runtime refuses is empty");
+            wxl::M2BoneWatch moved = std::move(watch);
+            Check(!watch && static_cast<bool>(moved) && FakeModels::Watching().token == 7, "a watcher moves");
+            const auto bone = wxl::M2Service::BoneInfo(body, 1);
+            Check(bone && bone->parent == 0 && bone->pivot.z == 1.0f &&
+                      wxl::M2Service::BoneInfo(body, 2).Error() == WXL_E_NOT_FOUND,
+                  "BoneInfo answers a bone's parent and pivot");
+        }
+        Check(FakeModels::Watching().token == 0, "and stops when it goes");
+
         uint32_t array[2]  = {0, 0};
         void*    elements  = wxl::M2FileService::AllocNear(array, 3 * sizeof(uint32_t));
         auto*    values    = static_cast<uint32_t*>(elements);

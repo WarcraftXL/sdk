@@ -55,10 +55,13 @@
 //   bytes_size uint32_t: the length of the bytes before it, which must all be as long
 //   object wxl_handle: a world object; a script passes the object, C++ a wxl::Object
 //   vec3 wxl_vec3: a point; a script passes a table with x, y and z
-//   f32 float  vec3_in const wxl_vec3*  i16_out int16_t*  vec3_out wxl_vec3*: the C parameters as they
-//       are; no script reaches a row taking one of these four but f32
-//   placement const wxl_m2_placement*  bones_filter_fn wxl_m2_bones_filter_fn  bones_fn wxl_m2_bones_fn:
-//       what wxl.m2's world models and bone watchers take; no script reaches them
+//   f32 float: a number
+//   vec3_in const wxl_vec3*: a point, passed by address; a script passes a table with x, y and z,
+//       C++ a wxl_vec3
+//   placement const wxl_m2_placement*: where wxl.m2 puts a model; a script passes a table
+//       {position = {x, y, z}, yaw, pitch, roll, scale}, C++ a wxl_m2_placement
+//   i16_out int16_t*  vec3_out wxl_vec3*  bones_filter_fn wxl_m2_bones_filter_fn
+//   bones_fn wxl_m2_bones_fn: what wxl.m2's bone watchers take; no script reaches them
 //   provider const wxl_asset_provider*  transform const wxl_asset_transform*: what a native
 //       mod hands wxl.storage; no script reaches a row taking one
 //   hash_fn wxl_file_hash_fn  relay_endpoint const wxl_relay_endpoint*
@@ -738,6 +741,26 @@ namespace wxl::api
     {
         using type = wxl_vec3;
         static wxl_vec3 ToC(wxl_vec3 value) { return value; }
+    };
+    template <>
+    struct CxxParam<kind::f32>
+    {
+        using type = float;
+        static float ToC(float value) { return value; }
+    };
+    /// A struct the C member takes by address is a value in C++: the method's own parameter,
+    /// which lives through the call.
+    template <>
+    struct CxxParam<kind::vec3_in>
+    {
+        using type = const wxl_vec3&;
+        static const wxl_vec3* ToC(const wxl_vec3& value) { return &value; }
+    };
+    template <>
+    struct CxxParam<kind::placement>
+    {
+        using type = const wxl_m2_placement&;
+        static const wxl_m2_placement* ToC(const wxl_m2_placement& value) { return &value; }
     };
     template <>
     struct CxxParam<kind::ptr>

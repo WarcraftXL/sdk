@@ -445,6 +445,80 @@ namespace wxl::lua
             static std::tuple<wxl_vec3> C(Held held) { return {held}; }
         };
 
+        /// A point the C member takes by address: read as a point, handed over as the address of
+        /// the copy the call holds.
+        template <>
+        struct Arg<kind::vec3_in>
+        {
+            using Held = wxl_vec3;
+            static Held Read(Reader& r) { return Arg<kind::vec3>::Read(r); }
+            static std::tuple<const wxl_vec3*> C(const Held& held) { return {&held}; }
+        };
+
+        template <>
+        struct Arg<kind::f32>
+        {
+            using Held = float;
+            static Held Read(Reader& r)
+            {
+                Require(r, "a number");
+                return static_cast<float>(luaL_checknumber(r.L, r.next++));
+            }
+            static std::tuple<float> C(Held held) { return {held}; }
+        };
+
+        /// A number field of a table, or `absent` when the table leaves it out.
+        float NumberField(lua_State* L, int table, const char* name, float absent)
+        {
+            lua_getfield(L, table, name);
+            float value = absent;
+            if (!lua_isnil(L, -1))
+            {
+                if (!lua_isnumber(L, -1))
+                {
+                    lua_pop(L, 1);
+                    const std::string why = std::string("a placement whose ") + name + " is a number";
+                    luaL_argerror(L, table, why.c_str());
+                }
+                value = static_cast<float>(lua_tonumber(L, -1));
+            }
+            lua_pop(L, 1);
+            return value;
+        }
+
+        /// Where wxl.m2 puts a model: {position = {x, y, z}, yaw, pitch, roll, scale}, the turn 0
+        /// and the scale 1 when left out.
+        template <>
+        struct Arg<kind::placement>
+        {
+            using Held = wxl_m2_placement;
+            static Held Read(Reader& r)
+            {
+                Require(r, "a placement");
+                const int at = r.next++;
+                luaL_checktype(r.L, at, LUA_TTABLE);
+                wxl_m2_placement placement{};
+                placement.struct_size = sizeof placement;
+                lua_getfield(r.L, at, "position");
+                if (!lua_istable(r.L, -1)) luaL_argerror(r.L, at, "a placement: a table with a position {x, y, z}");
+                lua_getfield(r.L, -1, "x");
+                lua_getfield(r.L, -2, "y");
+                lua_getfield(r.L, -3, "z");
+                if (!lua_isnumber(r.L, -3) || !lua_isnumber(r.L, -2) || !lua_isnumber(r.L, -1))
+                    luaL_argerror(r.L, at, "a placement whose position is a table with numbers x, y and z");
+                placement.position = wxl_vec3{static_cast<float>(lua_tonumber(r.L, -3)),
+                                              static_cast<float>(lua_tonumber(r.L, -2)),
+                                              static_cast<float>(lua_tonumber(r.L, -1))};
+                lua_pop(r.L, 4);
+                placement.yaw   = NumberField(r.L, at, "yaw", 0.0f);
+                placement.pitch = NumberField(r.L, at, "pitch", 0.0f);
+                placement.roll  = NumberField(r.L, at, "roll", 0.0f);
+                placement.scale = NumberField(r.L, at, "scale", 1.0f);
+                return placement;
+            }
+            static std::tuple<const wxl_m2_placement*> C(const Held& held) { return {&held}; }
+        };
+
         /// An address of the client's: what an event or a call handed the script (a light
         /// userdata), or a resource of the script's own that is one, still open (a wxl.Model).
         void* CheckAddress(Reader& r, const char* what)

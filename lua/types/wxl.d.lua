@@ -1336,8 +1336,8 @@ RenderScript = {}
 ---@field OnEquipmentChanged fun(self: ObjectScript, unit: wxl.Object|nil, slot: integer, item_id: integer)
 ---@field OnUnitDeath fun(self: ObjectScript, unit: wxl.Object|nil)
 ---@field OnUnitAuraChanged fun(self: ObjectScript, unit: wxl.Object|nil, spell_id: integer, removed: boolean)
----@field OnSpellCastStart fun(self: ObjectScript, caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes)
----@field OnSpellCastGo fun(self: ObjectScript, caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes)
+---@field OnSpellCastStart fun(self: ObjectScript, caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes, has_source: boolean, source: wxl.Vec3, has_dest: boolean, dest: wxl.Vec3, source_transport: wxl.Guid, dest_transport: wxl.Guid)
+---@field OnSpellCastGo fun(self: ObjectScript, caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes, has_source: boolean, source: wxl.Vec3, has_dest: boolean, dest: wxl.Vec3, source_transport: wxl.Guid, dest_transport: wxl.Guid)
 ---@field OnSpellCastFailed fun(self: ObjectScript, caster: wxl.Object|nil, caster_guid: wxl.Guid, spell_id: integer, cast_count: integer, reason: integer, custom_error: integer, custom_arg: integer)
 ---@field OnSpellCastInterrupted fun(self: ObjectScript, caster: wxl.Object|nil, caster_guid: wxl.Guid, spell_id: integer, cast_count: integer, reason: integer, custom_error: integer, custom_arg: integer)
 ---@field OnSpellCastRequest fun(self: ObjectScript, caster: wxl.Object|nil, spell_id: integer, item: wxl.Object|nil, target_guid: wxl.Guid, confirmed: boolean, refused: boolean|nil): boolean|nil answers through refused
@@ -1527,8 +1527,8 @@ SocialScript = {}
 ---@overload fun(family: "LuaScript", method: "OnScriptVmClosing", handler: fun(context: wxl.ScriptContext|integer, native_state: lightuserdata|nil)): integer
 ---@overload fun(family: "ObjectScript", method: "OnUnitDeath", handler: fun(unit: wxl.Object|nil)): integer
 ---@overload fun(family: "ObjectScript", method: "OnUnitAuraChanged", handler: fun(unit: wxl.Object|nil, spell_id: integer, removed: boolean)): integer
----@overload fun(family: "ObjectScript", method: "OnSpellCastStart", handler: fun(caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes)): integer
----@overload fun(family: "ObjectScript", method: "OnSpellCastGo", handler: fun(caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes)): integer
+---@overload fun(family: "ObjectScript", method: "OnSpellCastStart", handler: fun(caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes, has_source: boolean, source: wxl.Vec3, has_dest: boolean, dest: wxl.Vec3, source_transport: wxl.Guid, dest_transport: wxl.Guid)): integer
+---@overload fun(family: "ObjectScript", method: "OnSpellCastGo", handler: fun(caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes, has_source: boolean, source: wxl.Vec3, has_dest: boolean, dest: wxl.Vec3, source_transport: wxl.Guid, dest_transport: wxl.Guid)): integer
 ---@overload fun(family: "ObjectScript", method: "OnSpellCastFailed", handler: fun(caster: wxl.Object|nil, caster_guid: wxl.Guid, spell_id: integer, cast_count: integer, reason: integer, custom_error: integer, custom_arg: integer)): integer
 ---@overload fun(family: "ObjectScript", method: "OnSpellCastInterrupted", handler: fun(caster: wxl.Object|nil, caster_guid: wxl.Guid, spell_id: integer, cast_count: integer, reason: integer, custom_error: integer, custom_arg: integer)): integer
 ---@overload fun(family: "ObjectScript", method: "OnSpellCastRequest", handler: fun(caster: wxl.Object|nil, spell_id: integer, item: wxl.Object|nil, target_guid: wxl.Guid, confirmed: boolean, refused: boolean|nil)): integer
@@ -2589,6 +2589,33 @@ function Model:ReplaceTexture(type, path) end
 ---@return string|nil reason
 function Model:AttachToBone(parent, attachment, key_bone, offset) end
 
+---Puts the model in the world at {position = {x, y, z}, yaw, pitch, roll, scale} (radians; scale 1 when left out), or moves it there; leaving the world takes it out.
+---@param placement {position: wxl.Vec3, yaw?: number, pitch?: number, roll?: number, scale?: number}
+---@return true|nil ok
+---@return string|nil reason
+function Model:Place(placement) end
+
+---How the model sits on the point it hangs on: an offset from the point in its own frame, a turn and a scale.
+---@param placement {position: wxl.Vec3, yaw?: number, pitch?: number, roll?: number, scale?: number}
+---@return true|nil ok
+---@return string|nil reason
+function Model:SetTransform(placement) end
+
+---Plays an animation (AnimationData id) on the whole model from its start at a speed, 1 normal; kept until it has loaded.
+---@param anim_id integer
+---@param speed number
+---@return true|nil ok
+---@return string|nil reason
+function Model:PlayAnimation(anim_id, speed) end
+
+---The model's own alpha, 0 to 1: a fade.
+---@param alpha number
+function Model:SetAlpha(alpha) end
+
+---Whether the model's particles and ribbons make anything new; those already made play out.
+---@param emitting boolean
+function Model:SetEmitting(emitting) end
+
 ---wxl.script. The client's own script: functions and events added to it, text run in it.
 ---@class wxl.script
 local script = {}
@@ -3070,6 +3097,45 @@ function m2.CreateModel(scene_model, path) end
 ---@return wxl.Vec3|nil
 ---@return string|nil reason
 function m2.AttachmentPoint(model, attachment) end
+
+---Came with abi 0.1.21: a mod whose mod.json asks for an older abi cannot use it.
+---Makes a model of a file in the world's scene, for this mod: it shows once placed with Place or hung on a unit's model.
+---@param path string
+---@return wxl.Model|nil
+---@return string|nil reason
+function m2.CreateWorldModel(path) end
+
+---Came with abi 0.1.21: a mod whose mod.json asks for an older abi cannot use it.
+---Whether a model's file has loaded: one of the mod's, or the client's.
+---@param model lightuserdata|wxl.Model an address an event or a call handed you
+---@return boolean|nil
+---@return string|nil reason
+function m2.ModelLoaded(model) end
+
+---Came with abi 0.1.21: a mod whose mod.json asks for an older abi cannot use it.
+---How long one play of an animation of a loaded model lasts, in milliseconds; 0 when it has none.
+---@param model lightuserdata|wxl.Model an address an event or a call handed you
+---@param anim_id integer
+---@return integer|nil
+---@return string|nil reason
+function m2.AnimationLength(model, anim_id) end
+
+---Came with abi 0.1.21: a mod whose mod.json asks for an older abi cannot use it.
+---Where an attachment point of a loaded model is in the world now, as {x, y, z}.
+---@param model lightuserdata|wxl.Model an address an event or a call handed you
+---@param attachment integer
+---@return wxl.Vec3|nil
+---@return string|nil reason
+function m2.AttachmentWorld(model, attachment) end
+
+---Came with abi 0.1.21: a mod whose mod.json asks for an older abi cannot use it.
+---The height of the ground under a point: the first surface a ray meets from `up` yards above it to `down` yards below.
+---@param at wxl.Vec3
+---@param up number
+---@param down number
+---@return number|nil
+---@return string|nil reason
+function m2.GroundHeight(at, up, down) end
 
 ---wxl.engine. The client's own structures as this runtime lays them out.
 ---Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.

@@ -41,22 +41,34 @@ WXL_API(m2, attach_to_bone, AttachToBone, result, (Model model, ptr parent, u32 
         "Hangs the model on one key bone of a model, moved by an offset: an attachment point the parent's file does not have.")
 
 // --- Models of the world and bone watchers (0.1.21): what spell effects and live physics need.
-// No script reaches them: they take structs and callbacks, and models a mod places are its own.
+// A script places models of the world as a C++ mod does; the bone watchers run on the client's
+// animate threads, where no script runs, so they stay native.
 
 WXL_API_SINCE(m2, create_world_model, (0, 1, 21))
-WXL_API(m2, create_world_model, CreateWorldModel, Model, (str path), native, by_hand, "")
-WXL_API(m2, place_model, PlaceModel, result, (Model model, placement placement), native, by_hand, "")
-WXL_API(m2, set_model_transform, SetModelTransform, result, (Model model, placement placement), native, by_hand, "")
-WXL_API(m2, play_animation, PlayAnimation, result, (Model model, u32 anim_id, f32 speed), native, by_hand, "")
-WXL_API(m2, model_loaded, ModelLoaded, boolean, (Model model), native, by_hand, "")
-WXL_API(m2, animation_length, AnimationLength, out<u32>, (Model model, u32 anim_id), native, by_hand, "")
-WXL_API(m2, set_alpha, SetAlpha, none, (Model model, f32 alpha), native, by_hand, "")
-WXL_API(m2, set_emitting, SetEmitting, none, (Model model, boolean emitting), native, by_hand, "")
-WXL_API(m2, attachment_world, AttachmentWorld, out<vec3>, (ptr model, u32 attachment), native, by_hand, "")
-WXL_API(m2, ground_height, GroundHeight, out<f32>, (vec3_in at, f32 up, f32 down), native, by_hand, "")
+WXL_API(m2, create_world_model, CreateWorldModel, Model, (str path), generated, generated,
+        "Makes a model of a file in the world's scene, for this mod: it shows once placed with Place or hung on a unit's model.")
+WXL_API(m2, place_model, Place, result, (Model model, placement placement), generated, generated,
+        "Puts the model in the world at {position = {x, y, z}, yaw, pitch, roll, scale} (radians; scale 1 when left out), or moves it there; leaving the world takes it out.")
+WXL_API(m2, set_model_transform, SetTransform, result, (Model model, placement placement), generated, generated,
+        "How the model sits on the point it hangs on: an offset from the point in its own frame, a turn and a scale.")
+WXL_API(m2, play_animation, PlayAnimation, result, (Model model, u32 anim_id, f32 speed), generated, generated,
+        "Plays an animation (AnimationData id) on the whole model from its start at a speed, 1 normal; kept until it has loaded.")
+WXL_API(m2, model_loaded, ModelLoaded, boolean, (ptr model), generated, generated,
+        "Whether a model's file has loaded: one of the mod's, or the client's.")
+WXL_API(m2, animation_length, AnimationLength, out<u32>, (ptr model, u32 anim_id), generated, generated,
+        "How long one play of an animation of a loaded model lasts, in milliseconds; 0 when it has none.")
+WXL_API(m2, set_alpha, SetAlpha, none, (Model model, f32 alpha), generated, generated,
+        "The model's own alpha, 0 to 1: a fade.")
+WXL_API(m2, set_emitting, SetEmitting, none, (Model model, boolean emitting), generated, generated,
+        "Whether the model's particles and ribbons make anything new; those already made play out.")
+WXL_API(m2, attachment_world, AttachmentWorld, out<vec3>, (ptr model, u32 attachment), generated, generated,
+        "Where an attachment point of a loaded model is in the world now, as {x, y, z}.")
+WXL_API(m2, ground_height, GroundHeight, out<f32>, (vec3_in at, f32 up, f32 down), generated, generated,
+        "The height of the ground under a point: the first surface a ray meets from `up` yards above it to `down` yards below.")
 WXL_API(m2, watch_bones, WatchBones, out<u32>, (bones_filter_fn filter, bones_fn fn, ptr user), native, by_hand, "")
 WXL_API(m2, unwatch_bones, UnwatchBones, none, (u32 token), native, by_hand, "")
 WXL_API(m2, bone_info, BoneInfo, result, (ptr file, u32 index, i16_out parent, vec3_out pivot), native, by_hand, "")
+
 // MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
 // guarded by X, and skips it when it is included again with X defined: this table is read
 // several times in one translation unit, under shapes that may leave it empty. A directive

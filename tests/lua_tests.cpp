@@ -932,7 +932,7 @@ int main(int argc, char** argv)
         const wxl_spell_cast_args go{WXL_HANDLE_NONE, 0x10, WXL_HANDLE_NONE, 0, 0, 133, 1, 0, 0, 0,
                                      2, 1, hits, sizeof hits, misses, sizeof misses, reasons};
         host.Raise(WXL_EV_SpellCastGo, &go);
-        Check(sink.Has("[wxl.probe] cast go 14 parameters, spell 133, 2 hit in 16 bytes, 1 miss, caster 0x0000000000000010"),
+        Check(sink.Has("[wxl.probe] cast go 20 parameters, spell 133, 2 hit in 16 bytes, 1 miss, caster 0x0000000000000010"),
               "a member that only measures another is not a parameter: its bytes carry it");
 
         // Unobserve.
@@ -2184,6 +2184,18 @@ Observe("ObjectScript", "OnAppearanceChanged", function(change, wearer, model, r
     local spare = wxl.m2.CreateModel(model, "Item\\Spare.m2")
     spare:Release()
     print("released " .. tostring(pcall(function() return spare:Parent() end)))
+    local effect = wxl.m2.CreateWorldModel("Spells\\Fire.m2")
+    print("placed " .. tostring(effect:Place({ position = { x = 1, y = 2, z = 3 }, yaw = 0.5 })))
+    print("transform " .. tostring(effect:SetTransform({ position = { x = 0, y = 0, z = 1 }, scale = 2 })))
+    print("animation " .. tostring(effect:PlayAnimation(158, 1.5)))
+    effect:SetAlpha(0.25)
+    effect:SetEmitting(false)
+    print("loaded " .. tostring(wxl.m2.ModelLoaded(effect)) .. " length " .. wxl.m2.AnimationLength(effect, 0))
+    print("hand " .. wxl.m2.AttachmentWorld(model, 32).z)
+    print("ground " .. wxl.m2.GroundHeight({ x = 1, y = 2, z = 10 }, 5, 50))
+    print("no ground " .. tostring(select(2, wxl.m2.GroundHeight({ x = 1, y = 2, z = 10 }, 5, 1))))
+    print("no position " .. tostring(select(2, pcall(function() return effect:Place({ yaw = 1 }) end))))
+    kept[#kept + 1] = effect
 end)
 Observe("AssetScript", "OnModelParsed", function(path, file, header, size)
     print("parsed " .. path .. " " .. type(file) .. " " .. size)
@@ -2221,6 +2233,24 @@ end)
               "AttachmentPoint answers {x, y, z}, AttachToBone takes one, RacePrefix a string");
         Check(sink.Has("[wxl.tailor] released false") && wxltest::FakeModels::Released() == released + 1,
               "a model given back is given back once, and refuses its methods after");
+        {
+            const wxltest::FakeModels::Model* effect = nullptr;
+            for (const auto& [address, model] : wxltest::FakeModels::Made())
+                if (model->world) effect = model;
+            Check(effect && effect->path == "Spells\\Fire.m2" && sink.Has("[wxl.tailor] placed true") &&
+                      sink.Has("[wxl.tailor] transform true") && sink.Has("[wxl.tailor] animation true"),
+                  "a world model is made in Lua and placed, set on its point and animated");
+            Check(effect && effect->placed.position.z == 3.0f && effect->placed.yaw == 0.5f &&
+                      effect->placed.pitch == 0.0f && effect->placed.scale == 1.0f &&
+                      effect->placed.struct_size == sizeof(wxl_m2_placement) && effect->transform.scale == 2.0f &&
+                      effect->anim == 158 && effect->speed == 1.5f && effect->alpha == 0.25f && !effect->emitting,
+                  "a placement table reads its position and turn, the scale 1 when left out; speed, alpha, emitting");
+            Check(sink.Has("[wxl.tailor] loaded true length 1333") && sink.Has("[wxl.tailor] hand 31.5") &&
+                      sink.Has("[wxl.tailor] ground 8") && sink.Has("[wxl.tailor] no ground not_found"),
+                  "ModelLoaded, AnimationLength, AttachmentWorld and GroundHeight answer as the service does");
+            Check(sink.Has("[wxl.tailor] no position") && sink.Has("a placement: a table with a position"),
+                  "a placement without a position is refused, saying what it takes");
+        }
         Check(sink.Has("[wxl.plain] undeclared") && sink.Has("reaches the client's memory"),
               "a mod that does not declare wxl.m2 is told how to");
 
@@ -2237,7 +2267,7 @@ end)
               "the loader's stages and a drawn batch reach Lua");
 
         host.Shutdown();
-        Check(wxltest::FakeModels::Released() == released + 2, "the mod's models are given back when it unloads");
+        Check(wxltest::FakeModels::Released() == released + 3, "the mod's models, the world's too, are given back when it unloads");
         if (g_failures) sink.Dump();
     }
 

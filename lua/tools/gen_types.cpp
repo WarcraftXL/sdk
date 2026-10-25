@@ -265,7 +265,11 @@ namespace
         if (k == "boolean") return "---@param " + name + " boolean\n";
         if (k == "object")
             return "---@param " + name + " wxl.Object" + (optional.empty() ? "" : " none when left out") + "\n";
-        if (k == "vec3") return "---@param " + name + " wxl.Vec3\n";
+        if (k == "vec3" || k == "vec3_in") return "---@param " + name + " wxl.Vec3\n";
+        if (k == "f32") return "---@param " + name + " number\n";
+        if (k == "placement")
+            return "---@param " + name +
+                   " {position: wxl.Vec3, yaw?: number, pitch?: number, roll?: number, scale?: number}\n";
         if (k == "ptr" || k == "cptr")
             return "---@param " + name + " lightuserdata|wxl.Model an address an event or a call handed you\n";
         if (IsResourceKind(k)) return "---@param " + name + " wxl." + k + "\n";
@@ -284,7 +288,7 @@ namespace
     {
         if (k == "str") return "string";
         if (k == "vec3") return "wxl.Vec3";
-        if (k == "f64") return "number";
+        if (k == "f64" || k == "f32") return "number";
         if (k == "boolean") return "boolean";
         return "integer";
     }

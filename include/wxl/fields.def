@@ -299,9 +299,11 @@ WXL_ARGS_BYTES(wxl_spell_cast_args, misses, misses_size) ///< the guids missed, 
 WXL_ARGS_FIELD(wxl_spell_cast_args, misses_size, u32)  ///< bytes in @ref misses
 WXL_ARGS_BYTES(wxl_spell_cast_args, miss_reasons, miss_count) ///< one byte per miss, the server's SPELL_MISS_* code, in the order of @ref misses; NULL when none
 WXL_ARGS_FIELD(wxl_spell_cast_args, has_source, bool)  ///< WXL_TRUE when the cast names a source point (TARGET_FLAG_SOURCE_LOCATION)
-WXL_ARGS_FIELD(wxl_spell_cast_args, source, vec3)      ///< that point, in world coordinates
+WXL_ARGS_FIELD(wxl_spell_cast_args, source, vec3)      ///< that point: in world coordinates, or in @ref source_transport's frame when that is not 0
 WXL_ARGS_FIELD(wxl_spell_cast_args, has_dest, bool)    ///< WXL_TRUE when the cast names a destination (TARGET_FLAG_DEST_LOCATION): a ground spell's point
-WXL_ARGS_FIELD(wxl_spell_cast_args, dest, vec3)        ///< that point, in world coordinates
+WXL_ARGS_FIELD(wxl_spell_cast_args, dest, vec3)        ///< that point: in world coordinates, or in @ref dest_transport's frame when that is not 0
+WXL_ARGS_FIELD(wxl_spell_cast_args, source_transport, guid) ///< the transport (a ship, an elevator) @ref source is measured on; 0 for the world
+WXL_ARGS_FIELD(wxl_spell_cast_args, dest_transport, guid)   ///< the transport @ref dest is measured on; 0 for the world
 WXL_ARGS_END(wxl_spell_cast_args)
 
 /**

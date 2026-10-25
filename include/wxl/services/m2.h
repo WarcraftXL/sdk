@@ -15,8 +15,12 @@
 // appearance's points that the client strips from its interface copies (the character panel,
 // portraits, character select) is hung back on the copy after the strip.
 //
+// A mod may also make models of the world's own scene and place them anywhere in it, as the client
+// places its spell effects (create_world_model, place_model), and watch the bones the client poses
+// every frame (watch_bones), which a mod simulating cloth or chains rewrites.
+//
 // Raw: a model pointer the client freed is not detected. Calls are made on the client's
-// main thread.
+// main thread, but for bone_info inside a bone watcher.
 
 #ifndef WXL_SERVICE_M2_H
 #define WXL_SERVICE_M2_H
@@ -192,7 +196,9 @@ typedef struct wxl_m2_api
     /**
      * @brief Puts a world model at @p placement in the world (position in world coordinates),
      *        or moves it there. Detaches it first when it hangs on something. Call it every frame
-     *        for a model that moves.
+     *        for a model that moves. WXL_E_FAILED while no map is loaded. Leaving the world
+     *        (WorldLeave: a logout, a teleport to another map) takes the model out of it, as the
+     *        client's own spell effects go: place it again after WorldEnter.
      */
     wxl_result(WXL_CALL* place_model)(void* model, const wxl_m2_placement* placement);
 
@@ -223,7 +229,6 @@ typedef struct wxl_m2_api
     /// Whether the model's particle emitters and ribbons make anything new; those already made
     /// play out. What a spell effect does as it ends.
     void(WXL_CALL* set_emitting)(void* model, wxl_bool emitting);
-
 
     /**
      * @brief Where attachment point @p attachment of a loaded @p model is in the world now.
@@ -244,10 +249,11 @@ typedef struct wxl_m2_api
     /**
      * @brief Calls @p fn every frame for every model whose file @p filter accepted, right after
      *        the client posed its bones (and after wxl.m2 posed the models it attached), until
-     *        unwatched. @p filter is asked once per model file the first time a loaded model of
+     *        unwatched. A model the client animates as one piece (a file of a single bone it
+     *        never animates) has no skeleton to hand over and is left out. @p filter is asked once per model file the first time a loaded model of
      *        it animates. Both run on the client's animate threads, more than one at a time:
      *        they must be thread-safe and must not call this service. A watcher that faults is
-     *        dropped.
+     *        dropped. Sixteen watchers at most, across every mod: WXL_E_FAILED past them.
      */
     wxl_result(WXL_CALL* watch_bones)(wxl_m2_bones_filter_fn filter, wxl_m2_bones_fn fn, void* user,
                                       uint32_t* out_token);
