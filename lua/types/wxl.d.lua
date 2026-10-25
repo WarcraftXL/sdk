@@ -14,6 +14,20 @@
 ---@field y number
 ---@field z number
 
+---A file's content hash, as wxl.storage.HashFile answers it.
+---@class wxl.FileHash
+---@field md5 string thirty-two lower-case hex digits
+---@field size integer bytes
+---@field layer "archive"|"disk"|"folder"|"provider"|"served" where the bytes came from
+---@field source string the archive, the file on the disk, or the mod that serves it
+
+---What wxl.storage.ReloadAsset did.
+---@class wxl.AssetReload
+---@field textures integer textures read again in place
+---@field models integer model files dropped from the model cache
+---@field objects integer units and players whose model was made again
+---@field busy integer textures still loading, left alone
+
 ---An element of an update field: a number, a guid's string for a guid or another
 ---64-bit value, a table of numbers for the bytes or the two halves of a dword.
 ---@alias wxl.FieldValue number|string|number[]
@@ -1276,6 +1290,10 @@
 ---arrives as its number.
 ---@alias wxl.AppearanceChange "worn"|"removed"|"freed"
 
+---A wxl_asset_kind value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.AssetKind "other"|"model"|"skin"|"animation"|"texture"|"terrain"|"map_object"|"sound"|"database"|"interface"|"shader"|"font"|"movie"
+
 -- The script families. A function defined on one of these tables as On<Event> is
 -- subscribed when the entry file has run and called with the event's parameters;
 -- on an event that can be answered its return values are taken, as Override
@@ -1355,6 +1373,7 @@ ObjectScript = {}
 ---@field OnModelParsed fun(self: AssetScript, path: string, file: lightuserdata|nil, header: lightuserdata|nil, size: integer)
 ---@field OnSkinProfileParsed fun(self: AssetScript, path: string, file: lightuserdata|nil, header: lightuserdata|nil, skin: lightuserdata|nil)
 ---@field OnModelSequenceLoad fun(self: AssetScript, path: string, file: lightuserdata|nil, sequence_index: integer, data: wxl.Bytes)
+---@field OnFileMissing fun(self: AssetScript, path: string, base: string, scope: string, kind: wxl.AssetKind|integer, open: boolean, pending: boolean, loader: boolean)
 AssetScript = {}
 
 ---@class NetScript
@@ -1610,6 +1629,7 @@ SocialScript = {}
 ---@overload fun(family: "AssetScript", method: "OnModelSequenceLoad", handler: fun(path: string, file: lightuserdata|nil, sequence_index: integer, data: wxl.Bytes)): integer
 ---@overload fun(family: "ObjectScript", method: "OnAppearanceChanged", handler: fun(change: wxl.AppearanceChange|integer, wearer: lightuserdata|nil, model: lightuserdata|nil, race_id: integer, sex_id: integer, item_slot: integer, display_id: integer, npc: boolean)): integer
 ---@overload fun(family: "RenderScript", method: "OnModelBatchDrawn", handler: fun(model: lightuserdata|nil, root_model: lightuserdata|nil, primitive_type: integer, base_vertex: integer, min_index: integer, vertex_count: integer, start_index: integer, primitive_count: integer, blend_mode: integer, viewport_x: integer, viewport_y: integer, viewport_width: integer, viewport_height: integer, viewport_min_z: number, viewport_max_z: number)): integer
+---@overload fun(family: "AssetScript", method: "OnFileMissing", handler: fun(path: string, base: string, scope: string, kind: wxl.AssetKind|integer, open: boolean, pending: boolean, loader: boolean)): integer
 ---@param family wxl.Family
 ---@param method string
 ---@param handler function
@@ -2697,6 +2717,68 @@ function storage.Serve(path, data, priority) end
 ---@return string|nil reason
 function storage.Unserve(path) end
 
+---Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
+---The content hash of a file as the client would read it, from whichever layer holds it: an
+---archive, the disk, a folder of the search path, a provider, served bytes. The bytes are hashed
+---before any transform, by the system's MD5, and the answer is kept: `fresh` reads it again.
+---Reading a large file takes time on the main thread; HashFileAsync does not.
+---@param path string
+---@param fresh? boolean
+---@return wxl.FileHash|nil hash
+---@return string|nil reason
+function storage.HashFile(path, fresh) end
+
+---Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
+---HashFile on a thread of the runtime's: `fn(hash)` is called later, on the main thread, with the
+---table HashFile answers, or nil and the reason. Answers the request's number. A request of a
+---mod that is disabled, reloads or unloads is dropped.
+---@param path string
+---@param fn fun(hash: wxl.FileHash|nil, reason: string|nil)
+---@param fresh? boolean
+---@return integer|nil request
+---@return string|nil reason
+function storage.HashFileAsync(path, fn, fresh) end
+
+---Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
+---Replaces a file of the client with another name, for this mod: every open of `path`, and every
+---check that it exists, gets `with` instead, on every thread, above every layer. The way to
+---put a mod's own copy (ScopedName) in place of the client's file. It stays until RestoreFile,
+---or until the mod is disabled, reloads or unloads; when two mods override one name, the later
+---wins. What the client already loaded stays: ReloadAsset makes it read the file again.
+---@param path string
+---@param with string
+---@return true|nil ok
+---@return string|nil reason
+function storage.OverrideFile(path, with) end
+
+---Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
+---Takes this mod's override of a name back; nil, "not_found" for one it did not override.
+---@param path string
+---@return true|nil ok
+---@return string|nil reason
+function storage.RestoreFile(path) end
+
+---Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
+---The name of `path` in a mod's scope, this mod's when `mod` is nil: the mod's id in brackets
+---before the extension, "Creature\\Foo\\Foo[my.mod].m2". The client reads a scoped name
+---as the file served under it when one is, else as the client's own file: hand it to the
+---client to show a mod's copy without replacing the client's.
+---@param path string
+---@param mod? string
+---@return string|nil name
+---@return string|nil reason
+function storage.ScopedName(path, mod) end
+
+---Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
+---Makes the client read again a model or a texture it holds, so a file that changed shows: a
+---texture is read again in place, a model is dropped from the model cache and the units drawn
+---with it made again. Other kinds answer nil, "unsupported"; nil, "pending" when what the
+---client holds is still loading.
+---@param path string
+---@return wxl.AssetReload|nil done
+---@return string|nil reason
+function storage.ReloadAsset(path) end
+
 ---wxl.data. The client's databases, served from a mod's own files before the client reads them.
 ---@class wxl.data
 local data = {}
@@ -2989,6 +3071,67 @@ local engine = {}
 ---@return string|nil reason
 function engine.Layout(name) end
 
+---wxl.relay. Services mods publish for each other: a call now, its answer later, on the main thread.
+---Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.relay
+local relay = {}
+
+---Publishes a service under a name, for this mod. `fn(request, method, ...)` runs on the main
+---thread for each call: what it returns is the answer; when it returns nothing, it answers later
+---with Answer or Fail. `cancelled(request)`, when given, is told of a request whose caller
+---took it back or went. It stays until Unpublish, or until the mod is disabled, reloads or
+---unloads; its unanswered requests then fail with "not_found".
+---@param name string
+---@param fn fun(request: integer, method: string, ...): ...
+---@param cancelled? fun(request: integer)
+---@return true|nil ok
+---@return string|nil reason
+function relay.Publish(name, fn, cancelled) end
+
+---Takes this mod's service back; nil, "not_found" for one it does not publish.
+---@param name string
+---@return true|nil ok
+---@return string|nil reason
+function relay.Unpublish(name) end
+
+---Whether some mod publishes a service under the name.
+---@param name string
+---@return boolean|nil
+---@return string|nil reason
+function relay.Published(name) end
+
+---Asks a service: `fn(true, ...)` is called later, on the main thread, with the answer, or
+---`fn(false, reason)` ("not_found" when nobody publishes it or it went, else the reason the
+---service gave). `args` is a list of numbers, strings and booleans, or nil. Answers the
+---request's number. Dropped, never answered, if this mod is disabled, reloads or unloads.
+---@param name string
+---@param method string
+---@param args? any[]
+---@param fn fun(ok: boolean, ...)
+---@return integer|nil request
+---@return string|nil reason
+function relay.Call(name, method, args, fn) end
+
+---Answers a request this mod's service received, with values: numbers, strings, booleans, nil.
+---@param request integer
+---@param ... any
+---@return true|nil ok
+---@return string|nil reason
+function relay.Answer(request, ...) end
+
+---Fails a request this mod's service received: its caller gets false and `reason`.
+---@param request integer
+---@param reason string
+---@return true|nil ok
+---@return string|nil reason
+function relay.Fail(request, reason) end
+
+---Takes back a request this mod made: its fn is never called, and the service is told.
+---@param request integer
+---@return true|nil ok
+---@return string|nil reason
+function relay.Cancel(request) end
+
 ---@class wxl.ModInfo
 ---@field id string
 ---@field name string
@@ -3062,6 +3205,7 @@ function object.Unwatch(type, name) end
 ---@field point wxl.point
 ---@field m2 wxl.m2
 ---@field engine wxl.engine
+---@field relay wxl.relay
 ---@field events table<wxl.Family, string[]> every family's events, as On<Event>
 wxl = {}
 

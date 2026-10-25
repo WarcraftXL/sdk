@@ -19,3 +19,4 @@
 #include "wxl/services/m2.def"
 #include "wxl/services/gx.def"
 #include "wxl/services/engine.def"
+#include "wxl/services/relay.def"

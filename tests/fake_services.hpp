@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "wxl/objects.hpp"
+#include "wxl/scoped_name.hpp"
 #include "wxl/services/action.h"
 #include "wxl/services/data.h"
 #include "wxl/services/hook.h"
@@ -37,6 +38,7 @@
 #include "wxl/services/m2.h"
 #include "wxl/services/m2file.h"
 #include "wxl/services/profile.h"
+#include "wxl/services/relay.h"
 #include "wxl/services/script.h"
 #include "wxl/services/storage.h"
 #include "wxl/services/ui.h"
@@ -1029,6 +1031,105 @@ namespace wxltest
             return Served().erase(NameKey(Key(path))) ? WXL_OK : WXL_E_NOT_FOUND;
         }
 
+        // --- hashes, overrides, scoped names, reloads (0.1.22) ------------------------------
+        //
+        // A hash is no MD5 here: its sixteen bytes are the file's length, then 1, 2, 3...; the
+        // runtime's MD5 is checked by core's harness. An asynchronous one waits for PumpHashes.
+
+        static std::map<std::string, std::string>& Overrides()
+        {
+            static std::map<std::string, std::string> overrides;
+            return overrides;
+        }
+
+        struct WaitingHash
+        {
+            uint64_t         request;
+            std::string      name;
+            wxl_file_hash_fn fn;
+            void*            user;
+        };
+
+        static std::vector<WaitingHash>& WaitingHashes()
+        {
+            static std::vector<WaitingHash> waiting;
+            return waiting;
+        }
+
+        static wxl_result Hashed(const std::string& asked, wxl_file_hash* out)
+        {
+            const auto  overridden = Overrides().find(NameKey(asked));
+            std::string data;
+            if (!Contents(overridden != Overrides().end() ? overridden->second : asked, data)) return WXL_E_NOT_FOUND;
+            static const char kSource[] = "Data\\fake.MPQ";
+            out->layer                  = WXL_FILE_LAYER_ARCHIVE;
+            out->size                   = data.size();
+            for (uint8_t i = 0; i < 16; ++i) out->md5[i] = i;
+            out->md5[0] = static_cast<uint8_t>(data.size());
+            out->source = wxl_str{kSource, static_cast<uint32_t>(sizeof kSource - 1)};
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL HashFile(wxl_str path, uint32_t, wxl_file_hash* out)
+        {
+            if (!path.size || !out) return WXL_E_INVALID;
+            return Hashed(Key(path), out);
+        }
+
+        static wxl_result WXL_CALL HashFileAsync(wxl_str path, uint32_t, wxl_file_hash_fn fn, void* user, uint64_t* out)
+        {
+            static uint64_t next = 100;
+            if (!path.size || !fn || !out) return WXL_E_INVALID;
+            *out = ++next;
+            WaitingHashes().push_back(WaitingHash{*out, Key(path), fn, user});
+            return WXL_OK;
+        }
+
+        /// Answers every hash asked asynchronously, as the runtime's main thread does.
+        static void PumpHashes()
+        {
+            std::vector<WaitingHash> ready;
+            ready.swap(WaitingHashes());
+            for (const WaitingHash& waiting : ready)
+            {
+                wxl_file_hash    hash{};
+                hash.struct_size        = sizeof hash;
+                const wxl_result result = Hashed(waiting.name, &hash);
+                waiting.fn(waiting.user, waiting.request, result, result == WXL_OK ? &hash : nullptr);
+            }
+        }
+
+        static wxl_result WXL_CALL OverrideFile(wxl_str path, wxl_str with)
+        {
+            if (!path.size || !with.size) return WXL_E_INVALID;
+            Overrides()[NameKey(Key(path))] = Key(with);
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL RestoreFile(wxl_str path)
+        {
+            return Overrides().erase(NameKey(Key(path))) ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+
+        static wxl_str WXL_CALL ScopedName(wxl_str mod, wxl_str path)
+        {
+            static std::string scoped;
+            scoped = wxl::ScopedName(mod.size ? Key(mod) : std::string("wxl.lua"), Key(path));
+            return wxl_str{scoped.c_str(), static_cast<uint32_t>(scoped.size())};
+        }
+
+        static wxl_result WXL_CALL ReloadAsset(wxl_str path, wxl_asset_reload* out)
+        {
+            const std::string name = NameKey(Key(path));
+            if (name.size() < 4 || name.compare(name.size() - 4, 4, ".blp") != 0) return WXL_E_UNSUPPORTED;
+            wxl_asset_reload done{};
+            done.struct_size = sizeof done;
+            done.textures    = 3;
+            done.busy        = 1;
+            if (out) *out = done;
+            return WXL_OK;
+        }
+
         static uint32_t WXL_CALL Find(wxl_str pattern, wxl_str* out, uint32_t capacity)
         {
             const std::string prefix = Key(pattern).substr(0, Key(pattern).find('*'));
@@ -1062,6 +1163,235 @@ namespace wxltest
                 t.unredirect      = &Unredirect;
                 t.serve           = &Serve;
                 t.unserve         = &Unserve;
+                t.hash_file       = &HashFile;
+                t.hash_file_async = &HashFileAsync;
+                t.override_file   = &OverrideFile;
+                t.restore_file    = &RestoreFile;
+                t.scoped_name     = &ScopedName;
+                t.reload_asset    = &ReloadAsset;
+                return t;
+            }();
+            return &api;
+        }
+    };
+
+    // --- wxl.relay --------------------------------------------------------------------------
+    //
+    // The runtime's relay in small: requests and answers queued, handed over at Pump.
+
+    struct FakeRelay
+    {
+        struct Request
+        {
+            std::string            key;
+            std::string            method;
+            std::vector<wxl_value> args;
+            std::vector<std::string> strings;
+            wxl_relay_reply_fn     reply = nullptr;
+            void*                  user  = nullptr;
+            bool                   delivered = false;
+            const wxl_relay_endpoint* to = nullptr;
+        };
+
+        struct Answer
+        {
+            uint64_t                 request;
+            wxl_result               result;
+            std::vector<wxl_value>   values;
+            std::vector<std::string> strings;
+        };
+
+        static std::map<std::string, wxl_relay_endpoint>& Endpoints()
+        {
+            static std::map<std::string, wxl_relay_endpoint> endpoints;
+            return endpoints;
+        }
+
+        static std::map<uint64_t, Request>& Requests()
+        {
+            static std::map<uint64_t, Request> requests;
+            return requests;
+        }
+
+        static std::vector<uint64_t>& ToDeliver()
+        {
+            static std::vector<uint64_t> list;
+            return list;
+        }
+
+        static std::vector<Answer>& Answers()
+        {
+            static std::vector<Answer> list;
+            return list;
+        }
+
+        static std::vector<std::pair<const wxl_relay_endpoint*, uint64_t>>& Cancels()
+        {
+            static std::vector<std::pair<const wxl_relay_endpoint*, uint64_t>> list;
+            return list;
+        }
+
+        static std::string Lower(wxl_str text)
+        {
+            std::string key(text.data, text.size);
+            for (char& c : key) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return key;
+        }
+
+        /// Points the string values at the strings kept beside them, in order: after a move.
+        static void Fix(std::vector<wxl_value>& values, std::vector<std::string>& strings)
+        {
+            size_t next = 0;
+            for (wxl_value& value : values)
+                if (value.type == WXL_VALUE_STRING && next < strings.size())
+                {
+                    value.as.string = wxl_str{strings[next].c_str(), static_cast<uint32_t>(strings[next].size())};
+                    ++next;
+                }
+        }
+
+        /// Values copied, their strings kept beside them.
+        static void Copy(const wxl_value* values, uint32_t count, std::vector<wxl_value>& out, std::vector<std::string>& strings)
+        {
+            strings.reserve(count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                wxl_value value = values[i];
+                if (value.type == WXL_VALUE_STRING)
+                {
+                    strings.emplace_back(value.as.string.data, value.as.string.size);
+                    value.as.string = wxl_str{strings.back().c_str(), static_cast<uint32_t>(strings.back().size())};
+                }
+                out.push_back(value);
+            }
+        }
+
+        static wxl_result WXL_CALL Publish(wxl_str name, const wxl_relay_endpoint* endpoint)
+        {
+            if (!name.size || !endpoint || !endpoint->request) return WXL_E_INVALID;
+            Endpoints()[Lower(name)] = *endpoint;
+            return WXL_OK;
+        }
+
+        static void FailFor(const std::string& key)
+        {
+            for (auto& [id, request] : Requests())
+                if (request.key == key) Answers().push_back(Answer{id, WXL_E_NOT_FOUND, {}, {}});
+        }
+
+        static wxl_result WXL_CALL Unpublish(wxl_str name)
+        {
+            if (!Endpoints().erase(Lower(name))) return WXL_E_NOT_FOUND;
+            FailFor(Lower(name));
+            return WXL_OK;
+        }
+
+        static wxl_bool WXL_CALL Published(wxl_str name) { return Endpoints().count(Lower(name)) ? WXL_TRUE : WXL_FALSE; }
+
+        static wxl_result WXL_CALL Call(wxl_str name, wxl_str method, const wxl_value* args, uint32_t count,
+                                        wxl_relay_reply_fn reply, void* user, uint64_t* out)
+        {
+            static uint64_t next = 0;
+            if (!name.size || !reply || !out) return WXL_E_INVALID;
+            Request request;
+            request.key    = Lower(name);
+            request.method = std::string(method.data, method.size);
+            request.reply  = reply;
+            request.user   = user;
+            Copy(args, count, request.args, request.strings);
+            *out = ++next;
+            Requests()[*out] = std::move(request);
+            ToDeliver().push_back(*out);
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL AnswerRequest(uint64_t id, const wxl_value* values, uint32_t count)
+        {
+            const auto it = Requests().find(id);
+            if (it == Requests().end() || !it->second.delivered) return WXL_E_NOT_FOUND;
+            Answer answer{id, WXL_OK, {}, {}};
+            Copy(values, count, answer.values, answer.strings);
+            Answers().push_back(std::move(answer));
+            it->second.delivered = false;
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL Fail(uint64_t id, wxl_str reason)
+        {
+            const auto it = Requests().find(id);
+            if (it == Requests().end() || !it->second.delivered) return WXL_E_NOT_FOUND;
+            wxl_value value{};
+            value.type      = WXL_VALUE_STRING;
+            value.as.string = reason;
+            Answer answer{id, WXL_E_FAILED, {}, {}};
+            Copy(&value, 1, answer.values, answer.strings);
+            Answers().push_back(std::move(answer));
+            it->second.delivered = false;
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL Cancel(uint64_t id)
+        {
+            const auto it = Requests().find(id);
+            if (it == Requests().end()) return WXL_E_NOT_FOUND;
+            if (it->second.delivered && it->second.to) Cancels().emplace_back(it->second.to, id);
+            Requests().erase(it);
+            return WXL_OK;
+        }
+
+        /// Hands requests to their services, answers to their callers, cancellations: one round.
+        static void Pump()
+        {
+            std::vector<uint64_t> deliver;
+            deliver.swap(ToDeliver());
+            for (uint64_t id : deliver)
+            {
+                const auto it = Requests().find(id);
+                if (it == Requests().end()) continue;
+                const auto endpoint = Endpoints().find(it->second.key);
+                if (endpoint == Endpoints().end())
+                {
+                    Answers().push_back(Answer{id, WXL_E_NOT_FOUND, {}, {}});
+                    continue;
+                }
+                it->second.delivered = true;
+                it->second.to        = &endpoint->second;
+                Request& request     = it->second;
+                Fix(request.args, request.strings);
+                endpoint->second.request(endpoint->second.user, id,
+                                         wxl_str{request.method.c_str(), static_cast<uint32_t>(request.method.size())},
+                                         request.args.data(), static_cast<uint32_t>(request.args.size()));
+            }
+            std::vector<Answer> answers;
+            answers.swap(Answers());
+            for (Answer& answer : answers)
+            {
+                const auto it = Requests().find(answer.request);
+                if (it == Requests().end()) continue;
+                const Request request = it->second;
+                Requests().erase(it);
+                Fix(answer.values, answer.strings);
+                request.reply(request.user, answer.request, answer.result, answer.values.data(),
+                              static_cast<uint32_t>(answer.values.size()));
+            }
+            std::vector<std::pair<const wxl_relay_endpoint*, uint64_t>> cancels;
+            cancels.swap(Cancels());
+            for (const auto& [endpoint, id] : cancels)
+                if (endpoint->cancelled) endpoint->cancelled(endpoint->user, id);
+        }
+
+        static const wxl_relay_api* Table()
+        {
+            static wxl_relay_api api = [] {
+                wxl_relay_api t{};
+                t.struct_size = sizeof t;
+                t.publish     = &Publish;
+                t.unpublish   = &Unpublish;
+                t.published   = &Published;
+                t.call        = &Call;
+                t.answer      = &AnswerRequest;
+                t.fail        = &Fail;
+                t.cancel      = &Cancel;
                 return t;
             }();
             return &api;

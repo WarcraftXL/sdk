@@ -15,6 +15,7 @@
 #include <string_view>
 #include <vector>
 
+#include "wxl/scoped_name.hpp"
 #include "wxl/sdk.hpp"
 #include "wxl/services/rows.hpp"
 #include "wxl/services/storage.h"
@@ -391,6 +392,55 @@ namespace wxl
         std::unique_ptr<detail::AssetBridge> bridge_;
     };
 
+    /// A file's content hash, as StorageService::HashFile answers it.
+    struct FileHash
+    {
+        uint8_t        md5[16] = {};
+        uint64_t       size    = 0;
+        wxl_file_layer layer   = WXL_FILE_LAYER_NONE;
+        std::string    source; ///< the archive, the file on the disk, or the mod that serves it
+
+        /// The digest as thirty-two lower-case hex digits, the way a CDN writes a content key.
+        std::string Hex() const
+        {
+            static const char kDigits[] = "0123456789abcdef";
+            std::string text(32, '0');
+            for (size_t i = 0; i < 16; ++i)
+            {
+                text[2 * i]     = kDigits[md5[i] >> 4];
+                text[2 * i + 1] = kDigits[md5[i] & 0xF];
+            }
+            return text;
+        }
+
+        static FileHash From(const wxl_file_hash& hash)
+        {
+            FileHash out;
+            std::memcpy(out.md5, hash.md5, sizeof out.md5);
+            out.size   = hash.size;
+            out.layer  = static_cast<wxl_file_layer>(hash.layer);
+            out.source = hash.source.data ? std::string(hash.source.data, hash.source.size) : std::string();
+            return out;
+        }
+    };
+
+    namespace detail
+    {
+        /// The function a HashFileAsync request answers, kept until it does.
+        struct HashCallback
+        {
+            std::function<void(Expected<FileHash>)> fn;
+
+            static void WXL_CALL Answer(void* user, uint64_t, wxl_result result, const wxl_file_hash* hash)
+            {
+                std::unique_ptr<HashCallback> self(static_cast<HashCallback*>(user));
+                if (!self->fn) return;
+                if (result != WXL_OK || !hash) self->fn(Unexpected{result == WXL_OK ? WXL_E_FAILED : result});
+                else self->fn(FileHash::From(*hash));
+            }
+        };
+    } // namespace detail
+
     /**
      * @brief The typed facade over wxl.storage.
      *
@@ -405,6 +455,10 @@ namespace wxl
      *                                                           higher priority wins a name, the
      *                                                           client's own data is 0
      *   MountArchive(path, priority)        wxl_result          an archive joins the search
+     *   OverrideFile(path, with)            wxl_result          `with` replaces the client's
+     *                                                           `path`, for opens and existence
+     *                                                           checks, until RestoreFile
+     *   RestoreFile(path)                   wxl_result          the override taken back
      *
      * The rest are written here, for what C++ does better than the raw table: a whole file into
      * a vector, a File that closes itself, a list of names.
@@ -538,6 +592,64 @@ namespace wxl
         wxl_result Serve(std::string_view path, std::string_view text, int32_t priority) const
         {
             return Serve(path, text.data(), static_cast<uint32_t>(text.size()), priority);
+        }
+
+        /// The MD5, length and layer of a file as the client would read it, before any
+        /// transform. @p fresh reads it again rather than answer from what the runtime kept.
+        Expected<FileHash> HashFile(std::string_view path, bool fresh = false) const
+        {
+            const wxl_storage_api* api = Raw();
+            if (!detail::Carries(api, &wxl_storage_api::hash_file)) return Unexpected{WXL_E_UNSUPPORTED};
+            wxl_file_hash    hash{};
+            hash.struct_size        = sizeof hash;
+            const wxl_result result = api->hash_file(Str(path), fresh ? WXL_HASH_FRESH : 0u, &hash);
+            if (result != WXL_OK) return Unexpected{result};
+            return FileHash::From(hash);
+        }
+
+        /**
+         * @brief HashFile on a thread of the runtime's: @p fn is called later, on the main
+         *        thread, with the hash or why there is none. Answers the request's number.
+         *
+         * Never called if the mod goes first.
+         */
+        Expected<uint64_t> HashFileAsync(std::string_view path, std::function<void(Expected<FileHash>)> fn,
+                                         bool fresh = false) const
+        {
+            const wxl_storage_api* api = Raw();
+            if (!detail::Carries(api, &wxl_storage_api::hash_file_async)) return Unexpected{WXL_E_UNSUPPORTED};
+            if (!fn) return Unexpected{WXL_E_INVALID};
+            auto     callback = std::make_unique<detail::HashCallback>();
+            callback->fn      = std::move(fn);
+            uint64_t request  = 0;
+            const wxl_result result = api->hash_file_async(Str(path), fresh ? WXL_HASH_FRESH : 0u,
+                                                           &detail::HashCallback::Answer, callback.get(), &request);
+            if (result != WXL_OK) return Unexpected{result};
+            callback.release(); // the answer frees it
+            return request;
+        }
+
+        /// The name of @p path in a mod's scope -- this mod's when @p mod is empty --, which the
+        /// client reads as the mod's own copy when one is served, else as its own file. Empty
+        /// when there is none (see wxl::ScopedName).
+        std::string ScopedName(std::string_view path, std::string_view mod = {}) const
+        {
+            const wxl_storage_api* api = Raw();
+            if (!detail::Carries(api, &wxl_storage_api::scoped_name)) return std::string();
+            const wxl_str scoped = api->scoped_name(Str(mod), Str(path));
+            return scoped.data ? std::string(scoped.data, scoped.size) : std::string();
+        }
+
+        /// Makes the client read again a model or a texture it holds; what it did.
+        Expected<wxl_asset_reload> ReloadAsset(std::string_view path) const
+        {
+            const wxl_storage_api* api = Raw();
+            if (!detail::Carries(api, &wxl_storage_api::reload_asset)) return Unexpected{WXL_E_UNSUPPORTED};
+            wxl_asset_reload done{};
+            done.struct_size        = sizeof done;
+            const wxl_result result = api->reload_asset(Str(path), &done);
+            if (result != WXL_OK) return Unexpected{result};
+            return done;
         }
 
     private:

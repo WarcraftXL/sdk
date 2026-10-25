@@ -57,6 +57,8 @@
 //   vec3 wxl_vec3: a point; a script passes a table with x, y and z
 //   provider const wxl_asset_provider*  transform const wxl_asset_transform*: what a native
 //       mod hands wxl.storage; no script reaches a row taking one
+//   hash_fn wxl_file_hash_fn  relay_endpoint const wxl_relay_endpoint*
+//   relay_reply wxl_relay_reply_fn: a callback; a script hands a function, which its shim keeps
 //   a resource: its ctype
 //   opt<K> the C parameters of K, a parameter a script may leave out: it is then K's zero (0
 //       for a number), which the row's doc says. Every other parameter a script must give, and
@@ -68,7 +70,8 @@
 //   ptr void*, null meaning none: an address of the client's, which a script holds as it is
 //   enumeration<E> uint32_t holding a value of E, an enumeration of enums.def
 //   out<K> wxl_result, K*            found<K> wxl_bool, K*: K a value kind (u64 u32 i32 f64 str
-//       boolean vec3) or a struct kind (m2_item_display: wxl_m2_item_display, written no longer
+//       boolean vec3) or a struct kind (m2_item_display: wxl_m2_item_display, file_hash:
+//       wxl_file_hash, asset_reload: wxl_asset_reload, written no longer
 //       than its struct_size)
 //   whole_bytes wxl_result, (void* buffer, uint64_t capacity, uint64_t* out_read): a buffer
 //       too small is WXL_E_INVALID with out_read set to what it needs
@@ -100,6 +103,7 @@
 #include "wxl/services/engine.h"
 #include "wxl/services/m2.h"
 #include "wxl/services/m2file.h"
+#include "wxl/services/relay.h"
 #include "wxl/objects/object.hpp"
 #include "wxl/services/script.h"
 #include "wxl/services/storage.h"
@@ -138,6 +142,11 @@ namespace wxl::api
         struct provider {};
         struct transform {};
         struct m2_item_display {};
+        struct file_hash {};
+        struct asset_reload {};
+        struct hash_fn {};
+        struct relay_endpoint {};
+        struct relay_reply {};
         template <class K>
         struct opt {};
 
@@ -203,6 +212,8 @@ namespace wxl::api
     template <> struct Value<kind::boolean> { using type = wxl_bool; };
     template <> struct Value<kind::vec3> { using type = wxl_vec3; };
     template <> struct Value<kind::m2_item_display> { using type = wxl_m2_item_display; };
+    template <> struct Value<kind::file_hash> { using type = wxl_file_hash; };
+    template <> struct Value<kind::asset_reload> { using type = wxl_asset_reload; };
 
     /// The C parameters a parameter kind stands for.
     template <class K, class = void>
@@ -229,6 +240,9 @@ namespace wxl::api
     template <> struct Param<kind::vec3> { using C = List<wxl_vec3>; };
     template <> struct Param<kind::provider> { using C = List<const wxl_asset_provider*>; };
     template <> struct Param<kind::transform> { using C = List<const wxl_asset_transform*>; };
+    template <> struct Param<kind::hash_fn> { using C = List<wxl_file_hash_fn>; };
+    template <> struct Param<kind::relay_endpoint> { using C = List<const wxl_relay_endpoint*>; };
+    template <> struct Param<kind::relay_reply> { using C = List<wxl_relay_reply_fn>; };
     template <class R>
     struct Param<R, std::enable_if_t<IsResource<R>::value>>
     {

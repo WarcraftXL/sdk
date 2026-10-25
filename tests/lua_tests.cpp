@@ -2241,6 +2241,131 @@ end)
         if (g_failures) sink.Dump();
     }
 
+    Section("hashes, overrides, scoped names, reloads and the relay in Lua");
+    {
+        using wxltest::FakeRelay;
+        using wxltest::FakeStorage;
+        const fs::path mods = MakeTree(scratch, "bricks", binary, fs::path());
+        WriteFile(mods / "fetcher" / "mod.json", LuaManifest("wxl.fetcher"));
+        WriteFile(mods / "fetcher" / "init.lua", R"(
+local s = wxl.storage
+print("scoped " .. tostring(s.ScopedName("Creature\\Foo\\Foo.m2")) .. " " .. tostring(s.ScopedName("A.blp", "other.mod")) ..
+      " " .. tostring(select(2, s.ScopedName("A.blp", "bad]id"))))
+local h = s.HashFile("Interface\\hello.txt")
+print("hash " .. h.md5 .. " " .. h.size .. " " .. h.layer .. " " .. h.source)
+print("nohash " .. tostring(select(2, s.HashFile("Interface\\none.txt"))))
+print("override " .. tostring(s.OverrideFile("Interface\\big.bin", "Interface\\hello.txt")) .. " " ..
+      tostring(s.HashFile("Interface\\big.bin").size) .. " " .. tostring(s.RestoreFile("Interface\\big.bin")) .. " " ..
+      tostring(select(2, s.RestoreFile("Interface\\big.bin"))))
+s.OverrideFile("Interface\\kept.bin", "Interface\\hello.txt")
+local r = s.ReloadAsset("Textures\\a.blp")
+print("reload " .. r.textures .. " " .. r.models .. " " .. r.objects .. " " .. r.busy .. " " ..
+      tostring(select(2, s.ReloadAsset("World\\a.wmo"))))
+print("async " .. tostring(type(s.HashFileAsync("Interface\\hello.txt", function(hash, why)
+    print("hashed " .. tostring(hash and hash.size) .. " " .. tostring(why))
+end))))
+wxl.relay.Publish("wxl.fetcher.fetch", function(request, method, path)
+    if method == "now" then return s.ScopedName(path), 7 end
+    if method == "bad" then error("on purpose") end
+    pending = request
+end, function(request) print("told cancelled " .. tostring(request == cancelme)) end)
+wxl.script.RegisterFunction("BrickAnswer", function() print("answered " .. tostring(wxl.relay.Answer(pending, "later", true))) end)
+wxl.script.RegisterFunction("BrickFail", function() print("failed " .. tostring(wxl.relay.Fail(pending, "no such file"))) end)
+wxl.script.RegisterFunction("BrickMark", function() cancelme = pending end)
+)");
+        WriteFile(mods / "asker" / "mod.json", LuaManifest("wxl.asker", "\"loadAfter\": [ \"wxl.fetcher\" ]"));
+        WriteFile(mods / "asker" / "init.lua", R"(
+local relay = wxl.relay
+print("published " .. tostring(relay.Published("WXL.fetcher.fetch")) .. " " .. tostring(relay.Published("nobody")))
+relay.Call("wxl.fetcher.fetch", "now", { "Creature\\Foo\\Foo.m2" }, function(ok, name, n)
+    print("now " .. tostring(ok) .. " " .. tostring(name) .. " " .. tostring(n))
+end)
+relay.Call("nobody", "x", nil, function(ok, why) print("nobody " .. tostring(ok) .. " " .. tostring(why)) end)
+relay.Call("wxl.fetcher.fetch", "bad", nil, function(ok, why) print("bad " .. tostring(ok) .. " " .. tostring(why)) end)
+function Ask(method)
+    return relay.Call("wxl.fetcher.fetch", method, { "x" }, function(ok, a, b)
+        print("later " .. tostring(ok) .. " " .. tostring(a) .. " " .. tostring(b))
+    end)
+end
+print("missing fn " .. tostring(pcall(relay.Call, "wxl.fetcher.fetch", "now", nil)))
+wxl.script.RegisterFunction("BrickAsk", function(method) Ask(method) end)
+)");
+
+        wxltest::FakeScript::Live() = WXL_SCRIPT_CONTEXT_GAME;
+        wxltest::FakeScript::Functions().clear();
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_SCRIPT_SERVICE, WXL_SCRIPT_SERVICE_VERSION, wxltest::FakeScript::Table()});
+        config.services.push_back(PublishedService{WXL_STORAGE_SERVICE, WXL_STORAGE_SERVICE_VERSION, FakeStorage::Table()});
+        config.services.push_back(PublishedService{WXL_RELAY_SERVICE, WXL_RELAY_SERVICE_VERSION, FakeRelay::Table()});
+        ModHost host(std::move(config));
+        host.LoadAll();
+        host.Stage(WXL_STAGE_READY);
+        const wxl_lua_api* api =
+            static_cast<const wxl_lua_api*>(host.Table()->get_service(WXL_LUA_SERVICE, WXL_LUA_SERVICE_VERSION));
+
+        Check(sink.Has("[wxl.fetcher] scoped Creature\\Foo\\Foo[wxl.fetcher].m2 A[other.mod].blp invalid"),
+              "ScopedName names the mod's own scope, or another's; an id a scope cannot hold is invalid");
+        Check(sink.Has("[wxl.fetcher] hash 050102030405060708090a0b0c0d0e0f 5 archive Data\\fake.MPQ"),
+              "HashFile answers the digest as hex, the size, the layer by name and the source");
+        Check(sink.Has("[wxl.fetcher] nohash not_found"), "a name nobody has is not_found");
+        Check(sink.Has("[wxl.fetcher] override true 5 true not_found"),
+              "OverrideFile puts one name in place of another until RestoreFile");
+        Check(sink.Has("[wxl.fetcher] reload 3 0 0 1 unsupported"), "ReloadAsset answers what it did as a table");
+        Check(sink.Has("[wxl.fetcher] async number") && !sink.Has("hashed"), "HashFileAsync answers a request number at once");
+        FakeStorage::PumpHashes();
+        Check(sink.Has("[wxl.fetcher] hashed 5 nil"), "and the hash comes to the function later");
+        Check(sink.Has("[wxl.asker] published true false") && sink.Has("[wxl.asker] missing fn false"),
+              "Published finds a service in any case; Call without a function is an error");
+
+        FakeRelay::Pump();
+        FakeRelay::Pump();
+        Check(sink.Has("[wxl.asker] now true Creature\\Foo\\Foo[wxl.fetcher].m2 7"),
+              "a service that returns values answers at once: the caller gets true and them");
+        Check(sink.Has("[wxl.asker] nobody false not_found"), "a name nobody publishes fails with not_found");
+        Check(sink.Has("[wxl.asker] bad false the service's Lua function errored") &&
+                  sink.Has("errored in its wxl.relay service wxl.fetcher.fetch"),
+              "a service whose function errors fails the request, and the error counts against it");
+
+        // The client's script calls what the two mods registered.
+        const auto run = [&](const char* function, const char* argument) {
+            wxl_value text{};
+            text.type            = WXL_VALUE_STRING;
+            text.as.string       = argument ? wxl::Str(argument) : wxl_str{nullptr, 0};
+            wxl_script_call call = argument ? ScriptCallOf({text}) : ScriptCallOf({});
+            wxltest::FakeScript::Invoke(function, call);
+        };
+        run("BrickAsk", "later");
+        FakeRelay::Pump();
+        run("BrickAnswer", nullptr);
+        FakeRelay::Pump();
+        Check(sink.Has("[wxl.fetcher] answered true") && sink.Has("[wxl.asker] later true later true"),
+              "a service that returns nothing answers later through Answer");
+        run("BrickAsk", "later");
+        FakeRelay::Pump();
+        run("BrickFail", nullptr);
+        FakeRelay::Pump();
+        Check(sink.Has("[wxl.asker] later false no such file nil"), "or fails through Fail, with its reason");
+
+        run("BrickAsk", "later");
+        FakeRelay::Pump();
+        run("BrickMark", nullptr);
+        const size_t waiting = FakeRelay::Requests().size();
+        Check(api && api->reload("wxl.asker") == WXL_OK, "the caller reloads with a request in flight");
+        FakeRelay::Pump();
+        Check(FakeRelay::Requests().size() + 1 == waiting && sink.Has("[wxl.fetcher] told cancelled true") &&
+                  !sink.Has("[wxl.asker] later true x"),
+              "its request is cancelled, the service told, the gone caller never answered");
+
+        Check(FakeStorage::Overrides().count("interface\\kept.bin") == 1, "an override is held while its mod runs");
+        Check(api && api->reload("wxl.fetcher") == WXL_OK && FakeRelay::Endpoints().count("wxl.fetcher.fetch") == 1,
+              "the service is published again by the reloaded mod");
+        host.Shutdown();
+        Check(FakeRelay::Endpoints().empty() && FakeStorage::Overrides().count("interface\\kept.bin") == 0,
+              "a mod's services and overrides go when it unloads");
+        if (g_failures) sink.Dump();
+    }
+
     Section("what a mod's abi lets it use");
     {
         const wxl::reflect::Version since = wxl::reflect::SinceOf(WXL_EV_ChatMessage);

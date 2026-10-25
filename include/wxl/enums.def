@@ -323,6 +323,23 @@ WXL_ENUM_VALUE(wxl_appearance_change, WXL_APPEARANCE_REMOVED, 2, removed) ///< a
 WXL_ENUM_VALUE(wxl_appearance_change, WXL_APPEARANCE_FREED,   3, freed)   ///< the appearance is about to be freed: forget what was kept for it
 WXL_ENUM_END(wxl_appearance_change)
 
+/// What a file the client asked for is for, told by its extension: the subsystem that reads it.
+WXL_ENUM(wxl_asset_kind)
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_OTHER,      0, other)      ///< none of the kinds below
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_MODEL,      1, model)      ///< .m2 (.mdx, .mdl): the model loader
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_SKIN,       2, skin)       ///< .skin: a model's skin profile
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_ANIMATION,  3, animation)  ///< .anim: a model's sequence file
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_TEXTURE,    4, texture)    ///< .blp, .tga
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_TERRAIN,    5, terrain)    ///< .adt, .wdt, .wdl: a map's tiles
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_MAP_OBJECT, 6, map_object) ///< .wmo: a building, its root or a group
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_SOUND,      7, sound)      ///< .wav, .mp3, .ogg
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_DATABASE,   8, database)   ///< .dbc, .db2
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_INTERFACE,  9, interface)  ///< .lua, .xml, .toc
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_SHADER,    10, shader)     ///< .bls
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_FONT,      11, font)       ///< .ttf
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_MOVIE,     12, movie)      ///< .avi
+WXL_ENUM_END(wxl_asset_kind)
+
 #ifdef WXL_ENUM_DEFAULTED
     #undef WXL_ENUM
     #undef WXL_ENUM_DEFAULTED

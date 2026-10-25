@@ -515,6 +515,17 @@ WXL_EVENT(Object, AppearanceChanged, 138, wxl_appearance_args)
 /** The client's Direct3D 9 device has just drawn one batch of a model. */
 WXL_EVENT(Render, ModelBatchDrawn,  139, wxl_model_batch_args)
 
+// --- Asset, continued: names no layer has ----------------------------------------------------
+
+WXL_EVENTS_SINCE(0, 1, 22, 140)
+
+/** The client looked for a file -- to open it or to know whether it exists -- and no layer has it:
+    not the disk, not an archive, not a folder of the search path, no provider, no served bytes.
+    Raised on whichever thread asked, often a loader thread; once per ask, so one name may come
+    more than once. `pending` says a provider answered "not yet" for it. A mod's own wxl.storage
+    calls raise nothing. */
+WXL_EVENT(Asset, FileMissing,       140, wxl_file_missing_args)
+
 // Give back whatever was defaulted above, so the file can be included again right after with a
 // different selector. What the consumer defined itself is left alone: undefining it here would
 // break the consumer that includes the table twice on purpose.

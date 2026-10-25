@@ -31,6 +31,27 @@
 //                                                       Lua mods' is wxl.lua's
 //
 // They are taken back when the mod is disabled or its state closes.
+//
+// The rest of wxl.storage's shims keep what a Lua mod holds or hand it a table:
+//
+//   wxl.storage.OverrideFile(name, other)               the mod's overrides, kept as its
+//   wxl.storage.RestoreFile(name)                       redirects are
+//   wxl.storage.HashFile(name [, fresh])                a table: md5 (hex), size, layer, source
+//   wxl.storage.HashFileAsync(name, fn [, fresh])       fn called at a later update, unless the
+//                                                       mod went first
+//   wxl.storage.ScopedName(name [, mod])                this mod's scope when mod is nil
+//   wxl.storage.ReloadAsset(name)                       a table: textures, models, objects, busy
+//
+// And wxl.relay's keep each Lua mod's services and requests:
+//
+//   wxl.relay.Publish(name, fn [, cancelled])           fn(request, method, ...): what it returns
+//                                                       answers; nothing, an answer to come
+//   wxl.relay.Unpublish(name)
+//   wxl.relay.Call(name, method, args, fn)              fn(true, ...) or fn(false, reason) later
+//   wxl.relay.Answer(request, ...), .Fail(request, reason), .Cancel(request)
+//
+// A mod that goes takes its overrides and services back and cancels its requests; an answer that
+// comes for it afterwards finds nobody.
 
 #ifndef WXL_LUA_SHIMS_HPP
 #define WXL_LUA_SHIMS_HPP

@@ -1587,6 +1587,65 @@ int main()
         Check(storage.AddSearchPath("no such folder", 1) == WXL_E_NOT_FOUND,
               "a generated method passes the runtime's answer through");
         Check(storage.MountArchive("Data\\patch-x.MPQ", 2) == WXL_OK, "and its arguments");
+
+        const wxl::Expected<wxl::FileHash> hash = storage.HashFile("Interface\\hello.txt");
+        Check(hash && hash->size == 5 && hash->layer == WXL_FILE_LAYER_ARCHIVE && hash->source == "Data\\fake.MPQ" &&
+                  hash->Hex() == "050102030405060708090a0b0c0d0e0f",
+              "HashFile copies the hash out, its digest as hex");
+        Check(storage.HashFile("nope").IsNotFound(), "a missing file has no hash");
+        int                 answered = 0;
+        uint64_t            size     = 0;
+        const wxl::Expected<uint64_t> request = storage.HashFileAsync("Interface\\hello.txt", [&](wxl::Expected<wxl::FileHash> got) {
+            ++answered;
+            size = got ? got->size : 0;
+        });
+        Check(request && answered == 0, "HashFileAsync answers a request, the hash to come");
+        wxltest::FakeStorage::PumpHashes();
+        Check(answered == 1 && size == 5, "and the function is called once with it");
+        Check(storage.OverrideFile("Interface\\big.bin", "Interface\\hello.txt") == WXL_OK &&
+                  storage.HashFile("Interface\\big.bin").ValueOr(wxl::FileHash{}).size == 5 &&
+                  storage.RestoreFile("Interface\\big.bin") == WXL_OK && storage.RestoreFile("Interface\\big.bin") == WXL_E_NOT_FOUND,
+              "OverrideFile and RestoreFile are generated from the table");
+        Check(storage.ScopedName("Creature\\Foo\\Foo.m2", "my.mod") == "Creature\\Foo\\Foo[my.mod].m2" &&
+                  wxl::ScopedName("my.mod", "Foo.m2") == "Foo[my.mod].m2",
+              "a scoped name from the runtime and from the header agree");
+        const wxl::Expected<wxl_asset_reload> reloaded = storage.ReloadAsset("Textures\\a.blp");
+        Check(reloaded && reloaded->textures == 3 && reloaded->busy == 1 && storage.ReloadAsset("World\\x.wmo").IsUnsupported(),
+              "ReloadAsset answers what was done, or why nothing was");
+    }
+
+    Section("wxl.relay");
+    {
+        host.Table()->publish_service(WXL_RELAY_SERVICE, WXL_RELAY_SERVICE_VERSION, wxltest::FakeRelay::Table());
+        const wxl::RelayService relay;
+        std::string             asked;
+        wxl::Expected<wxl::RelayPublication> published =
+            relay.Publish("test.echo", [&](const wxl::RelayRequest& request, std::string_view method, wxl::RelayValues args) {
+                asked = std::string(method) + ":" + std::string(args.String(0));
+                request.Answer({wxl::Value::String("echo"), wxl::Value::Number(7)});
+            });
+        Check(published && relay.Published("TEST.echo"), "a service publishes, and is found in any case");
+        int         replies = 0;
+        wxl_result  result  = WXL_E_UNSUPPORTED;
+        std::string first;
+        const wxl::Expected<wxl_request> request =
+            relay.Call("test.echo", "say", {wxl::Value::String("hi")}, [&](wxl_result r, wxl::RelayValues values) {
+                ++replies;
+                result = r;
+                first  = std::string(values.String(0)) + std::to_string(static_cast<int>(values.Number(1)));
+            });
+        Check(request && replies == 0, "a call answers its request, the reply to come");
+        wxltest::FakeRelay::Pump();
+        Check(asked == "say:hi" && replies == 1 && result == WXL_OK && first == "echo7",
+              "the service gets the method and arguments, the caller the answer");
+        int cancelledReplies = 0;
+        const wxl::Expected<wxl_request> dropped =
+            relay.Call("test.nobody", "x", {}, [&](wxl_result, wxl::RelayValues) { ++cancelledReplies; });
+        Check(dropped && relay.Cancel(*dropped) == WXL_OK, "a request is cancelled by its caller");
+        wxltest::FakeRelay::Pump();
+        Check(cancelledReplies == 0, "and its reply never called");
+        published->Reset();
+        Check(!relay.Published("test.echo"), "a publication taken back unpublishes");
     }
 
     Section("wxl.data: methods generated from data.def");

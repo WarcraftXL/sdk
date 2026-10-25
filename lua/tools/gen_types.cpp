@@ -355,6 +355,85 @@ namespace
             return "---Takes back what this mod serves under a name; nil, \"not_found\" for one it does not serve.\n"
                    "---@param path string\n---@return true|nil ok\n---@return string|nil reason\n"
                    "function " + owner + ".Unserve(path) end\n\n";
+        if (name == "HashFile")
+            return "---The content hash of a file as the client would read it, from whichever layer holds it: an\n"
+                   "---archive, the disk, a folder of the search path, a provider, served bytes. The bytes are hashed\n"
+                   "---before any transform, by the system's MD5, and the answer is kept: `fresh` reads it again.\n"
+                   "---Reading a large file takes time on the main thread; HashFileAsync does not.\n"
+                   "---@param path string\n---@param fresh? boolean\n"
+                   "---@return wxl.FileHash|nil hash\n---@return string|nil reason\n"
+                   "function " + owner + ".HashFile(path, fresh) end\n\n";
+        if (name == "HashFileAsync")
+            return "---HashFile on a thread of the runtime's: `fn(hash)` is called later, on the main thread, with the\n"
+                   "---table HashFile answers, or nil and the reason. Answers the request's number. A request of a\n"
+                   "---mod that is disabled, reloads or unloads is dropped.\n"
+                   "---@param path string\n---@param fn fun(hash: wxl.FileHash|nil, reason: string|nil)\n"
+                   "---@param fresh? boolean\n---@return integer|nil request\n---@return string|nil reason\n"
+                   "function " + owner + ".HashFileAsync(path, fn, fresh) end\n\n";
+        if (name == "OverrideFile")
+            return "---Replaces a file of the client with another name, for this mod: every open of `path`, and every\n"
+                   "---check that it exists, gets `with` instead, on every thread, above every layer. The way to\n"
+                   "---put a mod's own copy (ScopedName) in place of the client's file. It stays until RestoreFile,\n"
+                   "---or until the mod is disabled, reloads or unloads; when two mods override one name, the later\n"
+                   "---wins. What the client already loaded stays: ReloadAsset makes it read the file again.\n"
+                   "---@param path string\n---@param with string\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".OverrideFile(path, with) end\n\n";
+        if (name == "RestoreFile")
+            return "---Takes this mod's override of a name back; nil, \"not_found\" for one it did not override.\n"
+                   "---@param path string\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".RestoreFile(path) end\n\n";
+        if (name == "ScopedName")
+            return "---The name of `path` in a mod's scope, this mod's when `mod` is nil: the mod's id in brackets\n"
+                   "---before the extension, \"Creature\\\\Foo\\\\Foo[my.mod].m2\". The client reads a scoped name\n"
+                   "---as the file served under it when one is, else as the client's own file: hand it to the\n"
+                   "---client to show a mod's copy without replacing the client's.\n"
+                   "---@param path string\n---@param mod? string\n"
+                   "---@return string|nil name\n---@return string|nil reason\n"
+                   "function " + owner + ".ScopedName(path, mod) end\n\n";
+        if (name == "ReloadAsset")
+            return "---Makes the client read again a model or a texture it holds, so a file that changed shows: a\n"
+                   "---texture is read again in place, a model is dropped from the model cache and the units drawn\n"
+                   "---with it made again. Other kinds answer nil, \"unsupported\"; nil, \"pending\" when what the\n"
+                   "---client holds is still loading.\n"
+                   "---@param path string\n---@return wxl.AssetReload|nil done\n---@return string|nil reason\n"
+                   "function " + owner + ".ReloadAsset(path) end\n\n";
+        if (name == "Publish")
+            return "---Publishes a service under a name, for this mod. `fn(request, method, ...)` runs on the main\n"
+                   "---thread for each call: what it returns is the answer; when it returns nothing, it answers later\n"
+                   "---with Answer or Fail. `cancelled(request)`, when given, is told of a request whose caller\n"
+                   "---took it back or went. It stays until Unpublish, or until the mod is disabled, reloads or\n"
+                   "---unloads; its unanswered requests then fail with \"not_found\".\n"
+                   "---@param name string\n---@param fn fun(request: integer, method: string, ...): ...\n"
+                   "---@param cancelled? fun(request: integer)\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Publish(name, fn, cancelled) end\n\n";
+        if (name == "Unpublish")
+            return "---Takes this mod's service back; nil, \"not_found\" for one it does not publish.\n"
+                   "---@param name string\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Unpublish(name) end\n\n";
+        if (name == "Call")
+            return "---Asks a service: `fn(true, ...)` is called later, on the main thread, with the answer, or\n"
+                   "---`fn(false, reason)` (\"not_found\" when nobody publishes it or it went, else the reason the\n"
+                   "---service gave). `args` is a list of numbers, strings and booleans, or nil. Answers the\n"
+                   "---request's number. Dropped, never answered, if this mod is disabled, reloads or unloads.\n"
+                   "---@param name string\n---@param method string\n---@param args? any[]\n"
+                   "---@param fn fun(ok: boolean, ...)\n---@return integer|nil request\n---@return string|nil reason\n"
+                   "function " + owner + ".Call(name, method, args, fn) end\n\n";
+        if (name == "Answer")
+            return "---Answers a request this mod's service received, with values: numbers, strings, booleans, nil.\n"
+                   "---@param request integer\n---@param ... any\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Answer(request, ...) end\n\n";
+        if (name == "Fail")
+            return "---Fails a request this mod's service received: its caller gets false and `reason`.\n"
+                   "---@param request integer\n---@param reason string\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Fail(request, reason) end\n\n";
+        if (name == "Cancel")
+            return "---Takes back a request this mod made: its fn is never called, and the service is told.\n"
+                   "---@param request integer\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Cancel(request) end\n\n";
         if (name == "Snapshot")
             return "---Takes the picture the lists read: Storm's counts, the client's consumers, the address space,\n"
                    "---and the heap of every Lua mod, each shown as its own category. On the main thread.\n"
@@ -538,6 +617,16 @@ namespace
                "---An event's bytes, copied into a string.\n"
                "---@alias wxl.Bytes string\n\n"
                "---@class wxl.Vec3\n---@field x number\n---@field y number\n---@field z number\n\n"
+               "---A file's content hash, as wxl.storage.HashFile answers it.\n"
+               "---@class wxl.FileHash\n---@field md5 string thirty-two lower-case hex digits\n"
+               "---@field size integer bytes\n"
+               "---@field layer \"archive\"|\"disk\"|\"folder\"|\"provider\"|\"served\" where the bytes came from\n"
+               "---@field source string the archive, the file on the disk, or the mod that serves it\n\n"
+               "---What wxl.storage.ReloadAsset did.\n"
+               "---@class wxl.AssetReload\n---@field textures integer textures read again in place\n"
+               "---@field models integer model files dropped from the model cache\n"
+               "---@field objects integer units and players whose model was made again\n"
+               "---@field busy integer textures still loading, left alone\n\n"
                "---An element of an update field: a number, a guid's string for a guid or another\n"
                "---64-bit value, a table of numbers for the bytes or the two halves of a dword.\n"
                "---@alias wxl.FieldValue number|string|number[]\n\n";

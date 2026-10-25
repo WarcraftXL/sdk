@@ -10,6 +10,8 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <functional>
+#include <memory>
 #include <string>
 #include <system_error>
 #include <vector>
@@ -23,6 +25,7 @@
 #include "wxl/services/rows.hpp"
 #include "wxl/services/script.h"
 #include "wxl/services/footprint.h"
+#include "wxl/services/relay.h"
 #include "wxl/services/storage.h"
 
 namespace wxl::lua::shims
@@ -779,6 +782,649 @@ namespace wxl::lua::shims
                                g_thresholds.end());
             if (g_thresholds.size() != before) WatchHighest();
         }
+
+        // --- calling back into a mod -----------------------------------------------------------
+
+        /// Calls the function a mod keeps at @p ref with what @p push leaves on the stack (it
+        /// answers how many), under the mod's traceback. @p after reads the returns, from the
+        /// index it is given to the top, before the stack is put back. False on a Lua error,
+        /// which counts against the mod.
+        template <class Push, class After>
+        bool CallBack(ScriptMod& mod, int ref, const char* what, Push&& push, After&& after)
+        {
+            if (!mod.Runs() || ref == LUA_NOREF) return false;
+            lua_State* L    = mod.State();
+            const int  base = lua_gettop(L);
+            if (!lua_checkstack(L, 8)) return false;
+            lua_rawgeti(L, LUA_REGISTRYINDEX, mod.TracebackRef());
+            lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+            const int count = push(L);
+            ++g_calling;
+            const bool ok = lua_pcall(L, count, LUA_MULTRET, base + 1) == 0;
+            --g_calling;
+            if (!ok)
+            {
+                const char* message = lua_tostring(L, -1) ? lua_tostring(L, -1) : "?";
+                mod.ReportError(what, message);
+            }
+            else
+            {
+                after(L, base + 2);
+            }
+            lua_settop(L, base);
+            return ok;
+        }
+
+        bool CallBack(ScriptMod& mod, int ref, const char* what, const std::function<int(lua_State*)>& push)
+        {
+            return CallBack(mod, ref, what, push, [](lua_State*, int) {});
+        }
+
+        /// Pushes values that cross the boundary as Lua values; how many.
+        int PushValues(lua_State* L, const wxl_value* values, uint32_t count)
+        {
+            if (!values || !lua_checkstack(L, static_cast<int>(count) + 4)) return 0;
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const wxl_value& value = values[i];
+                switch (value.type)
+                {
+                case WXL_VALUE_NUMBER: lua_pushnumber(L, value.as.number); break;
+                case WXL_VALUE_STRING:
+                    lua_pushlstring(L, value.as.string.data ? value.as.string.data : "",
+                                    value.as.string.data ? value.as.string.size : 0);
+                    break;
+                case WXL_VALUE_BOOL: lua_pushboolean(L, value.as.boolean == WXL_TRUE); break;
+                default: lua_pushnil(L); break;
+                }
+            }
+            return static_cast<int>(count);
+        }
+
+        /// The Lua values from @p first to @p last as values that cross the boundary: numbers,
+        /// strings, booleans; anything else, nil. Strings point into the state, valid while the
+        /// values stay on the stack.
+        std::vector<wxl_value> ValuesOf(lua_State* L, int first, int last)
+        {
+            std::vector<wxl_value> values;
+            for (int i = first; i <= last; ++i)
+            {
+                wxl_value value{};
+                switch (lua_type(L, i))
+                {
+                case LUA_TNUMBER:
+                    value.type      = WXL_VALUE_NUMBER;
+                    value.as.number = lua_tonumber(L, i);
+                    break;
+                case LUA_TSTRING:
+                {
+                    size_t      size = 0;
+                    const char* text = lua_tolstring(L, i, &size);
+                    value.type       = WXL_VALUE_STRING;
+                    value.as.string  = wxl_str{text, static_cast<uint32_t>(size)};
+                    break;
+                }
+                case LUA_TBOOLEAN:
+                    value.type       = WXL_VALUE_BOOL;
+                    value.as.boolean = lua_toboolean(L, i) ? WXL_TRUE : WXL_FALSE;
+                    break;
+                default: value.type = WXL_VALUE_NIL; break;
+                }
+                values.push_back(value);
+            }
+            return values;
+        }
+
+        /// A request number argument: a whole number from 1.
+        uint64_t CheckRequest(lua_State* L, int index, const char* function)
+        {
+            if (lua_isnoneornil(L, index))
+                luaL_error(L, "wxl.relay.%s: 'request' (argument %d) is missing; it takes a whole number", function,
+                           index);
+            const lua_Number value = luaL_checknumber(L, index);
+            if (std::floor(value) != value || value < 1 || value > 9007199254740992.0)
+                luaL_argerror(L, index, "a request number");
+            return static_cast<uint64_t>(value);
+        }
+
+        // --- wxl.storage: the files each mod overrides ----------------------------------------
+        //
+        // The host sees every override of a Lua mod as wxl.lua's, one per name. Each mod's are kept
+        // here in the order they were made, as the redirects are.
+
+        std::vector<Redirected> g_overrides;
+
+        wxl_result SettleOverride(const Redirected& entry)
+        {
+            const wxl_storage_api* api = Storage();
+            if (!api || !wxl::detail::Carries(api, &wxl_storage_api::restore_file)) return WXL_E_UNSUPPORTED;
+            if (entry.holders.empty()) return api->restore_file(Str(entry.from));
+            return api->override_file(Str(entry.from), Str(entry.holders.back().second));
+        }
+
+        void LetGoOverride(size_t index, ScriptMod& mod)
+        {
+            Redirected& entry  = g_overrides[index];
+            const bool  latest = !entry.holders.empty() && entry.holders.back().first == &mod;
+            entry.holders.erase(std::remove_if(entry.holders.begin(), entry.holders.end(),
+                                               [&](const auto& holder) { return holder.first == &mod; }),
+                                entry.holders.end());
+            if (latest) SettleOverride(entry);
+            if (entry.holders.empty()) g_overrides.erase(g_overrides.begin() + static_cast<std::ptrdiff_t>(index));
+        }
+
+        int L_OverrideFile(lua_State* L)
+        {
+            ScriptMod&        mod  = Self(L);
+            const std::string path = CheckName(L, 1, "OverrideFile", "path");
+            const std::string with = CheckName(L, 2, "OverrideFile", "with");
+            const wxl_storage_api* api = Storage();
+            if (!api || !wxl::detail::Carries(api, &wxl_storage_api::override_file))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->override_file(Str(path), Str(with));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+
+            const std::string key   = NameKey(path);
+            auto              known = std::find_if(g_overrides.begin(), g_overrides.end(),
+                                                   [&](const Redirected& entry) { return entry.key == key; });
+            if (known == g_overrides.end())
+            {
+                g_overrides.push_back(Redirected{key, path, {}});
+                known = g_overrides.end() - 1;
+            }
+            known->holders.erase(std::remove_if(known->holders.begin(), known->holders.end(),
+                                                [&](const auto& holder) { return holder.first == &mod; }),
+                                 known->holders.end());
+            known->holders.emplace_back(&mod, with);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_RestoreFile(lua_State* L)
+        {
+            ScriptMod&        mod  = Self(L);
+            const std::string path = CheckName(L, 1, "RestoreFile", "path");
+            const wxl_storage_api* api = Storage();
+            if (!api || !wxl::detail::Carries(api, &wxl_storage_api::restore_file))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const std::string key = NameKey(path);
+            for (size_t i = 0; i < g_overrides.size(); ++i)
+            {
+                const Redirected& entry = g_overrides[i];
+                if (entry.key != key || std::none_of(entry.holders.begin(), entry.holders.end(),
+                                                     [&](const auto& holder) { return holder.first == &mod; }))
+                    continue;
+                LetGoOverride(i, mod);
+                lua_pushboolean(L, 1);
+                return 1;
+            }
+            return PushResultFailure(L, WXL_E_NOT_FOUND);
+        }
+
+        // --- wxl.storage: scoped names, hashes, reloads -----------------------------------------
+
+        int L_ScopedName(lua_State* L)
+        {
+            ScriptMod&        mod  = Self(L);
+            const std::string path = CheckName(L, 1, "ScopedName", "path");
+            std::string       owner = mod.Id();
+            if (!lua_isnoneornil(L, 2))
+            {
+                size_t      size = 0;
+                const char* text = luaL_checklstring(L, 2, &size);
+                owner.assign(text, size);
+            }
+            const wxl_storage_api* api = Storage();
+            if (!api || !wxl::detail::Carries(api, &wxl_storage_api::scoped_name))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_str scoped = api->scoped_name(Str(owner), Str(path));
+            if (!scoped.data || !scoped.size) return PushResultFailure(L, WXL_E_INVALID);
+            lua_pushlstring(L, scoped.data, scoped.size);
+            return 1;
+        }
+
+        const char* LayerName(uint32_t layer)
+        {
+            switch (layer)
+            {
+            case WXL_FILE_LAYER_ARCHIVE: return "archive";
+            case WXL_FILE_LAYER_DISK: return "disk";
+            case WXL_FILE_LAYER_FOLDER: return "folder";
+            case WXL_FILE_LAYER_PROVIDER: return "provider";
+            case WXL_FILE_LAYER_SERVED: return "served";
+            default: return "none";
+            }
+        }
+
+        /// A file hash as the table a script reads.
+        void PushHash(lua_State* L, const wxl_file_hash& hash)
+        {
+            static const char kDigits[] = "0123456789abcdef";
+            char              hex[32];
+            for (int i = 0; i < 16; ++i)
+            {
+                hex[2 * i]     = kDigits[hash.md5[i] >> 4];
+                hex[2 * i + 1] = kDigits[hash.md5[i] & 0xF];
+            }
+            lua_createtable(L, 0, 4);
+            lua_pushlstring(L, hex, sizeof hex);
+            lua_setfield(L, -2, "md5");
+            lua_pushnumber(L, static_cast<lua_Number>(hash.size));
+            lua_setfield(L, -2, "size");
+            lua_pushstring(L, LayerName(hash.layer));
+            lua_setfield(L, -2, "layer");
+            lua_pushlstring(L, hash.source.data ? hash.source.data : "", hash.source.data ? hash.source.size : 0);
+            lua_setfield(L, -2, "source");
+        }
+
+        int L_HashFile(lua_State* L)
+        {
+            const std::string path  = CheckName(L, 1, "HashFile", "path");
+            const bool        fresh = lua_toboolean(L, 2) != 0;
+            const wxl_storage_api* api = Storage();
+            if (!api || !wxl::detail::Carries(api, &wxl_storage_api::hash_file))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_file_hash hash{};
+            hash.struct_size        = sizeof hash;
+            const wxl_result result = api->hash_file(Str(path), fresh ? WXL_HASH_FRESH : 0u, &hash);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            PushHash(L, hash);
+            return 1;
+        }
+
+        /// A hash a Lua mod waits for. Kept until the runtime answers it, which it always does
+        /// while wxl.lua runs: a mod that went in between is forgotten, not the wait.
+        struct HashWait
+        {
+            ScriptMod* mod;
+            int        ref;
+        };
+
+        std::vector<std::unique_ptr<HashWait>> g_hashWaits;
+
+        void WXL_CALL HashAnswered(void* user, uint64_t, wxl_result result, const wxl_file_hash* hash)
+        {
+            const auto found = std::find_if(g_hashWaits.begin(), g_hashWaits.end(),
+                                            [&](const std::unique_ptr<HashWait>& wait) { return wait.get() == user; });
+            if (found == g_hashWaits.end()) return;
+            const std::unique_ptr<HashWait> wait = std::move(*found);
+            g_hashWaits.erase(found);
+            if (!wait->mod) return;
+            ScriptMod& mod = *wait->mod;
+            CallBack(mod, wait->ref, "in its HashFileAsync function", [&](lua_State* L) {
+                if (result == WXL_OK && hash)
+                {
+                    PushHash(L, *hash);
+                    return 1;
+                }
+                lua_pushnil(L);
+                lua_pushstring(L, ReasonOf(result == WXL_OK ? WXL_E_FAILED : result));
+                return 2;
+            });
+            if (mod.State()) luaL_unref(mod.State(), LUA_REGISTRYINDEX, wait->ref);
+        }
+
+        int L_HashFileAsync(lua_State* L)
+        {
+            ScriptMod&        mod  = Self(L);
+            const std::string path = CheckName(L, 1, "HashFileAsync", "path");
+            if (lua_isnoneornil(L, 2))
+                return luaL_error(L, "wxl.storage.HashFileAsync: 'fn' (argument 2) is missing; it takes a function");
+            luaL_checktype(L, 2, LUA_TFUNCTION);
+            const bool fresh = lua_toboolean(L, 3) != 0;
+            const wxl_storage_api* api = Storage();
+            if (!api || !wxl::detail::Carries(api, &wxl_storage_api::hash_file_async))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            lua_pushvalue(L, 2);
+            auto wait  = std::make_unique<HashWait>();
+            wait->mod  = &mod;
+            wait->ref  = luaL_ref(L, LUA_REGISTRYINDEX);
+            HashWait* kept = wait.get();
+            g_hashWaits.push_back(std::move(wait));
+            uint64_t         request = 0;
+            const wxl_result result  = api->hash_file_async(Str(path), fresh ? WXL_HASH_FRESH : 0u, &HashAnswered, kept,
+                                                            &request);
+            if (result != WXL_OK)
+            {
+                luaL_unref(L, LUA_REGISTRYINDEX, kept->ref);
+                g_hashWaits.erase(std::find_if(g_hashWaits.begin(), g_hashWaits.end(),
+                                               [&](const std::unique_ptr<HashWait>& w) { return w.get() == kept; }));
+                return PushResultFailure(L, result);
+            }
+            lua_pushnumber(L, static_cast<lua_Number>(request));
+            return 1;
+        }
+
+        int L_ReloadAsset(lua_State* L)
+        {
+            const std::string path = CheckName(L, 1, "ReloadAsset", "path");
+            const wxl_storage_api* api = Storage();
+            if (!api || !wxl::detail::Carries(api, &wxl_storage_api::reload_asset))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_asset_reload done{};
+            done.struct_size        = sizeof done;
+            const wxl_result result = api->reload_asset(Str(path), &done);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_createtable(L, 0, 4);
+            lua_pushnumber(L, done.textures);
+            lua_setfield(L, -2, "textures");
+            lua_pushnumber(L, done.models);
+            lua_setfield(L, -2, "models");
+            lua_pushnumber(L, done.objects);
+            lua_setfield(L, -2, "objects");
+            lua_pushnumber(L, done.busy);
+            lua_setfield(L, -2, "busy");
+            return 1;
+        }
+
+        /// What a mod held of hashes and overrides goes with it.
+        void ReleaseStorage(ScriptMod& mod)
+        {
+            for (size_t i = g_overrides.size(); i-- > 0;)
+                if (std::any_of(g_overrides[i].holders.begin(), g_overrides[i].holders.end(),
+                                [&](const auto& holder) { return holder.first == &mod; }))
+                    LetGoOverride(i, mod);
+            for (const std::unique_ptr<HashWait>& wait : g_hashWaits)
+            {
+                if (wait->mod != &mod) continue;
+                if (mod.State()) luaL_unref(mod.State(), LUA_REGISTRYINDEX, wait->ref);
+                wait->mod = nullptr;
+            }
+        }
+
+        // --- wxl.relay: the services each mod publishes and the requests it waits on ----------
+        //
+        // The host sees every Lua mod's services and requests as wxl.lua's. Each mod's are kept
+        // here: a mod that goes takes its services back (their requests fail for their callers)
+        // and cancels its requests (their services are told).
+
+        const wxl_relay_api* Relay() { return wxl::api::Table<wxl_relay_api>(); }
+
+        struct Published
+        {
+            ScriptMod*         mod;
+            std::string        name;
+            int                fn;
+            int                cancelled; ///< LUA_NOREF for none
+            wxl_relay_endpoint table{};
+        };
+
+        std::vector<std::unique_ptr<Published>> g_published;
+
+        /// A request a Lua mod made and waits on. Kept until answered, or cancelled.
+        struct Waiting
+        {
+            ScriptMod*  mod;
+            int         fn;
+            wxl_request request = 0;
+        };
+
+        std::vector<std::unique_ptr<Waiting>> g_waiting;
+
+        void WXL_CALL RelayRequested(void* user, wxl_request request, wxl_str method, const wxl_value* args,
+                                     uint32_t count)
+        {
+            const auto found = std::find_if(g_published.begin(), g_published.end(),
+                                            [&](const std::unique_ptr<Published>& p) { return p.get() == user; });
+            if (found == g_published.end()) return;
+            Published& published = **found;
+            ScriptMod& mod       = *published.mod;
+            const std::string what = "in its wxl.relay service " + published.name;
+            const bool ok = CallBack(
+                mod, published.fn, what.c_str(),
+                [&](lua_State* L) {
+                    lua_pushnumber(L, static_cast<lua_Number>(request));
+                    lua_pushlstring(L, method.data ? method.data : "", method.data ? method.size : 0);
+                    return 2 + PushValues(L, args, count);
+                },
+                [&](lua_State* L, int first) {
+                    // Values returned are the answer; none, an answer to come.
+                    const int last = lua_gettop(L);
+                    if (last < first) return;
+                    const std::vector<wxl_value> values = ValuesOf(L, first, last);
+                    if (const wxl_relay_api* api = Relay())
+                        api->answer(request, values.data(), static_cast<uint32_t>(values.size()));
+                });
+            if (!ok)
+                if (const wxl_relay_api* api = Relay()) api->fail(request, Str("the service's Lua function errored"));
+        }
+
+        void WXL_CALL RelayCancelled(void* user, wxl_request request)
+        {
+            const auto found = std::find_if(g_published.begin(), g_published.end(),
+                                            [&](const std::unique_ptr<Published>& p) { return p.get() == user; });
+            if (found == g_published.end() || (*found)->cancelled == LUA_NOREF) return;
+            Published& published = **found;
+            const std::string what = "in its wxl.relay cancel function of " + published.name;
+            CallBack(*published.mod, published.cancelled, what.c_str(), [&](lua_State* L) {
+                lua_pushnumber(L, static_cast<lua_Number>(request));
+                return 1;
+            });
+        }
+
+        void WXL_CALL RelayReplied(void* user, wxl_request, wxl_result result, const wxl_value* values, uint32_t count)
+        {
+            const auto found = std::find_if(g_waiting.begin(), g_waiting.end(),
+                                            [&](const std::unique_ptr<Waiting>& w) { return w.get() == user; });
+            if (found == g_waiting.end()) return;
+            const std::unique_ptr<Waiting> waiting = std::move(*found);
+            g_waiting.erase(found);
+            if (!waiting->mod) return;
+            ScriptMod& mod = *waiting->mod;
+            CallBack(mod, waiting->fn, "in its wxl.relay answer function", [&](lua_State* L) {
+                if (result == WXL_OK)
+                {
+                    lua_pushboolean(L, 1);
+                    return 1 + PushValues(L, values, count);
+                }
+                lua_pushboolean(L, 0);
+                if (result == WXL_E_FAILED && values && count && values[0].type == WXL_VALUE_STRING)
+                    PushValues(L, values, 1);
+                else
+                    lua_pushstring(L, ReasonOf(result));
+                return 2;
+            });
+            if (mod.State()) luaL_unref(mod.State(), LUA_REGISTRYINDEX, waiting->fn);
+        }
+
+        std::string CheckRelayName(lua_State* L, int index, const char* function, const char* parameter)
+        {
+            if (lua_isnoneornil(L, index))
+                luaL_error(L, "wxl.relay.%s: '%s' (argument %d) is missing; it takes a string", function, parameter,
+                           index);
+            size_t      size = 0;
+            const char* text = luaL_checklstring(L, index, &size);
+            return std::string(text, size);
+        }
+
+        /// Takes one service of a Lua mod back from the runtime and forgets it.
+        void Withdraw(size_t index)
+        {
+            const std::unique_ptr<Published> published = std::move(g_published[index]);
+            g_published.erase(g_published.begin() + static_cast<std::ptrdiff_t>(index));
+            if (const wxl_relay_api* api = Relay()) api->unpublish(Str(published->name));
+            if (lua_State* L = published->mod->State())
+            {
+                luaL_unref(L, LUA_REGISTRYINDEX, published->fn);
+                luaL_unref(L, LUA_REGISTRYINDEX, published->cancelled);
+            }
+        }
+
+        int L_Publish(lua_State* L)
+        {
+            ScriptMod&        mod  = Self(L);
+            const std::string name = CheckRelayName(L, 1, "Publish", "name");
+            if (lua_isnoneornil(L, 2))
+                return luaL_error(L, "wxl.relay.Publish: 'fn' (argument 2) is missing; it takes a function");
+            luaL_checktype(L, 2, LUA_TFUNCTION);
+            if (!lua_isnoneornil(L, 3)) luaL_checktype(L, 3, LUA_TFUNCTION);
+            const wxl_relay_api* api = Relay();
+            if (!api || !wxl::detail::Carries(api, &wxl_relay_api::publish)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+
+            // The runtime sees every Lua mod as one: a name another Lua mod publishes is refused
+            // here, and the mod's own is published again, its old functions let go.
+            const std::string          key = NameKey(name);
+            std::unique_ptr<Published> replaced; // kept until the runtime holds the new entry
+            for (size_t i = 0; i < g_published.size(); ++i)
+            {
+                if (NameKey(g_published[i]->name) != key) continue;
+                if (g_published[i]->mod != &mod) return PushResultFailure(L, WXL_E_INVALID);
+                // Published again: the runtime's entry is replaced below, its requests kept.
+                luaL_unref(L, LUA_REGISTRYINDEX, g_published[i]->fn);
+                luaL_unref(L, LUA_REGISTRYINDEX, g_published[i]->cancelled);
+                replaced = std::move(g_published[i]);
+                g_published.erase(g_published.begin() + static_cast<std::ptrdiff_t>(i));
+                break;
+            }
+
+            auto published  = std::make_unique<Published>();
+            published->mod  = &mod;
+            published->name = name;
+            lua_pushvalue(L, 2);
+            published->fn = luaL_ref(L, LUA_REGISTRYINDEX);
+            if (!lua_isnoneornil(L, 3))
+            {
+                lua_pushvalue(L, 3);
+                published->cancelled = luaL_ref(L, LUA_REGISTRYINDEX);
+            }
+            else
+            {
+                published->cancelled = LUA_NOREF;
+            }
+            published->table.struct_size = sizeof published->table;
+            published->table.user        = published.get();
+            published->table.request     = &RelayRequested;
+            published->table.cancelled   = &RelayCancelled;
+            const wxl_result result      = api->publish(Str(name), &published->table);
+            if (result != WXL_OK)
+            {
+                if (replaced) api->unpublish(Str(name)); // the runtime must not keep the old entry
+                luaL_unref(L, LUA_REGISTRYINDEX, published->fn);
+                luaL_unref(L, LUA_REGISTRYINDEX, published->cancelled);
+                return PushResultFailure(L, result);
+            }
+            g_published.push_back(std::move(published));
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_Unpublish(lua_State* L)
+        {
+            ScriptMod&        mod  = Self(L);
+            const std::string name = CheckRelayName(L, 1, "Unpublish", "name");
+            const std::string key  = NameKey(name);
+            for (size_t i = 0; i < g_published.size(); ++i)
+            {
+                if (g_published[i]->mod != &mod || NameKey(g_published[i]->name) != key) continue;
+                Withdraw(i);
+                lua_pushboolean(L, 1);
+                return 1;
+            }
+            return PushResultFailure(L, WXL_E_NOT_FOUND);
+        }
+
+        int L_Call(lua_State* L)
+        {
+            ScriptMod&        mod    = Self(L);
+            const std::string name   = CheckRelayName(L, 1, "Call", "name");
+            const std::string method = CheckRelayName(L, 2, "Call", "method");
+            if (!lua_isnoneornil(L, 3)) luaL_checktype(L, 3, LUA_TTABLE);
+            if (lua_isnoneornil(L, 4))
+                return luaL_error(L, "wxl.relay.Call: 'fn' (argument 4) is missing; it takes a function");
+            luaL_checktype(L, 4, LUA_TFUNCTION);
+            const wxl_relay_api* api = Relay();
+            if (!api || !wxl::detail::Carries(api, &wxl_relay_api::call)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+
+            // The list's values, pushed in order so that their strings live through the call.
+            const int base  = lua_gettop(L);
+            const int count = lua_istable(L, 3) ? static_cast<int>(lua_objlen(L, 3)) : 0;
+            luaL_checkstack(L, count + 2, "too many arguments");
+            for (int i = 1; i <= count; ++i) lua_rawgeti(L, 3, i);
+            const std::vector<wxl_value> args = ValuesOf(L, base + 1, base + count);
+
+            lua_pushvalue(L, 4);
+            auto waiting  = std::make_unique<Waiting>();
+            waiting->mod  = &mod;
+            waiting->fn   = luaL_ref(L, LUA_REGISTRYINDEX);
+            Waiting* kept = waiting.get();
+            g_waiting.push_back(std::move(waiting));
+            wxl_request      request = 0;
+            const wxl_result result  = api->call(Str(name), Str(method), args.data(), static_cast<uint32_t>(args.size()),
+                                                 &RelayReplied, kept, &request);
+            lua_settop(L, base);
+            if (result != WXL_OK)
+            {
+                luaL_unref(L, LUA_REGISTRYINDEX, kept->fn);
+                g_waiting.erase(std::find_if(g_waiting.begin(), g_waiting.end(),
+                                             [&](const std::unique_ptr<Waiting>& w) { return w.get() == kept; }));
+                return PushResultFailure(L, result);
+            }
+            kept->request = request;
+            lua_pushnumber(L, static_cast<lua_Number>(request));
+            return 1;
+        }
+
+        int L_Answer(lua_State* L)
+        {
+            const uint64_t       request = CheckRequest(L, 1, "Answer");
+            const wxl_relay_api* api     = Relay();
+            if (!api || !wxl::detail::Carries(api, &wxl_relay_api::answer)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const std::vector<wxl_value> values = ValuesOf(L, 2, lua_gettop(L));
+            const wxl_result result = api->answer(request, values.data(), static_cast<uint32_t>(values.size()));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_Fail(lua_State* L)
+        {
+            const uint64_t    request = CheckRequest(L, 1, "Fail");
+            const std::string reason  = CheckRelayName(L, 2, "Fail", "reason");
+            const wxl_relay_api* api  = Relay();
+            if (!api || !wxl::detail::Carries(api, &wxl_relay_api::fail)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->fail(request, Str(reason));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_Cancel(lua_State* L)
+        {
+            ScriptMod&     mod     = Self(L);
+            const uint64_t request = CheckRequest(L, 1, "Cancel");
+            const auto     found   = std::find_if(g_waiting.begin(), g_waiting.end(), [&](const std::unique_ptr<Waiting>& w) {
+                return w->mod == &mod && w->request == request;
+            });
+            if (found == g_waiting.end()) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            const wxl_relay_api* api = Relay();
+            if (!api || !wxl::detail::Carries(api, &wxl_relay_api::cancel)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->cancel(request);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            luaL_unref(L, LUA_REGISTRYINDEX, (*found)->fn);
+            g_waiting.erase(found);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// A mod's services go and its requests are cancelled.
+        void ReleaseRelay(ScriptMod& mod)
+        {
+            for (size_t i = g_published.size(); i-- > 0;)
+                if (g_published[i]->mod == &mod) Withdraw(i);
+            const wxl_relay_api* api = Relay();
+            for (size_t i = g_waiting.size(); i-- > 0;)
+            {
+                Waiting& waiting = *g_waiting[i];
+                if (waiting.mod != &mod) continue;
+                if (mod.State()) luaL_unref(mod.State(), LUA_REGISTRYINDEX, waiting.fn);
+                waiting.mod = nullptr;
+                // Cancelled, the runtime never answers it: forgotten now. Otherwise its answer is
+                // on its way, and finds nobody.
+                if (api && wxl::detail::Carries(api, &wxl_relay_api::cancel) && waiting.request &&
+                    api->cancel(waiting.request) == WXL_OK)
+                    g_waiting.erase(g_waiting.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
     } // namespace
 
     lua_CFunction Find(std::string_view service, std::string_view name)
@@ -791,6 +1437,18 @@ namespace wxl::lua::shims
         if (service == "storage" && name == "Unredirect") return &L_Unredirect;
         if (service == "storage" && name == "Serve") return &L_Serve;
         if (service == "storage" && name == "Unserve") return &L_Unserve;
+        if (service == "storage" && name == "HashFile") return &L_HashFile;
+        if (service == "storage" && name == "HashFileAsync") return &L_HashFileAsync;
+        if (service == "storage" && name == "OverrideFile") return &L_OverrideFile;
+        if (service == "storage" && name == "RestoreFile") return &L_RestoreFile;
+        if (service == "storage" && name == "ScopedName") return &L_ScopedName;
+        if (service == "storage" && name == "ReloadAsset") return &L_ReloadAsset;
+        if (service == "relay" && name == "Publish") return &L_Publish;
+        if (service == "relay" && name == "Unpublish") return &L_Unpublish;
+        if (service == "relay" && name == "Call") return &L_Call;
+        if (service == "relay" && name == "Answer") return &L_Answer;
+        if (service == "relay" && name == "Fail") return &L_Fail;
+        if (service == "relay" && name == "Cancel") return &L_Cancel;
         if (service == "footprint" && name == "Snapshot") return &L_Snapshot;
         if (service == "footprint" && name == "Report") return &L_Report;
         if (service == "footprint" && name == "WatchPressure") return &L_WatchPressure;
@@ -803,6 +1461,8 @@ namespace wxl::lua::shims
     void ReleaseHeld(ScriptMod& mod)
     {
         ReleaseFootprint(mod);
+        ReleaseStorage(mod);
+        ReleaseRelay(mod);
         for (size_t i = g_folders.size(); i-- > 0;)
             if (std::find(g_folders[i].holders.begin(), g_folders[i].holders.end(), &mod) != g_folders[i].holders.end())
                 LetGo(i, mod);

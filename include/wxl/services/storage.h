@@ -125,6 +125,56 @@ typedef struct wxl_asset_transform
                                 const wxl_asset_output* out);
 } wxl_asset_transform;
 
+// --- what a mod learns of a file and of what the client holds (0.1.22) --------------------
+
+/// The layer of the client's files a name was found in.
+typedef enum wxl_file_layer
+{
+    WXL_FILE_LAYER_NONE     = 0, ///< found nowhere
+    WXL_FILE_LAYER_ARCHIVE  = 1, ///< an archive: an .MPQ file, or a folder mounted as one
+    WXL_FILE_LAYER_DISK     = 2, ///< a loose file under the client's folder
+    WXL_FILE_LAYER_FOLDER   = 3, ///< a folder of the search path (add_search_path)
+    WXL_FILE_LAYER_PROVIDER = 4, ///< a mod's provider (add_provider)
+    WXL_FILE_LAYER_SERVED   = 5  ///< bytes a mod serves (serve)
+} wxl_file_layer;
+
+/// hash_file: read the file again rather than answer from what an earlier ask kept.
+#define WXL_HASH_FRESH 0x1u
+
+/// The content hash of a file, as hash_file answers it.
+typedef struct wxl_file_hash
+{
+    uint32_t struct_size;
+    uint32_t layer;   ///< a wxl_file_layer: where the bytes hashed came from
+    uint64_t size;    ///< bytes
+    uint8_t  md5[16]; ///< the MD5 digest of the bytes, the form a CDN content key takes
+
+    /// Which file of the layer: the archive's path, the file's path on the disk, the id of the
+    /// mod whose provider or served bytes answered. Valid until the next hash on the same
+    /// thread; for an answer handed to a callback, for that call.
+    wxl_str source;
+} wxl_file_hash;
+
+/**
+ * @brief Where an asynchronous hash_file_async answers, on the client's main thread.
+ *
+ * @p hash is null unless @p result is WXL_OK; valid for the call.
+ */
+typedef void(WXL_CALL* wxl_file_hash_fn)(void* user, uint64_t request, wxl_result result, const wxl_file_hash* hash);
+
+/// What reload_asset did.
+typedef struct wxl_asset_reload
+{
+    uint32_t struct_size;
+    uint32_t textures; ///< textures the client holds that were read again, in place
+    uint32_t models;   ///< model files dropped from the client's model cache, read again at their next use
+    uint32_t objects;  ///< units and players whose model was made again from the new file
+    uint32_t busy;     ///< textures still loading, left alone: ask again in a moment
+} wxl_asset_reload;
+
+/// The longest scoped name scoped_name makes, terminator excluded: the client's paths are 260.
+#define WXL_SCOPED_NAME_MAX 259
+
 typedef struct wxl_storage_api
 {
     uint32_t struct_size;
@@ -267,6 +317,90 @@ typedef struct wxl_storage_api
 
     /// Takes back what the calling mod serves under a name: WXL_E_NOT_FOUND when it serves none.
     wxl_result(WXL_CALL* unserve)(wxl_str path);
+
+    // --- appended in 0.1.22 -----------------------------------------------------------------
+
+    /**
+     * @brief The content hash of a file as the client would read it: its MD5 and its length,
+     *        and the layer that holds it.
+     *
+     * The name is resolved as the client resolves it -- a mod's override and redirect, a scope,
+     * the folders of the search path, the providers, the bytes mods serve, the archives, the
+     * disk -- and the bytes of the layer that wins are hashed, before any transform: the bytes
+     * a CDN's content key is the MD5 of. The digest is computed by the system's own MD5
+     * (Windows CNG, BCrypt), and kept by name and layer, so a second ask of a file that did not
+     * change answers without reading it; WXL_HASH_FRESH in @p flags reads it again. Any thread;
+     * reading a large file takes as long as reading it, so hash_file_async is the call for the
+     * main thread. WXL_E_NOT_FOUND when no layer has the name, WXL_E_PENDING when a provider
+     * answered "not yet".
+     */
+    wxl_result(WXL_CALL* hash_file)(wxl_str path, uint32_t flags, wxl_file_hash* out);
+
+    /**
+     * @brief hash_file on a thread of the runtime's: the answer comes later, to @p fn, on the
+     *        client's main thread.
+     *
+     * @param out  receives the request's number, which the answer carries. A request of a mod
+     *             that goes -- disabled or unloaded -- is dropped and never answered.
+     */
+    wxl_result(WXL_CALL* hash_file_async)(wxl_str path, uint32_t flags, wxl_file_hash_fn fn, void* user,
+                                          uint64_t* out);
+
+    /**
+     * @brief Replaces a file of the client with another, for the calling mod: the explicit
+     *        override.
+     *
+     * From here on, whatever opens @p path or asks whether it exists -- the client on any of its
+     * threads, or a mod -- gets @p with instead, above every layer: a name in the mod's scope
+     * that a provider or served bytes answer, typically, or any other name. Nothing else is
+     * replaced: a source of 0 priority and below only fills names the client lacks, and a name
+     * in a scope never takes the place of the client's own, so replacing one file is always this
+     * call. Logged. The override is the mod's until restore_file or until the mod goes --
+     * disabled or unloaded --; when two mods override one name the latest wins and taking it back
+     * uncovers the earlier. What the client already loaded stays as it is: reload_asset makes it
+     * read the file again. Applied before redirect; a FileOpen handler still has the last word.
+     * WXL_E_INVALID for an empty name or one longer than 259 bytes.
+     */
+    wxl_result(WXL_CALL* override_file)(wxl_str path, wxl_str with);
+
+    /// Takes the calling mod's override of a name back: WXL_E_NOT_FOUND when it holds none.
+    wxl_result(WXL_CALL* restore_file)(wxl_str path);
+
+    /**
+     * @brief The name of @p path in a mod's scope: what a mod hands the client to read its own
+     *        copy of a file without replacing the client's.
+     *
+     * The scope is the mod's id in brackets before the extension of the file name:
+     * "Creature\\Foo\\Foo.m2" in the scope of "my.mod" is "Creature\\Foo\\Foo[my.mod].m2". A
+     * scoped name is resolved as itself first -- a provider, served bytes, a folder of the search
+     * path that holds that name --, and, when nothing has it, as its base name: the client's own
+     * file. The client derives other files from a model's name (its skin profiles
+     * "Foo[my.mod]00.skin", its sequence files), and those resolve the same way. The scope sits
+     * in the file name, not in a folder, because the client keeps its models by file name alone.
+     *
+     * @param mod  the scope's mod; empty for the calling mod's.
+     * @return the scoped name, valid until the next scoped_name call on the same thread; empty
+     *         for an empty @p path, a mod id the scope cannot hold (brackets, separators) or a
+     *         name longer than WXL_SCOPED_NAME_MAX.
+     */
+    wxl_str(WXL_CALL* scoped_name)(wxl_str mod, wxl_str path);
+
+    /**
+     * @brief Makes the client read again a model or a texture it already holds, so that a file
+     *        that changed (a download that arrived, an override set) shows without a restart.
+     *
+     * A texture (.blp) is read again in place: every model, map and frame drawing it shows the
+     * new pixels. A model (.m2, .mdx, its .skin) is dropped from the client's model cache, so its
+     * next use reads the new file, and every unit and player in view drawn with it is made again
+     * at once. The client keeps models by file name without the folder, so every cached model of
+     * that file name is dropped. Other files are read again when the client next loads them --
+     * map tiles and buildings as the area loads again, sounds as they play -- and answer
+     * WXL_E_UNSUPPORTED here; nor is a character's baked skin painted again from the texture of
+     * a part (it is, at its next change of appearance), nor a texture of the client's atlas.
+     * Main thread only (WXL_E_INVALID elsewhere). WXL_E_NOT_FOUND when the client holds nothing
+     * of that name; WXL_E_PENDING when all it holds is still loading.
+     */
+    wxl_result(WXL_CALL* reload_asset)(wxl_str path, wxl_asset_reload* out);
 } wxl_storage_api;
 
 #ifdef __cplusplus

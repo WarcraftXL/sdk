@@ -52,3 +52,18 @@ WXL_API(storage, serve, Serve, result, (str path, bytes data, bytes_size size, i
         "reads them as one of its files. Priority as AddSearchPath's.")
 WXL_API(storage, unserve, Unserve, result, (str path), shim, generated,
         "Takes back what the mod serves under a name; not_found for one it does not serve.")
+WXL_API_SINCE(storage, hash_file, (0, 1, 22))
+WXL_API(storage, hash_file, HashFile, out<file_hash>, (str path, u32 flags), shim, by_hand,
+        "The MD5 and length of a file as the client would read it, and the layer that holds it; flags 1 "
+        "reads it again rather than answer from what was kept.")
+WXL_API(storage, hash_file_async, HashFileAsync, out<u64>, (str path, u32 flags, hash_fn fn, ptr user), shim, by_hand,
+        "HashFile on a thread of the runtime's: the answer comes later, on the main thread.")
+WXL_API(storage, override_file, OverrideFile, result, (str path, str with), shim, generated,
+        "Replaces a file of the client with another name, on every thread, for opens and existence checks, "
+        "until the mod restores it or goes: the latest of two mods' wins.")
+WXL_API(storage, restore_file, RestoreFile, result, (str path), shim, generated,
+        "Takes the mod's override of a name back; not_found for one it did not override.")
+WXL_API(storage, scoped_name, ScopedName, str, (str mod, str path), shim, by_hand,
+        "The name of a file in a mod's scope: the mod's own copy when one is served, else the client's.")
+WXL_API(storage, reload_asset, ReloadAsset, out<asset_reload>, (str path), shim, by_hand,
+        "Makes the client read a model or a texture it holds again, so a file that changed shows.")
