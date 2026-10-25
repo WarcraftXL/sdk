@@ -39,3 +39,27 @@ WXL_API(m2, attachment_point, AttachmentPoint, out<vec3>, (cptr model, u32 attac
         "Where an attachment point of a loaded model sits in its bind pose, as {x, y, z}.")
 WXL_API(m2, attach_to_bone, AttachToBone, result, (Model model, ptr parent, u32 attachment, u32 key_bone, vec3 offset), generated, generated,
         "Hangs the model on one key bone of a model, moved by an offset: an attachment point the parent's file does not have.")
+
+// --- Models of the world and bone watchers (0.1.21): what spell effects and live physics need.
+// No script reaches them: they take structs and callbacks, and models a mod places are its own.
+
+WXL_API_SINCE(m2, create_world_model, (0, 1, 21))
+WXL_API(m2, create_world_model, CreateWorldModel, Model, (str path), native, by_hand, "")
+WXL_API(m2, place_model, PlaceModel, result, (Model model, placement placement), native, by_hand, "")
+WXL_API(m2, set_model_transform, SetModelTransform, result, (Model model, placement placement), native, by_hand, "")
+WXL_API(m2, play_animation, PlayAnimation, result, (Model model, u32 anim_id, f32 speed), native, by_hand, "")
+WXL_API(m2, model_loaded, ModelLoaded, boolean, (Model model), native, by_hand, "")
+WXL_API(m2, animation_length, AnimationLength, out<u32>, (Model model, u32 anim_id), native, by_hand, "")
+WXL_API(m2, set_alpha, SetAlpha, none, (Model model, f32 alpha), native, by_hand, "")
+WXL_API(m2, set_emitting, SetEmitting, none, (Model model, boolean emitting), native, by_hand, "")
+WXL_API(m2, attachment_world, AttachmentWorld, out<vec3>, (ptr model, u32 attachment), native, by_hand, "")
+WXL_API(m2, ground_height, GroundHeight, out<f32>, (vec3_in at, f32 up, f32 down), native, by_hand, "")
+WXL_API(m2, watch_bones, WatchBones, out<u32>, (bones_filter_fn filter, bones_fn fn, ptr user), native, by_hand, "")
+WXL_API(m2, unwatch_bones, UnwatchBones, none, (u32 token), native, by_hand, "")
+WXL_API(m2, bone_info, BoneInfo, result, (ptr file, u32 index, i16_out parent, vec3_out pivot), native, by_hand, "")
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

@@ -55,6 +55,10 @@
 //   bytes_size uint32_t: the length of the bytes before it, which must all be as long
 //   object wxl_handle: a world object; a script passes the object, C++ a wxl::Object
 //   vec3 wxl_vec3: a point; a script passes a table with x, y and z
+//   f32 float  vec3_in const wxl_vec3*  i16_out int16_t*  vec3_out wxl_vec3*: the C parameters as they
+//       are; no script reaches a row taking one of these four but f32
+//   placement const wxl_m2_placement*  bones_filter_fn wxl_m2_bones_filter_fn  bones_fn wxl_m2_bones_fn:
+//       what wxl.m2's world models and bone watchers take; no script reaches them
 //   provider const wxl_asset_provider*  transform const wxl_asset_transform*: what a native
 //       mod hands wxl.storage; no script reaches a row taking one
 //   hash_fn wxl_file_hash_fn  relay_endpoint const wxl_relay_endpoint*
@@ -152,6 +156,13 @@ namespace wxl::api
         struct hash_fn {};
         struct relay_endpoint {};
         struct relay_reply {};
+        struct f32 {};
+        struct vec3_in {};
+        struct i16_out {};
+        struct vec3_out {};
+        struct placement {};
+        struct bones_filter_fn {};
+        struct bones_fn {};
         template <class K>
         struct opt {};
 
@@ -219,6 +230,7 @@ namespace wxl::api
     template <> struct Value<kind::m2_item_display> { using type = wxl_m2_item_display; };
     template <> struct Value<kind::file_hash> { using type = wxl_file_hash; };
     template <> struct Value<kind::asset_reload> { using type = wxl_asset_reload; };
+    template <> struct Value<kind::f32> { using type = float; };
 
     /// The C parameters a parameter kind stands for.
     template <class K, class = void>
@@ -248,6 +260,13 @@ namespace wxl::api
     template <> struct Param<kind::hash_fn> { using C = List<wxl_file_hash_fn>; };
     template <> struct Param<kind::relay_endpoint> { using C = List<const wxl_relay_endpoint*>; };
     template <> struct Param<kind::relay_reply> { using C = List<wxl_relay_reply_fn>; };
+    template <> struct Param<kind::f32> { using C = List<float>; };
+    template <> struct Param<kind::vec3_in> { using C = List<const wxl_vec3*>; };
+    template <> struct Param<kind::i16_out> { using C = List<int16_t*>; };
+    template <> struct Param<kind::vec3_out> { using C = List<wxl_vec3*>; };
+    template <> struct Param<kind::placement> { using C = List<const wxl_m2_placement*>; };
+    template <> struct Param<kind::bones_filter_fn> { using C = List<wxl_m2_bones_filter_fn>; };
+    template <> struct Param<kind::bones_fn> { using C = List<wxl_m2_bones_fn>; };
     template <class R>
     struct Param<R, std::enable_if_t<IsResource<R>::value>>
     {

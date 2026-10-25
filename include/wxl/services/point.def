@@ -29,3 +29,10 @@ WXL_API(point, find, Find, out<u32>, (cstr name), generated, generated,
 WXL_API(point, attach, Attach, u32, (u32 point, u32 side, point_fn handler, ptr user, i32 priority, u32 layout_hash), native, by_hand, "")
 WXL_API(point, detach, Detach, result, (u32 attachment), native, by_hand, "")
 WXL_API(point, call_original, CallOriginal, none, (point_call call), native, by_hand, "")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

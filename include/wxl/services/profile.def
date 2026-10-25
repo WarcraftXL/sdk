@@ -27,3 +27,10 @@ WXL_API(profile, message, Message, none, (str text), generated, generated,
         "A line of text on the timeline, now.")
 WXL_API(profile, frame_mark, FrameMark, none, (str name), generated, generated,
         "Ends a frame of a frame set of the mod's own, drawn beside the client's frames.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

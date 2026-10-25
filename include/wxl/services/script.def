@@ -37,3 +37,10 @@ WXL_API(script, fail, Fail, none, (call invocation, str message), native, by_han
 WXL_API_SINCE(script, live, (0, 1, 15))
 WXL_API(script, live, Live, boolean, (), generated, generated,
         "Whether a script context is live: false before the first one and between two.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

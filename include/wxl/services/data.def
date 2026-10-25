@@ -19,3 +19,10 @@ WXL_API(data, served_from, ServedFrom, str, (str table), generated, generated,
         "What a table is served from, empty when it is the client's own file.")
 WXL_API(data, is_loaded, IsLoaded, boolean, (str table), generated, generated,
         "Whether the client has read a table already, in which case serving it comes too late.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

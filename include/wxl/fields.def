@@ -298,6 +298,10 @@ WXL_ARGS_FIELD(wxl_spell_cast_args, hits_size, u32)    ///< bytes in @ref hits
 WXL_ARGS_BYTES(wxl_spell_cast_args, misses, misses_size) ///< the guids missed, @ref miss_count of 8 bytes each, little-endian; NULL when none
 WXL_ARGS_FIELD(wxl_spell_cast_args, misses_size, u32)  ///< bytes in @ref misses
 WXL_ARGS_BYTES(wxl_spell_cast_args, miss_reasons, miss_count) ///< one byte per miss, the server's SPELL_MISS_* code, in the order of @ref misses; NULL when none
+WXL_ARGS_FIELD(wxl_spell_cast_args, has_source, bool)  ///< WXL_TRUE when the cast names a source point (TARGET_FLAG_SOURCE_LOCATION)
+WXL_ARGS_FIELD(wxl_spell_cast_args, source, vec3)      ///< that point, in world coordinates
+WXL_ARGS_FIELD(wxl_spell_cast_args, has_dest, bool)    ///< WXL_TRUE when the cast names a destination (TARGET_FLAG_DEST_LOCATION): a ground spell's point
+WXL_ARGS_FIELD(wxl_spell_cast_args, dest, vec3)        ///< that point, in world coordinates
 WXL_ARGS_END(wxl_spell_cast_args)
 
 /**
@@ -1404,4 +1408,11 @@ WXL_ARGS_END(wxl_mouse_wheel_args)
 #ifdef WXL_ARGS_END_DEFAULTED
     #undef WXL_ARGS_END
     #undef WXL_ARGS_END_DEFAULTED
+#endif
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
 #endif

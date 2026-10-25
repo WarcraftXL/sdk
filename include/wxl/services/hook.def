@@ -22,3 +22,10 @@ WXL_API(hook, has_point, HasPoint, boolean, (cstr name), generated, generated,
         "Whether this runtime names a point.")
 WXL_API(hook, attach, Attach, u32, (cstr name, ptr detour, ptr_out original, i32 priority), native, by_hand, "")
 WXL_API(hook, detach, Detach, result, (u32 hook), native, by_hand, "")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

@@ -32,3 +32,10 @@ WXL_API(action, move_to, MoveTo, result, (vec3 point), generated, generated,
 WXL_API_SINCE(action, face, (0, 1, 23))
 WXL_API(action, face, Face, result, (f64 facing), generated, generated,
         "Turns the player to a facing in radians (0 north, growing towards the west), as steering with the mouse does, and tells the server.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

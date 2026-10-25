@@ -62,3 +62,10 @@ WXL_API(footprint, report, Report, result, (str name, u64 bytes, u64 count), shi
         "States one consumer of the mod's own, shown under its id until it reports it again or goes; 0 and 0 remove it.")
 WXL_API(footprint, watch_pressure, WatchPressure, result, (u64 bytes), shim, generated,
         "Raises MemoryPressure when the largest free block of the address space falls under this many bytes; 0 stops.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

@@ -27,3 +27,10 @@ WXL_API(patch, matches, Matches, boolean, (uptr address, bytes expected, bytes_s
 WXL_API(patch, find, Find, address, (bytes pattern, bytes_size size, opt<uptr> after), generated, by_hand,
         "The address of a byte pattern in the image's read-only data, after an earlier one or, `after` left "
         "out (0), from the start.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

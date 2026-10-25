@@ -65,6 +65,46 @@ enum
     WXL_M2_ATTACH_FOLLOW_BONES = 1u << 1,
 };
 
+/**
+ * @brief Where a model is put: a position, a turn and a scale.
+ *
+ * The turn is applied as the client turns its spell effects: @p yaw around the up axis (a unit's
+ * facing), then @p pitch around the model's side axis, then @p roll around its forward axis, all
+ * in radians, in the model's own frame.
+ */
+typedef struct wxl_m2_placement
+{
+    uint32_t struct_size;
+    wxl_vec3 position;
+    float    yaw;
+    float    pitch;
+    float    roll;
+    float    scale; ///< 0 reads as 1
+} wxl_m2_placement;
+
+/**
+ * @brief One model's bones, the frame the client posed them.
+ *
+ * Matrices are the client's own: 16 floats each, row vectors (translation in 12..14), taking a
+ * point of the model's file into the scene's camera-relative space. Valid for the callback only.
+ */
+typedef struct wxl_m2_bones
+{
+    uint32_t    struct_size;
+    void*       model;             ///< the client's CM2Model
+    void*       file;              ///< its model file, the same for every model of it while loaded
+    wxl_str     path;              ///< the file's path, as the client asked for it
+    uint32_t    bone_count;
+    float*      matrices;          ///< bone_count matrices; a watcher may rewrite them
+    float       model_matrix[16];  ///< the model's own matrix: its file's space to camera-relative
+    float       view_to_world[16]; ///< the scene's camera-relative space to the world
+    uint32_t    time_ms;           ///< the scene's clock
+} wxl_m2_bones;
+
+/// Whether a model file's models should be handed to a bone watcher. Asked once per file.
+typedef wxl_bool(WXL_CALL* wxl_m2_bones_filter_fn)(void* file, wxl_str path, uint32_t bone_count, void* user);
+typedef void(WXL_CALL* wxl_m2_bones_fn)(const wxl_m2_bones* bones, void* user);
+
 typedef struct wxl_m2_api
 {
     uint32_t struct_size;
@@ -137,6 +177,88 @@ typedef struct wxl_m2_api
      */
     wxl_result(WXL_CALL* attach_to_bone)(void* model, void* parent, uint32_t attachment, uint32_t key_bone,
                                          wxl_vec3 offset);
+
+    // --- Models of the world: spell effects, missiles, anything placed by hand -------------------
+    // Members from here on are newer than the first table: check struct_size reaches one before
+    // calling it (offsetof(wxl_m2_api, member) < struct_size).
+
+    /**
+     * @brief Makes a model of @p path in the world's scene, the one units and spell effects are
+     *        in. It shows nowhere until it is placed with place_model or attached to a unit's
+     *        model. The caller owns the reference, as with create_model. Null outside the world.
+     */
+    void*(WXL_CALL* create_world_model)(wxl_str path);
+
+    /**
+     * @brief Puts a world model at @p placement in the world (position in world coordinates),
+     *        or moves it there. Detaches it first when it hangs on something. Call it every frame
+     *        for a model that moves.
+     */
+    wxl_result(WXL_CALL* place_model)(void* model, const wxl_m2_placement* placement);
+
+    /**
+     * @brief How a model hanging on a point sits on it: @p placement's position is the offset
+     *        from the point, in the point's own frame, its turn and scale the model's. Kept across
+     *        attach_model; identity until set.
+     */
+    wxl_result(WXL_CALL* set_model_transform)(void* model, const wxl_m2_placement* placement);
+
+    /**
+     * @brief Plays animation @p anim_id on the whole model from its start, at @p speed (1 normal),
+     *        repeating as its file says. A model without it plays what the file falls back to, or
+     *        Stand. Kept until the model has loaded when it has not yet.
+     */
+    wxl_result(WXL_CALL* play_animation)(void* model, uint32_t anim_id, float speed);
+
+    /// Whether @p model's file has loaded: what animation_length and attachment_world need.
+    wxl_bool(WXL_CALL* model_loaded)(void* model);
+
+    /// How long one play of animation @p anim_id lasts, in milliseconds; 0 for a model without it.
+    /// WXL_E_FAILED while the model has not loaded.
+    wxl_result(WXL_CALL* animation_length)(void* model, uint32_t anim_id, uint32_t* out_ms);
+
+    /// The model's own alpha, 0 to 1: a fade.
+    void(WXL_CALL* set_alpha)(void* model, float alpha);
+
+    /// Whether the model's particle emitters and ribbons make anything new; those already made
+    /// play out. What a spell effect does as it ends.
+    void(WXL_CALL* set_emitting)(void* model, wxl_bool emitting);
+
+
+    /**
+     * @brief Where attachment point @p attachment of a loaded @p model is in the world now.
+     *        WXL_E_NOT_FOUND when the model has no such point, WXL_E_FAILED while it has not
+     *        loaded. @p model may be one object_model returned.
+     */
+    wxl_result(WXL_CALL* attachment_world)(void* model, uint32_t attachment, wxl_vec3* out);
+
+    /**
+     * @brief The height of the ground under @p at: the first terrain, building or doodad surface a
+     *        ray meets from @p up yards above it to @p down yards below, as the client finds the
+     *        ground for its own spell effects. WXL_E_NOT_FOUND when the ray meets nothing.
+     */
+    wxl_result(WXL_CALL* ground_height)(const wxl_vec3* at, float up, float down, float* out_z);
+
+    // --- Bones, as the client has just posed them: what a mod simulating cloth or chains needs ---
+
+    /**
+     * @brief Calls @p fn every frame for every model whose file @p filter accepted, right after
+     *        the client posed its bones (and after wxl.m2 posed the models it attached), until
+     *        unwatched. @p filter is asked once per model file the first time a loaded model of
+     *        it animates. Both run on the client's animate threads, more than one at a time:
+     *        they must be thread-safe and must not call this service. A watcher that faults is
+     *        dropped.
+     */
+    wxl_result(WXL_CALL* watch_bones)(wxl_m2_bones_filter_fn filter, wxl_m2_bones_fn fn, void* user,
+                                      uint32_t* out_token);
+    void(WXL_CALL* unwatch_bones)(uint32_t token);
+
+    /**
+     * @brief Bone @p index of model file @p file (a wxl_m2_bones' file): its parent bone (-1 for
+     *        none) and its pivot in the file's own space. WXL_E_NOT_FOUND past the last bone.
+     *        Safe on the animate threads, inside a bone watcher.
+     */
+    wxl_result(WXL_CALL* bone_info)(void* file, uint32_t index, int16_t* out_parent, wxl_vec3* out_pivot);
 } wxl_m2_api;
 
 #ifdef __cplusplus

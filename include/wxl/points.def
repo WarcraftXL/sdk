@@ -37,3 +37,10 @@ WXL_POINT(NetClient_ProcessMessage, "NetClient::ProcessMessage", int32_t, (void*
 WXL_POINT(CM2Shared_FinishLoading, "CM2Shared::FinishLoading", int32_t, (void* self), "i32(ptr)", 0x78EA765Eu, replace, main, provisional, both)
 // a model file's header checked and its arrays relocated, from FinishLoading (and on x64 FinishLoadingLowPrioritySequence); answers 0 for a file it refuses
 WXL_POINT(M2Init_uint8_t_uint32_t_M2Data, "M2Init(uint8_t*,uint32_t,M2Data&)", int32_t, (void* base, uint32_t size, void* data), "i32(ptr,u32,ptr)", 0x55608FC6u, replace, main, provisional, both)
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

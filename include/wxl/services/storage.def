@@ -65,3 +65,10 @@ WXL_API(storage, restore_file, RestoreFile, result, (str path), shim, generated,
         "Takes the mod's override of a name back; not_found for one it did not override.")
 WXL_API(storage, reload_asset, ReloadAsset, out<asset_reload>, (str path), shim, by_hand,
         "Makes the client read a model or a texture it holds again, so a file that changed shows.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif
