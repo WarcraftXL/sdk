@@ -36,6 +36,24 @@ add_library(wxl::sdk-mod ALIAS wxl-sdk-mod)
 target_link_libraries(wxl-sdk-mod INTERFACE wxl-sdk)
 target_compile_definitions(wxl-sdk-mod INTERFACE WXL_BUILDING_MOD)
 
+# Dear ImGui and ImPlot (MIT, deps/imgui and deps/implot, their own license files), compiled into
+# whatever links wxl::imgui: a mod drawing windows through wxl.imgui, and the runtime, whose copy
+# owns the contexts. Built only for what links it.
+set(WXL_IMGUI_DIR "${CMAKE_CURRENT_SOURCE_DIR}/deps/imgui" CACHE INTERNAL "Dear ImGui's sources, backends included")
+add_library(wxl-imgui STATIC EXCLUDE_FROM_ALL
+    deps/imgui/imgui.cpp
+    deps/imgui/imgui_draw.cpp
+    deps/imgui/imgui_tables.cpp
+    deps/imgui/imgui_widgets.cpp
+    deps/implot/implot.cpp
+    deps/implot/implot_items.cpp)
+add_library(wxl::imgui ALIAS wxl-imgui)
+target_include_directories(wxl-imgui SYSTEM PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/deps/imgui>
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/deps/implot>)
+target_link_libraries(wxl-imgui PUBLIC wxl-sdk)
+set_target_properties(wxl-imgui PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 option(WXL_SDK_TESTS "Build the contract tests" ${PROJECT_IS_TOP_LEVEL})
 option(WXL_SDK_LUA "Build wxl.lua, the Lua mod runtime, for this tree's architecture" ${PROJECT_IS_TOP_LEVEL})
 
