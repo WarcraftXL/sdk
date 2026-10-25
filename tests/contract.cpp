@@ -19,6 +19,7 @@
 #include "fake_host.hpp"
 #include "fake_services.hpp"
 #include "wxl/services.hpp"
+#include "wxl/services/imgui.h"
 #include "wxl/engine/check.hpp"
 
 namespace
@@ -1045,6 +1046,8 @@ int main()
         host.Table()->publish_service(WXL_CAMERA_SERVICE, WXL_CAMERA_SERVICE_VERSION, wxltest::FakeView::CameraTable());
         host.Table()->publish_service(WXL_INPUT_SERVICE, WXL_INPUT_SERVICE_VERSION, wxltest::FakeView::InputTable());
         host.Table()->publish_service(WXL_WORLD_SERVICE, WXL_WORLD_SERVICE_VERSION, wxltest::FakeView::WorldTable());
+        host.Table()->publish_service(WXL_POSE_SERVICE, WXL_POSE_SERVICE_VERSION, wxltest::FakeView::PoseTable());
+        host.Table()->publish_service(WXL_IMGUI_SERVICE, WXL_IMGUI_SERVICE_VERSION, wxltest::FakeView::ImGuiTable());
     }
 
     Section("reads that can fail");
@@ -1455,6 +1458,31 @@ int main()
         Check(wxl::ActionService::Face(1.25) == WXL_OK && wxltest::FakeActions::Calls().size() == 1 &&
                   wxltest::FakeActions::Calls()[0].point.x == 1.25f,
               "Face reaches wxl.action with its facing");
+    }
+
+    Section("the mouse look kept out, a head turned, the runtime's ImGui");
+    {
+        using wxltest::FakeView;
+        using wxltest::FakeObjects;
+        FakeView::Calls().clear();
+        Check(wxl::InputService::BlockMouseLook(true) == WXL_OK && wxl::InputService::MouseLookBlocked() &&
+                  wxl::InputService::BlockMouseLook(false) == WXL_OK && !wxl::InputService::MouseLookBlocked(),
+              "the mouse look is blocked and given back");
+        const wxl::Unit boar(FakeObjects::kBoar);
+        Check(wxl::PoseService::Head(boar, 0.5, -0.25, 0.1) == WXL_OK && wxl::PoseService::ReleaseHead(boar) == WXL_OK &&
+                  wxl::PoseService::Head(wxl::Unit(FakeObjects::kStale), 0, 0, 0) == WXL_E_NOT_FOUND,
+              "a head is turned and given back; a unit gone is not found");
+        const auto& calls = FakeView::Calls();
+        Check(calls.size() == 4 && calls[2].name == "head" && calls[2].position.x == 0.5f && calls[2].position.y == -0.25f &&
+                  calls[2].fov == static_cast<double>(FakeObjects::kBoar) && calls[3].name == "release_head",
+              "with the unit and its angles");
+        // The facade, wxl/services/imgui.hpp, compiles Dear ImGui in: the table is read raw here.
+        const wxl_imgui_api* imgui = wxl::api::Table<wxl_imgui_api>();
+        void*                alloc = nullptr;
+        imgui->allocators(&alloc, nullptr, nullptr);
+        Check(imgui && wxl::View(imgui->version()) == "1.0;0.1" && imgui->context() == reinterpret_cast<void*>(0x1000) &&
+                  imgui->plot_context() == reinterpret_cast<void*>(0x2000) && alloc == reinterpret_cast<void*>(0x3000),
+              "the runtime's ImGui version, contexts and allocator reach a mod");
     }
 
     Section("objects in handlers, and data kept per object");

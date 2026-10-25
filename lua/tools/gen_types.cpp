@@ -473,6 +473,23 @@ namespace
                    "---the mod is disabled, reloads or unloads. The motion arrives as OnMouseMotion.\n"
                    "---@param captured boolean\n---@return true|nil ok\n---@return string|nil reason\n"
                    "function " + owner + ".CaptureCursor(captured) end\n\n";
+        if (name == "BlockMouseLook")
+            return "---Keeps the game out of its own mouse look (true): a held mouse button turns nothing and hides\n"
+                   "---nothing, a click still selects or acts; false gives this mod's block back. Kept while any mod\n"
+                   "---blocks it, and given back when the mod is disabled, reloads or unloads.\n"
+                   "---@param blocked boolean\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".BlockMouseLook(blocked) end\n\n";
+        if (name == "Head")
+            return "---Turns a unit's head from where its body faces, in radians (yaw positive to its left, pitch\n"
+                   "---positive up), reached over `smoothing` seconds for half the way, and holds it until\n"
+                   "---ReleaseHead, or until the mod is disabled, reloads or unloads.\n"
+                   "---@param unit wxl.Object\n---@param yaw number\n---@param pitch number\n---@param smoothing number\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Head(unit, yaw, pitch, smoothing) end\n\n";
+        if (name == "ReleaseHead")
+            return "---Gives a unit's head this mod turned back to its animation; nil, \"not_found\" for one it does not hold.\n"
+                   "---@param unit wxl.Object\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".ReleaseHead(unit) end\n\n";
         if (name == "Begin")
             return "---Opens a zone named `name` on the profiler's timeline, inside the handler or callback running\n"
                    "---now; End closes it. Zones nest. Whatever this call left open is closed when it returns or\n"

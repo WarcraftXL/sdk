@@ -1,0 +1,19 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.imgui as data: one row per member of wxl_imgui_api, in member order. The shapes and their
+// columns are described in wxl/services/rows.hpp.
+//
+// Every member is a native mod's: no script reaches them.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including imgui.def"
+#endif
+
+WXL_API_SERVICE(imgui, WXL_IMGUI_SERVICE, WXL_IMGUI_SERVICE_VERSION, (0, 1, 24), open,
+                "The runtime's Dear ImGui and ImPlot, drawn in the game's frame, for a native mod's windows.")
+
+WXL_API(imgui, version, Version, str, (), native, generated, "")
+WXL_API(imgui, context, Context, ptr, (), native, generated, "")
+WXL_API(imgui, plot_context, PlotContext, ptr, (), native, generated, "")
+WXL_API(imgui, allocators, Allocators, none, (ptr_out alloc, ptr_out release, ptr_out user), native, by_hand, "")

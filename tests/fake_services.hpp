@@ -29,6 +29,8 @@
 #include "wxl/services/camera.h"
 #include "wxl/services/input.h"
 #include "wxl/services/world.h"
+#include "wxl/services/pose.h"
+#include "wxl/services/imgui.h"
 #include "wxl/services/data.h"
 #include "wxl/services/hook.h"
 #include "wxl/services/net.h"
@@ -596,6 +598,39 @@ namespace wxltest
         }
         static wxl_bool WXL_CALL CursorCaptured() { return Captures() ? WXL_TRUE : WXL_FALSE; }
         static wxl_bool WXL_CALL PointerOverWorld() { return WXL_TRUE; }
+        static int& Blocks()
+        {
+            static int blocked = 0;
+            return blocked;
+        }
+        static wxl_result WXL_CALL BlockMouseLook(wxl_bool blocked)
+        {
+            Calls().push_back(Call{blocked ? "block" : "unblock"});
+            Blocks() = blocked ? 1 : 0;
+            return WXL_OK;
+        }
+        static wxl_bool WXL_CALL MouseLookBlocked() { return Blocks() ? WXL_TRUE : WXL_FALSE; }
+        static wxl_result WXL_CALL Head(wxl_handle unit, double yaw, double pitch, double smoothing)
+        {
+            if (!FakeObjects::Live(unit)) return WXL_E_NOT_FOUND;
+            Calls().push_back(Call{"head", {static_cast<float>(yaw), static_cast<float>(pitch), static_cast<float>(smoothing)},
+                                   {}, static_cast<double>(unit)});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL ReleaseHead(wxl_handle unit)
+        {
+            Calls().push_back(Call{"release_head", {}, {}, static_cast<double>(unit)});
+            return WXL_OK;
+        }
+        static wxl_str WXL_CALL ImGuiVersion() { return wxl_str{"1.0;0.1", 7}; }
+        static void* WXL_CALL ImGuiContext() { return reinterpret_cast<void*>(0x1000); }
+        static void* WXL_CALL PlotContext() { return reinterpret_cast<void*>(0x2000); }
+        static void WXL_CALL Allocators(void** alloc, void** release, void** user)
+        {
+            if (alloc) *alloc = reinterpret_cast<void*>(0x3000);
+            if (release) *release = reinterpret_cast<void*>(0x4000);
+            if (user) *user = nullptr;
+        }
 
         static wxl_bool WXL_CALL Trace(wxl_vec3 start, wxl_vec3 finish, uint32_t flags, wxl_vec3* hit)
         {
@@ -631,6 +666,34 @@ namespace wxltest
                 t.capture_cursor     = &CaptureCursor;
                 t.cursor_captured    = &CursorCaptured;
                 t.pointer_over_world = &PointerOverWorld;
+                t.block_mouse_look   = &BlockMouseLook;
+                t.mouse_look_blocked = &MouseLookBlocked;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_pose_api* PoseTable()
+        {
+            static const wxl_pose_api api = [] {
+                wxl_pose_api t{};
+                t.struct_size  = sizeof t;
+                t.head         = &Head;
+                t.release_head = &ReleaseHead;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_imgui_api* ImGuiTable()
+        {
+            static const wxl_imgui_api api = [] {
+                wxl_imgui_api t{};
+                t.struct_size  = sizeof t;
+                t.version      = &ImGuiVersion;
+                t.context      = &ImGuiContext;
+                t.plot_context = &PlotContext;
+                t.allocators   = &Allocators;
                 return t;
             }();
             return &api;

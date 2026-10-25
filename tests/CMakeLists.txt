@@ -14,6 +14,13 @@ endif()
 
 add_test(NAME contract COMMAND wxl-contract)
 
+# wxl/services/imgui.hpp with Dear ImGui and ImPlot compiled in, as a mod builds it.
+add_executable(wxl-imgui-facade imgui_facade.cpp)
+target_link_libraries(wxl-imgui-facade PRIVATE wxl::sdk wxl::imgui)
+target_include_directories(wxl-imgui-facade PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+set_target_properties(wxl-imgui-facade PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON)
+add_test(NAME imgui-facade COMMAND wxl-imgui-facade)
+
 # The field table against the args structs it describes.
 add_executable(wxl-reflect reflect.cpp)
 target_link_libraries(wxl-reflect PRIVATE wxl::sdk)

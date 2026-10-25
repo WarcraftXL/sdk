@@ -21,6 +21,7 @@
 #include "wxl/services/net.hpp"
 #include "wxl/services/patch.hpp"
 #include "wxl/services/point.hpp"
+#include "wxl/services/pose.hpp"
 #include "wxl/services/profile.hpp"
 #include "wxl/services/relay.hpp"
 #include "wxl/services/script.hpp"

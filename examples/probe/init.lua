@@ -18,6 +18,8 @@ local PER_LINE = 900  -- characters of a list before it continues on the next li
 local SKIP = {
     -- One per model batch drawn, thousands a frame: a Lua call for each would slow the whole session.
     OnModelBatchDrawn = true,
+    -- Listening has the runtime open and draw a frame of Dear ImGui every frame, for nothing.
+    OnImGuiFrame = true,
 }
 
 -- Events that reach only the mods that asked for them: their absence from a probe's log is

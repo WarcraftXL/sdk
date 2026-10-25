@@ -16,6 +16,7 @@
 #include <system_error>
 #include <vector>
 
+#include "Objects.hpp"
 #include "Profile.hpp"
 #include "Runtime.hpp"
 #include "ScriptMod.hpp"
@@ -27,6 +28,7 @@
 #include "wxl/services/camera.h"
 #include "wxl/services/footprint.h"
 #include "wxl/services/input.h"
+#include "wxl/services/pose.h"
 #include "wxl/services/relay.h"
 #include "wxl/services/storage.h"
 
@@ -1532,11 +1534,112 @@ namespace wxl::lua::shims
             return 1;
         }
 
-        /// A mod's view and its hold on the pointer go with it.
+        /// The Lua mods keeping the game out of its mouse look: wxl.lua blocks it while one does.
+        std::vector<ScriptMod*> g_blockers;
+
+        wxl_result BlockFor(ScriptMod& mod, bool blocked)
+        {
+            const wxl_input_api* api = Input();
+            if (!api || !wxl::detail::Carries(api, &wxl_input_api::block_mouse_look)) return WXL_E_UNSUPPORTED;
+            const auto held = std::find(g_blockers.begin(), g_blockers.end(), &mod);
+            if (blocked)
+            {
+                if (held != g_blockers.end()) return WXL_OK;
+                if (g_blockers.empty())
+                {
+                    const wxl_result result = api->block_mouse_look(WXL_TRUE);
+                    if (result != WXL_OK) return result;
+                }
+                g_blockers.push_back(&mod);
+                return WXL_OK;
+            }
+            if (held == g_blockers.end()) return WXL_OK;
+            g_blockers.erase(held);
+            return g_blockers.empty() ? api->block_mouse_look(WXL_FALSE) : WXL_OK;
+        }
+
+        int L_BlockMouseLook(lua_State* L)
+        {
+            if (lua_isnone(L, 1))
+                return luaL_error(L, "wxl.input.BlockMouseLook: 'blocked' (argument 1) is missing; it takes a boolean");
+            luaL_checktype(L, 1, LUA_TBOOLEAN);
+            const wxl_result result = BlockFor(Self(L), lua_toboolean(L, 1) != 0);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        // --- wxl.pose: the heads each Lua mod turned ------------------------------------------
+
+        const wxl_pose_api* Pose() { return wxl::api::Table<wxl_pose_api>(); }
+
+        /// The heads a Lua mod holds: the runtime sees them as wxl.lua's.
+        struct Head
+        {
+            ScriptMod* mod;
+            wxl_handle unit;
+        };
+        std::vector<Head> g_heads;
+
+        double CheckAngle(lua_State* L, int index, const char* name)
+        {
+            if (lua_isnoneornil(L, index))
+                luaL_error(L, "wxl.pose.Head: '%s' (argument %d) is missing; it takes a number", name, index);
+            return static_cast<double>(luaL_checknumber(L, index));
+        }
+
+        int L_Head(lua_State* L)
+        {
+            ScriptMod&       mod       = Self(L);
+            const wxl_handle unit      = CheckObject(L, 1);
+            const double     yaw       = CheckAngle(L, 2, "yaw");
+            const double     pitch     = CheckAngle(L, 3, "pitch");
+            const double     smoothing = CheckAngle(L, 4, "smoothing");
+            const wxl_pose_api* api = Pose();
+            if (!api || !wxl::detail::Carries(api, &wxl_pose_api::head)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->head(unit, yaw, pitch, smoothing);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            for (Head& head : g_heads)
+                if (head.unit == unit)
+                {
+                    head.mod = &mod;
+                    lua_pushboolean(L, 1);
+                    return 1;
+                }
+            g_heads.push_back(Head{&mod, unit});
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_ReleaseHead(lua_State* L)
+        {
+            ScriptMod&       mod  = Self(L);
+            const wxl_handle unit = CheckObject(L, 1);
+            const auto held = std::find_if(g_heads.begin(), g_heads.end(),
+                                           [&](const Head& head) { return head.mod == &mod && head.unit == unit; });
+            if (held == g_heads.end()) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            g_heads.erase(held);
+            const wxl_pose_api* api = Pose();
+            if (!api || !wxl::detail::Carries(api, &wxl_pose_api::release_head)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->release_head(unit);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// A mod's view, its hold on the pointer, its block of the mouse look and its heads go with it.
         void ReleaseViewAndPointer(ScriptMod& mod)
         {
             LetGoView(mod);
             CaptureFor(mod, false);
+            BlockFor(mod, false);
+            const wxl_pose_api* api = Pose();
+            for (size_t i = g_heads.size(); i-- > 0;)
+            {
+                if (g_heads[i].mod != &mod) continue;
+                if (api && wxl::detail::Carries(api, &wxl_pose_api::release_head)) api->release_head(g_heads[i].unit);
+                g_heads.erase(g_heads.begin() + static_cast<std::ptrdiff_t>(i));
+            }
         }
     } // namespace
 
@@ -1567,6 +1670,9 @@ namespace wxl::lua::shims
         if (service == "camera" && name == "SetView") return &L_SetView;
         if (service == "camera" && name == "ReleaseView") return &L_ReleaseView;
         if (service == "input" && name == "CaptureCursor") return &L_CaptureCursor;
+        if (service == "input" && name == "BlockMouseLook") return &L_BlockMouseLook;
+        if (service == "pose" && name == "Head") return &L_Head;
+        if (service == "pose" && name == "ReleaseHead") return &L_ReleaseHead;
         if (service == "profile" && name == "Begin") return &profile::L_Begin;
         if (service == "profile" && name == "End") return &profile::L_End;
         if (service == "profile" && name == "Text") return &profile::L_Text;

@@ -60,6 +60,10 @@
 //                                                       runtime's view goes with the last
 //   wxl.input.CaptureCursor(captured)                   the pointer, held while one Lua mod
 //                                                       holds it
+//   wxl.input.BlockMouseLook(blocked)                   the game's mouse look, kept out while
+//                                                       one Lua mod blocks it
+//   wxl.pose.Head(unit, yaw, pitch, smoothing)          a unit's head, the last Lua mod to turn
+//   wxl.pose.ReleaseHead(unit)                          it holding it
 //
 // They are let go when the mod is disabled or its state closes.
 

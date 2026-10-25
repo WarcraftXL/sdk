@@ -23,3 +23,5 @@
 #include "wxl/services/camera.def"
 #include "wxl/services/input.def"
 #include "wxl/services/world.def"
+#include "wxl/services/pose.def"
+#include "wxl/services/imgui.def"

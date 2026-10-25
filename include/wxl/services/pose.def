@@ -1,0 +1,17 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.pose as data: one row per member of wxl_pose_api, in member order. The shapes and their
+// columns are described in wxl/services/rows.hpp.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including pose.def"
+#endif
+
+WXL_API_SERVICE(pose, WXL_POSE_SERVICE, WXL_POSE_SERVICE_VERSION, (0, 1, 24), open,
+                "A unit's head turned by a mod, over its animation. Main thread only.")
+
+WXL_API(pose, head, Head, result, (object unit, f64 yaw, f64 pitch, f64 smoothing), shim, generated,
+        "Turns a unit's head from where its body faces (radians: yaw positive to its left, pitch positive up) and holds it; smoothing is the seconds to cover half the way, 0 at once.")
+WXL_API(pose, release_head, ReleaseHead, result, (object unit), shim, generated,
+        "Gives a unit's head back to its animation, smoothly.")

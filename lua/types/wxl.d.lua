@@ -1324,6 +1324,7 @@ WorldScript = {}
 ---@field OnSwapchainRestored fun(self: RenderScript, width: integer, height: integer)
 ---@field OnModelBatchDrawn fun(self: RenderScript, model: lightuserdata|nil, root_model: lightuserdata|nil, primitive_type: integer, base_vertex: integer, min_index: integer, vertex_count: integer, start_index: integer, primitive_count: integer, blend_mode: integer, viewport_x: integer, viewport_y: integer, viewport_width: integer, viewport_height: integer, viewport_min_z: number, viewport_max_z: number)
 ---@field OnCameraUpdate fun(self: RenderScript, index: integer, delta: number)
+---@field OnImGuiFrame fun(self: RenderScript, index: integer, delta: number)
 RenderScript = {}
 
 ---@class ObjectScript
@@ -1636,6 +1637,7 @@ SocialScript = {}
 ---@overload fun(family: "WorldScript", method: "OnMouseMotion", handler: fun(dx: integer, dy: integer)): integer
 ---@overload fun(family: "WorldScript", method: "OnMouseWheel", handler: fun(delta: number, handled: boolean|nil)): integer
 ---@overload fun(family: "RenderScript", method: "OnCameraUpdate", handler: fun(index: integer, delta: number)): integer
+---@overload fun(family: "RenderScript", method: "OnImGuiFrame", handler: fun(index: integer, delta: number)): integer
 ---@param family wxl.Family
 ---@param method string
 ---@param handler function
@@ -3215,6 +3217,21 @@ function input.CursorCaptured() end
 ---@return string|nil reason
 function input.PointerOverWorld() end
 
+---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
+---Keeps the game out of its own mouse look (true): a held mouse button turns nothing and hides
+---nothing, a click still selects or acts; false gives this mod's block back. Kept while any mod
+---blocks it, and given back when the mod is disabled, reloads or unloads.
+---@param blocked boolean
+---@return true|nil ok
+---@return string|nil reason
+function input.BlockMouseLook(blocked) end
+
+---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
+---Whether some mod keeps the game out of its mouse look.
+---@return boolean|nil
+---@return string|nil reason
+function input.MouseLookBlocked() end
+
 ---wxl.world. Questions about the world's geometry. Main thread only.
 ---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
 ---@class wxl.world
@@ -3227,6 +3244,28 @@ local world = {}
 ---@return wxl.Vec3|nil
 ---@return string|nil reason
 function world.Trace(start, finish, flags) end
+
+---wxl.pose. A unit's head turned by a mod, over its animation. Main thread only.
+---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.pose
+local pose = {}
+
+---Turns a unit's head from where its body faces, in radians (yaw positive to its left, pitch
+---positive up), reached over `smoothing` seconds for half the way, and holds it until
+---ReleaseHead, or until the mod is disabled, reloads or unloads.
+---@param unit wxl.Object
+---@param yaw number
+---@param pitch number
+---@param smoothing number
+---@return true|nil ok
+---@return string|nil reason
+function pose.Head(unit, yaw, pitch, smoothing) end
+
+---Gives a unit's head this mod turned back to its animation; nil, "not_found" for one it does not hold.
+---@param unit wxl.Object
+---@return true|nil ok
+---@return string|nil reason
+function pose.ReleaseHead(unit) end
 
 ---@class wxl.ModInfo
 ---@field id string
@@ -3305,6 +3344,7 @@ function object.Unwatch(type, name) end
 ---@field camera wxl.camera
 ---@field input wxl.input
 ---@field world wxl.world
+---@field pose wxl.pose
 ---@field events table<wxl.Family, string[]> every family's events, as On<Event>
 wxl = {}
 

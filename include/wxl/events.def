@@ -539,6 +539,14 @@ WXL_EVENT(World, MouseWheel,       142, wxl_mouse_wheel_args)
     where a mod places it instead, through wxl.camera. */
 WXL_EVENT(Render, CameraUpdate,    143, wxl_frame_args)
 
+// --- The interface drawn by mods ---------------------------------------------------------------
+
+WXL_EVENTS_SINCE(0, 1, 24, 144)
+
+/** A frame of the runtime's Dear ImGui is open: the moment a mod adds its windows, through
+    wxl.imgui. Raised once a frame while a mod listens, before the frame is shown. */
+WXL_EVENT(Render, ImGuiFrame,      144, wxl_frame_args)
+
 // Give back whatever was defaulted above, so the file can be included again right after with a
 // different selector. What the consumer defined itself is left alone: undefining it here would
 // break the consumer that includes the table twice on purpose.

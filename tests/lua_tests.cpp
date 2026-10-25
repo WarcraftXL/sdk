@@ -1718,8 +1718,8 @@ print("later " .. tostring(s.Unredirect("Interface\\Nope.txt")) .. " " .. tostri
         host.LoadAll();
         host.Stage(WXL_STAGE_READY);
 
-        // Every event but the one this runtime lacks and the one the probe skips.
-        const size_t offered = static_cast<size_t>(WXL_EV_COUNT) - 2;
+        // Every event but the one this runtime lacks and the two the probe skips.
+        const size_t offered = static_cast<size_t>(WXL_EV_COUNT) - 3;
         Check(sink.Has(("[wxl.probe] listening to " + std::to_string(offered) + " events").c_str()) &&
                   sink.Has("[wxl.probe] not raised by this runtime: OnSoundPlay"),
               "the probe listens to every event the runtime raises, and names the one it does not");
@@ -2376,6 +2376,10 @@ print("capture " .. tostring(wxl.input.CaptureCursor(true)) .. " " .. tostring(w
 print("hit " .. wxl.world.Trace({ x = 0, y = 4, z = 0 }, { x = 20, y = 4, z = 0 }).x)
 print("clear " .. tostring(wxl.world.Trace({ x = 0, y = 0, z = 0 }, { x = 5, y = 0, z = 0 }, 0x100111)))
 print("face " .. tostring(wxl.action.Face(2.5)))
+print("block " .. tostring(wxl.input.BlockMouseLook(true)) .. " " .. tostring(wxl.input.MouseLookBlocked()))
+print("head " .. tostring(wxl.pose.Head(wxl.object.LocalPlayer(), 0.5, 0.1, 0.1)) .. " " ..
+      tostring(wxl.pose.ReleaseHead(wxl.object.LocalPlayer())) .. " " ..
+      tostring(wxl.pose.Head(wxl.object.LocalPlayer(), 0.25, 0, 0)))
 print("missing " .. tostring(select(2, pcall(function() return wxl.camera.SetView({ x = 1, y = 2, z = 3 }) end))))
 Observe("WorldScript", "OnMouseMotion", function(dx, dy) print("motion " .. dx .. " " .. dy) end)
 Override("WorldScript", "OnMouseWheel", function(delta) print("wheel " .. delta) return true end)
@@ -2397,6 +2401,7 @@ end)
         config.services.push_back(PublishedService{WXL_CAMERA_SERVICE, WXL_CAMERA_SERVICE_VERSION, FakeView::CameraTable()});
         config.services.push_back(PublishedService{WXL_INPUT_SERVICE, WXL_INPUT_SERVICE_VERSION, FakeView::InputTable()});
         config.services.push_back(PublishedService{WXL_WORLD_SERVICE, WXL_WORLD_SERVICE_VERSION, FakeView::WorldTable()});
+        config.services.push_back(PublishedService{WXL_POSE_SERVICE, WXL_POSE_SERVICE_VERSION, FakeView::PoseTable()});
         FakeView::Calls().clear();
         wxltest::FakeActions::Calls().clear();
         {
@@ -2410,6 +2415,8 @@ end)
                   "two mods set a view and capture the pointer");
             Check(sink.Has("[wxl.aim-a] hit 10") && sink.Has("[wxl.aim-a] clear nil") && sink.Has("[wxl.aim-a] face true"),
                   "a trace answers the point met or nil, Face answers true");
+            Check(sink.Has("[wxl.aim-a] block true true") && sink.Has("[wxl.aim-a] head true true true"),
+                  "BlockMouseLook and Head answer true; releasing a head turned again answers");
             Check(sink.Has("[wxl.aim-a] missing") && sink.Has("'forward' (argument 2) is missing"),
                   "a view without its direction is an error naming it");
             const auto& actions = wxltest::FakeActions::Calls();
@@ -2440,14 +2447,17 @@ end)
             host.Shutdown();
         }
         const auto& calls = FakeView::Calls();
-        bool released = false, freed = false;
+        bool released = false, freed = false, unblocked = false, headReleased = false;
         for (const auto& call : calls)
         {
             if (call.name == "release_view") released = true;
             if (call.name == "free") freed = true;
+            if (call.name == "unblock") unblocked = true;
+            if (call.name == "release_head") headReleased = true;
         }
         Check(released && freed && FakeView::Captures() == 0,
               "the last mod's view and capture go when it unloads");
+        Check(unblocked && headReleased && FakeView::Blocks() == 0, "and so do its block of the mouse look and its heads");
         if (g_failures) sink.Dump();
     }
 

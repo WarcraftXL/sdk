@@ -34,6 +34,8 @@ namespace wxl
      *   CaptureCursor(bool)   holds the pointer at the centre of the window, or lets it go
      *   CursorCaptured()      whether some mod holds it
      *   PointerOverWorld()    whether the pointer is over the world, not the interface
+     *   BlockMouseLook(bool)  keeps the game out of its own mouse look; clicks still act (0.1.24)
+     *   MouseLookBlocked()    whether some mod does
      *
      * A held pointer is where the game picks and clicks: the object at the centre of the screen
      * is the mouseover, and a click lands on it. The motion arrives as WorldScript's

@@ -55,7 +55,8 @@ typedef struct wxl_camera_api
     /// The direction the top of the screen is, of unit length, in world coordinates.
     wxl_result(WXL_CALL* up)(wxl_vec3* out);
 
-    /// The field of view it draws with, in radians.
+    /// The field of view it draws with, in radians: the client's FOV(), of which its projection
+    /// takes 0.6 as the vertical angle (CSimpleCamera::SetGxProjectionAndView).
     wxl_result(WXL_CALL* fov)(double* out);
 
     /**

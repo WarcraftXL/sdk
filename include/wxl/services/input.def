@@ -17,3 +17,8 @@ WXL_API(input, cursor_captured, CursorCaptured, boolean, (), generated, generate
         "Whether some mod holds the pointer.")
 WXL_API(input, pointer_over_world, PointerOverWorld, boolean, (), generated, generated,
         "Whether the pointer is over the world rather than a frame of the interface.")
+WXL_API_SINCE(input, block_mouse_look, (0, 1, 24))
+WXL_API(input, block_mouse_look, BlockMouseLook, result, (boolean blocked), shim, generated,
+        "Keeps the game out of its own mouse look (true): a held mouse button turns nothing and hides nothing, a click still selects or acts; false gives the mod's block back.")
+WXL_API(input, mouse_look_blocked, MouseLookBlocked, boolean, (), generated, generated,
+        "Whether some mod keeps the game out of its mouse look.")
