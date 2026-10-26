@@ -614,6 +614,61 @@ namespace
                 return "---Gives back everything this mod changed on the game's circles.\n"
                        "function " + owner + ".ResetAll() end\n\n";
         }
+        if (std::strcmp(row.service, "render") == 0)
+        {
+            const std::string answers = "---@return true|nil ok\n---@return string|nil reason\n";
+            const std::string push =
+                "---`push`: a table of numbers (each a 32-bit float) or a string of bytes, up to 128 bytes; nil for none.\n";
+            if (name == "CreatePipeline")
+                return "---A pipeline of the mod's SPIR-V and the state it draws with, compiled now; nil and why when the\n"
+                       "---device refuses it. `vertex`/`fragment`: SPIR-V bytes, or the path of a .spv file of the mod's\n"
+                       "---folder. `kind`: \"graphics\" (vertex and fragment, vertices read from buffers), \"fullscreen\"\n"
+                       "---(fragment over the pass, `uv` at location 0), \"batch\" (fragment behind a client batch).\n"
+                       "---`colors`: formats (\"rgba8\", \"bgra8\" the frame's, \"r8\", \"rg8\", \"r16f\", \"rg16f\",\n"
+                       "---\"rgba16f\", \"r32f\", \"rgba32f\"), the frame's by default. `depth`: \"depth32f\" or nil.\n"
+                       "---`samples`: 0 the frame's, 1, 2, 4, 8. `blend`: \"none\", \"alpha\", \"add\", \"premultiplied\",\n"
+                       "---\"multiply\", one or one per colour. `depth_test`: \"off\", \"less\", \"less_equal\", \"equal\",\n"
+                       "---\"greater\", \"greater_equal\", \"always\". `cull`: \"none\", \"back\", \"front\", \"batch\".\n"
+                       "---`topology`: \"triangles\", \"triangle_strip\", \"lines\", \"points\".\n"
+                       "---@param desc {kind: string?, name: string?, vertex: string?, fragment: string, colors: string|string[]?, depth: string?, samples: integer?, blend: string|string[]?, depth_test: string?, depth_write: boolean?, cull: string?, topology: string?}\n"
+                       "---@return wxl.Pipeline|nil pipeline\n---@return string|nil reason\n"
+                       "function " + owner + ".CreatePipeline(desc) end\n\n";
+            if (name == "Begin")
+                return "---Opens a pass inside OnRenderPoint: what the draws until End go into. `colors`: Images,\n"
+                       "---\"scene_color\" (the frame's colour), or {image, clear = {r, g, b, a}}; `depth`: an Image,\n"
+                       "---\"scene_depth\" (the frame's depth), or {image, clear = z}. Every attachment has one size.\n"
+                       "---@param pass {colors: (wxl.Image|string|table)[]?, depth: wxl.Image|string|table|nil}\n" + answers +
+                       "function " + owner + ".Begin(pass) end\n\n";
+            if (name == "Draw")
+                return "---Draws `vertex_count` vertices `instance_count` times (1 when nil) with a graphics pipeline.\n" + push +
+                       "---@param pipeline wxl.Pipeline\n---@param vertex_count integer\n---@param instance_count? integer\n"
+                       "---@param push? number[]|string\n" + answers +
+                       "function " + owner + ".Draw(pipeline, vertex_count, instance_count, push) end\n\n";
+            if (name == "DrawIndexed")
+                return "---Draws `index_count` 32-bit indices of a buffer from `first_index`, `instance_count` times.\n" + push +
+                       "---@param pipeline wxl.Pipeline\n---@param indices wxl.Buffer\n---@param first_index integer\n"
+                       "---@param index_count integer\n---@param instance_count? integer\n---@param push? number[]|string\n" + answers +
+                       "function " + owner + ".DrawIndexed(pipeline, indices, first_index, index_count, instance_count, push) end\n\n";
+            if (name == "Fullscreen")
+                return "---Draws a fullscreen pipeline over the pass.\n" + push +
+                       "---@param pipeline wxl.Pipeline\n---@param push? number[]|string\n" + answers +
+                       "function " + owner + ".Fullscreen(pipeline, push) end\n\n";
+            if (name == "DrawBatch")
+                return "---Draws a client batch (OnModelBatchDrawn's `batch`, or one KeepBatch answered) again with a batch\n"
+                       "---pipeline, into the open pass. `constants`: as Draw's push, up to 4096 bytes, read at pc.pixelRegs.\n"
+                       "---@param batch lightuserdata\n---@param pipeline wxl.Pipeline\n---@param constants? number[]|string\n" +
+                       answers + "function " + owner + ".DrawBatch(batch, pipeline, constants) end\n\n";
+            if (name == "ReplaceShader")
+                return "---Gives the client's shaders named `name` (or starting with it) the mod's SPIR-V for `stage` (0 vertex,\n"
+                       "---1 pixel): bytes, or a .spv file of the mod's folder. Kept until RestoreShader, or until the mod is\n"
+                       "---disabled, reloads or unloads; the last Lua mod to replace a name holds it.\n"
+                       "---@param name string\n---@param stage integer\n---@param spirv string\n" + answers +
+                       "function " + owner + ".ReplaceShader(name, stage, spirv) end\n\n";
+            if (name == "RestoreShader")
+                return "---Gives a shader this mod replaced its own program back; nil, \"not_found\" for one it did not replace.\n"
+                       "---@param name string\n---@param stage integer\n" + answers +
+                       "function " + owner + ".RestoreShader(name, stage) end\n\n";
+        }
         if (name == "Begin")
             return "---Opens a zone named `name` on the profiler's timeline, inside the handler or callback running\n"
                    "---now; End closes it. Zones nest. Whatever this call left open is closed when it returns or\n"
@@ -714,7 +769,8 @@ namespace
                 const wxl::api::Row& row = rows[i];
                 if (std::strcmp(row.service, services[s].id) != 0 || row.lua == wxl::api::Lua::native) continue;
                 const std::vector<Parameter> parameters = ParametersOf(row.params);
-                if (!parameters.empty() && IsResourceKind(parameters[0].kind)) continue;
+                // A generated row taking a resource first is the resource's method; a shim row is the module's.
+                if (!parameters.empty() && IsResourceKind(parameters[0].kind) && row.lua == wxl::api::Lua::generated) continue;
                 any = true;
             }
             if (!any) continue;
@@ -729,7 +785,8 @@ namespace
                 const wxl::api::Row& row = rows[i];
                 if (std::strcmp(row.service, services[s].id) != 0 || row.lua == wxl::api::Lua::native) continue;
                 const std::vector<Parameter> parameters = ParametersOf(row.params);
-                if (!parameters.empty() && IsResourceKind(parameters[0].kind)) continue;
+                // A generated row taking a resource first is the resource's method; a shim row is the module's.
+                if (!parameters.empty() && IsResourceKind(parameters[0].kind) && row.lua == wxl::api::Lua::generated) continue;
                 const wxl::api::Version since = wxl::api::SinceOf(row);
                 if (wxl::api::AtLeast(since, services[s].since) && !wxl::api::AtLeast(services[s].since, since))
                     out << "---" << CameWith(since) << "\n";

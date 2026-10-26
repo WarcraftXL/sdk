@@ -1298,4 +1298,22 @@ namespace wxl::lua
         }
         lua_pop(L, 1);
     }
+    void PushRenderResource(lua_State* L, RenderResource which, wxl_handle value)
+    {
+        switch (which)
+        {
+        case RenderResource::image: PushResource<kind::Image>(L, value); break;
+        case RenderResource::buffer: PushResource<kind::Buffer>(L, value); break;
+        case RenderResource::pipeline: PushResource<kind::Pipeline>(L, value); break;
+        }
+    }
+
+    wxl_handle ToRenderResource(lua_State* L, int index, RenderResource which)
+    {
+        const char* name = which == RenderResource::image ? kind::Image::kName
+                           : which == RenderResource::buffer ? kind::Buffer::kName
+                                                            : kind::Pipeline::kName;
+        const ResourceBox* box = static_cast<const ResourceBox*>(luaL_testudata(L, index, MetaName(name).c_str()));
+        return box && box->open ? static_cast<wxl_handle>(box->value) : WXL_HANDLE_NONE;
+    }
 } // namespace wxl::lua

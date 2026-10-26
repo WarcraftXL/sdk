@@ -128,6 +128,15 @@ WXL_ARGS_FIELD(wxl_swapchain_args, width, u32)
 WXL_ARGS_FIELD(wxl_swapchain_args, height, u32)
 WXL_ARGS_END(wxl_swapchain_args)
 
+/// A point of the frame where mods draw.
+WXL_ARGS(wxl_render_point_args)
+WXL_ARGS_ENUM(wxl_render_point_args, point, wxl_render_point)
+WXL_ARGS_FIELD(wxl_render_point_args, frame, u64)   ///< the frame's index, as wxl_frame_args counts them
+WXL_ARGS_FIELD(wxl_render_point_args, width, u32)   ///< the size the frame is drawn at, in pixels
+WXL_ARGS_FIELD(wxl_render_point_args, height, u32)
+WXL_ARGS_FIELD(wxl_render_point_args, samples, u32) ///< its samples per pixel on the Vulkan renderer (1 without multisampling); 0 on Direct3D 9
+WXL_ARGS_END(wxl_render_point_args)
+
 /// An object appearing, changing or leaving.
 WXL_ARGS(wxl_object_args)
 WXL_ARGS_FIELD(wxl_object_args, object, handle)
@@ -1334,11 +1343,14 @@ WXL_ARGS_FIELD(wxl_appearance_args, npc, bool)       ///< an NPC's appearance: i
 WXL_ARGS_END(wxl_appearance_args)
 
 /**
- * @brief One batch of a model, just drawn by the client's Direct3D 9 device.
+ * @brief One batch of a model, just drawn by the client's device.
  *
- * Everything it was drawn with -- vertex declaration, streams, indices, shaders and their
- * constants, textures, render states -- is still bound: DrawIndexedPrimitive with these numbers
- * draws the batch again (wxl.gx gives the device).
+ * On Direct3D 9, everything it was drawn with -- vertex declaration, streams, indices, shaders and
+ * their constants, textures, render states -- is still bound: DrawIndexedPrimitive with these
+ * numbers draws the batch again (wxl.gx gives the device). On the Vulkan renderer the numbers are
+ * the same draw's, in Direct3D 9's terms (primitive_type is a D3DPRIMITIVETYPE, the viewport as
+ * D3DVIEWPORT9 holds it), and `batch` draws it again: wxl.render's draw_batch, or keep_batch to draw
+ * it later in the frame.
  */
 WXL_ARGS(wxl_model_batch_args)
 WXL_ARGS_PTR(wxl_model_batch_args, model, void*)      ///< the model the batch belongs to (opaque)
@@ -1356,6 +1368,7 @@ WXL_ARGS_FIELD(wxl_model_batch_args, viewport_width, u32)
 WXL_ARGS_FIELD(wxl_model_batch_args, viewport_height, u32)
 WXL_ARGS_FIELD(wxl_model_batch_args, viewport_min_z, f32)
 WXL_ARGS_FIELD(wxl_model_batch_args, viewport_max_z, f32)
+WXL_ARGS_PTR(wxl_model_batch_args, batch, void*)        ///< the draw for wxl.render, valid during the event; null on a device without wxl.render (Direct3D 9)
 WXL_ARGS_END(wxl_model_batch_args)
 
 /// A name the client looked for that no layer has.

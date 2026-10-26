@@ -357,6 +357,23 @@ WXL_ENUM_VALUE(wxl_interface_signature, WXL_INTERFACE_SIGNATURE_MODIFIED, 2, mod
 WXL_ENUM_VALUE(wxl_interface_signature, WXL_INTERFACE_SIGNATURE_SIGNED,   3, signed)   ///< a valid .sig, and the files are the ones it signed
 WXL_ENUM_END(wxl_interface_signature)
 
+/// The graphics API the client's device runs on, as wxl.gx's api answers it.
+WXL_ENUM(wxl_gx_backend)
+WXL_ENUM_VALUE(wxl_gx_backend, WXL_GX_BACKEND_NONE,   0, none)   ///< no device yet
+WXL_ENUM_VALUE(wxl_gx_backend, WXL_GX_BACKEND_D3D9,   1, d3d9)   ///< Direct3D 9
+WXL_ENUM_VALUE(wxl_gx_backend, WXL_GX_BACKEND_D3D9EX, 2, d3d9ex) ///< Direct3D 9Ex
+WXL_ENUM_VALUE(wxl_gx_backend, WXL_GX_BACKEND_OPENGL, 3, opengl) ///< OpenGL
+WXL_ENUM_VALUE(wxl_gx_backend, WXL_GX_BACKEND_VULKAN, 4, vulkan) ///< the runtime's Vulkan renderer
+WXL_ENUM_END(wxl_gx_backend)
+
+/// A point of the frame where a mod draws (RenderPoint), in the order a frame reaches them.
+WXL_ENUM(wxl_render_point)
+WXL_ENUM_VALUE(wxl_render_point, WXL_RENDER_POINT_AFTER_OPAQUE_WORLD, 0, after_opaque_world) ///< terrain, buildings, models and ground clutter drawn; no liquid, nothing blended yet
+WXL_ENUM_VALUE(wxl_render_point, WXL_RENDER_POINT_AFTER_LIQUIDS,      1, after_liquids)      ///< the liquids drawn too
+WXL_ENUM_VALUE(wxl_render_point, WXL_RENDER_POINT_AFTER_WORLD,        2, after_world)        ///< the whole world and its full-screen effects drawn, the interface not
+WXL_ENUM_VALUE(wxl_render_point, WXL_RENDER_POINT_AFTER_UI,           3, after_ui)           ///< the interface drawn too: the frame as it will be shown, the mods' Dear ImGui windows aside
+WXL_ENUM_END(wxl_render_point)
+
 #ifdef WXL_ENUM_DEFAULTED
     #undef WXL_ENUM
     #undef WXL_ENUM_DEFAULTED

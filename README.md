@@ -5,7 +5,7 @@
 **The contract a WarcraftXL mod is written against**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![ABI](https://img.shields.io/badge/ABI-0.1.32-blue.svg)](include/wxl/abi.h)
+[![ABI](https://img.shields.io/badge/ABI-0.1.33-blue.svg)](include/wxl/abi.h)
 [![C++](https://img.shields.io/badge/C%2B%2B-17%20and%20up-blue.svg)](#-getting-started)
 [![Header only](https://img.shields.io/badge/header--only-yes-lightgrey.svg)](include/wxl)
 
@@ -214,7 +214,7 @@ Beyond events, a runtime publishes services, and a mod asks for the ones it need
 | `wxl.point` | functions of the engine: run code before, instead of or after them, those the stock client inlined included (`wxl/deinlined.def`) | yes; one that exists on one runtime only says so |
 | `wxl.m2file` | a parsed model file's arrays, read and pointed the runtime's way, for a mod that teaches the client a model format | yes |
 | `wxl.m2` | the models objects draw with, and models a mod makes and hangs on them | yes |
-| `wxl.gx` | the client's D3D9 device, to draw a model batch again (`ModelBatchDrawn`) | yes |
+| `wxl.gx` | which device the client draws with, and its D3D9 device, to draw a model batch again (`ModelBatchDrawn`) | yes |
 | `wxl.engine` | the layout hash of each engine structure of `engine/`, as the runtime lays it out | yes |
 | `wxl.camera` | the world camera: where it is, and placing it instead of the client each frame | yes |
 | `wxl.input` | the pointer held at the centre of the window, for a mod that steers with the mouse | yes |
@@ -222,6 +222,8 @@ Beyond events, a runtime publishes services, and a mod asks for the ones it need
 | `wxl.pose` | a unit's head turned over its animation | yes |
 | `wxl.imgui` | Dear ImGui and ImPlot drawn in the game's frame, for a native mod's windows | yes |
 | `wxl.cvar` | console variables: a mod's settings registered where the game keeps its own, read and set by the console and the interface, saved in Config.wtf, per account or per character | yes |
+| `wxl.render` | drawing into the game's frame on the Vulkan renderer: the frame's points, images, buffers, pipelines of SPIR-V, the game's model batches drawn again, its shaders replaced | yes; a Direct3D 9 device says it does not draw |
+| `wxl.vk` | the Vulkan device and the frame's command buffer, for a mod that records its own commands | no: the Vulkan renderer only |
 | `wxl.hook` | hook points a runtime names and keeps working | yes |
 | `wxl.hook.raw` | a detour at a raw address | no: runtimes that load into a shipped binary |
 | `wxl.patch` | bytes written into the image | no: runtimes that load into a shipped binary |
@@ -229,7 +231,7 @@ Beyond events, a runtime publishes services, and a mod asks for the ones it need
 Each service has a typed facade with its name and version sealed in -- `wxl::ObjectService`,
 `wxl::ScriptService`, `wxl::StorageService`, `wxl::DataService`, `wxl::NetService`,
 `wxl::UiService`, `wxl::PointService`, `wxl::M2FileService`, `wxl::M2Service`, `wxl::GxService`,
-`wxl::EngineService`, `wxl::CVarService`,
+`wxl::EngineService`, `wxl::CVarService`, `wxl::RenderService`, `wxl::VkService`,
 `wxl::HookService`, `wxl::RawHookService`, `wxl::PatchService` -- taking and
 returning C++ types. `wxl::Service<T>` is still there for the raw table. Lua mods reach the same
 services as `wxl.storage`, `wxl.data`, `wxl.script`, `wxl.hook`, `wxl.patch` and `wxl.m2`, built from the
@@ -306,7 +308,7 @@ supplies only the bindings that reach its own client.
 
 ## 🔢 Versioning
 
-`major.minor.feature`, in [`abi.h`](include/wxl/abi.h): today `0.1.32`.
+`major.minor.feature`, in [`abi.h`](include/wxl/abi.h): today `0.1.33`.
 
 - **Major** changes when an existing field, signature or id changes meaning. A runtime refuses a
   mod built against a different major.

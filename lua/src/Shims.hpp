@@ -87,6 +87,24 @@
 //   wxl.texture.Stats()                                a table of what the service holds
 //
 // They are let go when the mod is disabled or its state closes.
+//
+// wxl.render's take tables, files of the mod's folder and push constants as numbers:
+//
+//   wxl.render.CreatePipeline(desc)                    a Pipeline from a table: kind, name,
+//                                                      vertex and fragment (SPIR-V bytes, or a
+//                                                      .spv file of the mod's folder), colors,
+//                                                      depth, samples, blend, depth_test,
+//                                                      depth_write, cull, topology, by name
+//   wxl.render.Begin(pass)                             a pass from a table: colors (Images,
+//                                                      "scene_color", {image, clear = {r,g,b,a}}),
+//                                                      depth (an Image, "scene_depth", {image,
+//                                                      clear = z})
+//   wxl.render.Draw, .DrawIndexed, .Fullscreen,        push constants (a batch's constants) as a
+//              .DrawBatch                              table of numbers, each a 32-bit float, or a
+//                                                      string of bytes
+//   wxl.render.ReplaceShader(name, stage, spirv)       a client shader's program replaced, held by
+//   wxl.render.RestoreShader(name, stage)              the last Lua mod to replace it and given
+//                                                      back when it goes
 
 #ifndef WXL_LUA_SHIMS_HPP
 #define WXL_LUA_SHIMS_HPP

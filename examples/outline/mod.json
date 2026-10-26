@@ -1,0 +1,17 @@
+{
+  "$schema": "../../schema/mod.json",
+  "id": "wxl.outline",
+  "name": "Outline",
+  "version": "1.0.0",
+  "abi": "0.1.33",
+  "description": "Outlines the player's target where it is seen, never through a wall, on the Vulkan renderer: the target's model batches kept as the game draws them, drawn again into a mask against the frame's depth, and an edge drawn around the mask onto the frame, through wxl.render alone.",
+  "binaries": {
+    "win-x64": "bin/x64/outline.dll",
+    "win-x86": "bin/x86/outline.dll"
+  },
+  "requires": [
+    { "service": "wxl.render", "version": 1 },
+    { "service": "wxl.m2", "version": 1 },
+    { "service": "wxl.object", "version": 1 }
+  ]
+}

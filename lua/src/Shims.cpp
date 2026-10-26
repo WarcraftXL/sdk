@@ -10,6 +10,8 @@
 #include <cstring>
 #include <deque>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
 #include <functional>
 #include <memory>
 #include <string>
@@ -33,6 +35,7 @@
 #include "wxl/services/selectioncircle.h"
 #include "wxl/services/texture.h"
 #include "wxl/services/cvar.h"
+#include "wxl/services/render.h"
 #include "wxl/services/relay.h"
 #include "wxl/services/storage.h"
 
@@ -2442,6 +2445,470 @@ namespace wxl::lua::shims
             field("released", static_cast<double>(stats.released));
             return 1;
         }
+
+        // --- wxl.render: tables into descriptions, push constants, the shaders each Lua mod replaced -
+
+        const wxl_render_api* Render() { return wxl::api::Table<wxl_render_api>(); }
+
+        /// A name of a list, or a whole number; @p where names the function and parameter for an error.
+        uint32_t CheckNamed(lua_State* L, int index, const char* const* names, uint32_t count, uint32_t first, const char* where)
+        {
+            if (lua_type(L, index) == LUA_TNUMBER)
+            {
+                const double value = lua_tonumber(L, index);
+                if (value < 0.0 || value > 4294967295.0 || value != static_cast<double>(static_cast<uint32_t>(value)))
+                    luaL_error(L, "%s must be a whole number from 0, or a name", where);
+                return static_cast<uint32_t>(value);
+            }
+            if (lua_type(L, index) == LUA_TSTRING)
+            {
+                const char* text = lua_tostring(L, index);
+                for (uint32_t i = 0; i < count; ++i)
+                    if (std::strcmp(text, names[i]) == 0) return first + i;
+            }
+            std::string choices;
+            for (uint32_t i = 0; i < count; ++i) choices += std::string(i ? ", \"" : "\"") + names[i] + "\"";
+            luaL_error(L, "%s must be one of %s, or its number", where, choices.c_str());
+            return 0;
+        }
+
+        constexpr const char* kRenderFormats[] = {"rgba8", "bgra8", "r8", "rg8", "r16f", "rg16f", "rgba16f", "r32f", "rgba32f", "depth32f"};
+        constexpr const char* kRenderKinds[]   = {"graphics", "fullscreen", "batch"};
+        constexpr const char* kRenderBlends[]  = {"none", "alpha", "add", "premultiplied", "multiply"};
+        constexpr const char* kRenderDepths[]  = {"off", "less", "less_equal", "equal", "greater", "greater_equal", "always"};
+        constexpr const char* kRenderCulls[]   = {"none", "back", "front", "batch"};
+        constexpr const char* kRenderShapes[]  = {"triangles", "triangle_strip", "lines", "points"};
+        constexpr uint32_t    kSpirvMagic      = 0x07230203u;
+
+        /// SPIR-V from a Lua string: the bytes themselves when they start with SPIR-V's magic,
+        /// otherwise the path of a file of the mod's own folder, read into @p bytes.
+        bool ReadSpirv(lua_State* L, ScriptMod& mod, int index, std::string& bytes, const char* where)
+        {
+            size_t      size = 0;
+            const char* text = lua_tolstring(L, index, &size);
+            if (!text) luaL_error(L, "%s must be SPIR-V: a string of its bytes, or the path of a .spv file of the mod's folder", where);
+            uint32_t magic = 0;
+            if (size >= 4) std::memcpy(&magic, text, 4);
+            if (magic == kSpirvMagic)
+            {
+                bytes.assign(text, size);
+                return true;
+            }
+            const std::filesystem::path relative = std::filesystem::path(std::string(text, size)).lexically_normal();
+            const std::string           first    = relative.empty() ? std::string() : relative.begin()->string();
+            if (relative.empty() || relative.is_absolute() || relative.has_root_name() || first == "..")
+                luaL_error(L, "%s: \"%s\" is not inside the mod's folder; give a path relative to it", where, text);
+            std::ifstream file(mod.Directory() / relative, std::ios::binary);
+            if (!file) luaL_error(L, "%s: \"%s\" cannot be read from the mod's folder", where, text);
+            bytes.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+            std::memcpy(&magic, bytes.size() >= 4 ? bytes.data() : "\0\0\0\0", 4);
+            if (magic != kSpirvMagic) luaL_error(L, "%s: \"%s\" is not SPIR-V (no magic number at its start)", where, text);
+            return true;
+        }
+
+        /// Push constants or a batch's constants: a string of bytes, a table of numbers (each a
+        /// 32-bit float), or nothing.
+        void ReadPush(lua_State* L, int index, std::string& bytes, const char* where)
+        {
+            bytes.clear();
+            if (lua_isnoneornil(L, index)) return;
+            if (lua_type(L, index) == LUA_TSTRING)
+            {
+                size_t      size = 0;
+                const char* text = lua_tolstring(L, index, &size);
+                bytes.assign(text, size);
+                return;
+            }
+            if (lua_type(L, index) != LUA_TTABLE) luaL_error(L, "%s must be a table of numbers or a string of bytes", where);
+            const size_t count = lua_objlen(L, index);
+            if (count > WXL_RENDER_BATCH_BYTES / 4) luaL_error(L, "%s holds more than %d numbers", where, WXL_RENDER_BATCH_BYTES / 4);
+            bytes.resize(count * 4);
+            for (size_t i = 0; i < count; ++i)
+            {
+                lua_rawgeti(L, index, static_cast<int>(i) + 1);
+                if (lua_type(L, -1) != LUA_TNUMBER) luaL_error(L, "%s: entry %d is not a number", where, static_cast<int>(i) + 1);
+                const float value = static_cast<float>(lua_tonumber(L, -1));
+                std::memcpy(&bytes[i * 4], &value, 4);
+                lua_pop(L, 1);
+            }
+        }
+
+        /// A table field as a named value (absent: @p absent).
+        uint32_t FieldNamed(lua_State* L, int table, const char* field, const char* const* names, uint32_t count, uint32_t first,
+                            uint32_t absent, const char* function)
+        {
+            lua_getfield(L, table, field);
+            uint32_t value = absent;
+            if (!lua_isnil(L, -1))
+            {
+                const std::string where = std::string(function) + ": '" + field + "'";
+                value                   = CheckNamed(L, lua_gettop(L), names, count, first, where.c_str());
+            }
+            lua_pop(L, 1);
+            return value;
+        }
+
+        /// CreatePipeline(desc): a Pipeline, or nil and why.
+        int L_RenderCreatePipeline(lua_State* L)
+        {
+            ScriptMod& mod = Self(L);
+            const char* fn = "wxl.render.CreatePipeline";
+            if (!lua_istable(L, 1)) luaL_error(L, "%s: 'desc' (argument 1) must be a table", fn);
+            wxl_render_pipeline_desc desc{};
+            desc.struct_size = sizeof desc;
+            desc.kind        = FieldNamed(L, 1, "kind", kRenderKinds, 3, 0, WXL_RENDER_PIPELINE_GRAPHICS, fn);
+
+            std::string vertex, fragment, name;
+            lua_getfield(L, 1, "name");
+            if (lua_type(L, -1) == LUA_TSTRING) name = lua_tostring(L, -1);
+            lua_pop(L, 1);
+            desc.name = name.empty() ? nullptr : name.c_str();
+            lua_getfield(L, 1, "vertex");
+            if (!lua_isnil(L, -1)) ReadSpirv(L, mod, lua_gettop(L), vertex, "wxl.render.CreatePipeline: 'vertex'");
+            lua_pop(L, 1);
+            lua_getfield(L, 1, "fragment");
+            if (lua_isnil(L, -1)) luaL_error(L, "%s: 'fragment' is missing; it takes SPIR-V", fn);
+            ReadSpirv(L, mod, lua_gettop(L), fragment, "wxl.render.CreatePipeline: 'fragment'");
+            lua_pop(L, 1);
+            if (desc.kind == WXL_RENDER_PIPELINE_GRAPHICS && vertex.empty())
+                luaL_error(L, "%s: 'vertex' is missing; a graphics pipeline takes a vertex program", fn);
+            desc.vertex        = vertex.empty() ? nullptr : vertex.data();
+            desc.vertex_size   = static_cast<uint32_t>(vertex.size());
+            desc.fragment      = fragment.data();
+            desc.fragment_size = static_cast<uint32_t>(fragment.size());
+
+            // The colour formats: a list, one name, or the frame's format when left out.
+            lua_getfield(L, 1, "colors");
+            const int colors = lua_gettop(L);
+            if (lua_isnil(L, colors))
+            {
+                desc.color_count      = 1;
+                desc.color_formats[0] = WXL_RENDER_FORMAT_BGRA8;
+            }
+            else if (lua_istable(L, colors))
+            {
+                const size_t count = lua_objlen(L, colors);
+                if (count > WXL_RENDER_MAX_COLORS) luaL_error(L, "%s: 'colors' holds more than %d formats", fn, WXL_RENDER_MAX_COLORS);
+                for (size_t i = 0; i < count; ++i)
+                {
+                    lua_rawgeti(L, colors, static_cast<int>(i) + 1);
+                    desc.color_formats[i] = CheckNamed(L, lua_gettop(L), kRenderFormats, 9, 1, "wxl.render.CreatePipeline: an entry of 'colors'");
+                    lua_pop(L, 1);
+                }
+                desc.color_count = static_cast<uint32_t>(count);
+            }
+            else
+            {
+                desc.color_formats[0] = CheckNamed(L, colors, kRenderFormats, 9, 1, "wxl.render.CreatePipeline: 'colors'");
+                desc.color_count      = 1;
+            }
+            lua_pop(L, 1);
+
+            lua_getfield(L, 1, "depth");
+            if (!lua_isnil(L, -1)) desc.depth_format = CheckNamed(L, lua_gettop(L), kRenderFormats + 9, 1, WXL_RENDER_FORMAT_DEPTH32F,
+                                                                  "wxl.render.CreatePipeline: 'depth'");
+            lua_pop(L, 1);
+            lua_getfield(L, 1, "samples");
+            if (!lua_isnil(L, -1))
+            {
+                const double samples = luaL_checknumber(L, -1);
+                if (samples != 0 && samples != 1 && samples != 2 && samples != 4 && samples != 8)
+                    luaL_error(L, "%s: 'samples' must be 0 (the frame's), 1, 2, 4 or 8", fn);
+                desc.samples = static_cast<uint32_t>(samples);
+            }
+            lua_pop(L, 1);
+
+            // Blending: one mode for every attachment, or one per attachment.
+            lua_getfield(L, 1, "blend");
+            const int blend = lua_gettop(L);
+            if (lua_istable(L, blend))
+            {
+                const size_t count = lua_objlen(L, blend);
+                for (size_t i = 0; i < count && i < WXL_RENDER_MAX_COLORS; ++i)
+                {
+                    lua_rawgeti(L, blend, static_cast<int>(i) + 1);
+                    desc.blend[i] = CheckNamed(L, lua_gettop(L), kRenderBlends, 5, 0, "wxl.render.CreatePipeline: an entry of 'blend'");
+                    lua_pop(L, 1);
+                }
+            }
+            else if (!lua_isnil(L, blend))
+            {
+                const uint32_t mode = CheckNamed(L, blend, kRenderBlends, 5, 0, "wxl.render.CreatePipeline: 'blend'");
+                for (uint32_t& b : desc.blend) b = mode;
+            }
+            lua_pop(L, 1);
+
+            desc.depth_test = FieldNamed(L, 1, "depth_test", kRenderDepths, 7, 0, WXL_RENDER_DEPTH_OFF, fn);
+            lua_getfield(L, 1, "depth_write");
+            desc.depth_write = lua_toboolean(L, -1) ? WXL_TRUE : WXL_FALSE;
+            lua_pop(L, 1);
+            desc.cull     = FieldNamed(L, 1, "cull", kRenderCulls, 4, 0,
+                                       desc.kind == WXL_RENDER_PIPELINE_BATCH ? WXL_RENDER_CULL_BATCH : WXL_RENDER_CULL_NONE, fn);
+            desc.topology = FieldNamed(L, 1, "topology", kRenderShapes, 4, 0, WXL_RENDER_TOPOLOGY_TRIANGLES, fn);
+
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::create_pipeline)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_handle made = api->create_pipeline(&desc);
+            if (made == WXL_HANDLE_NONE)
+                return PushResultFailure(L, api->supported && api->supported() ? WXL_E_INVALID : WXL_E_UNSUPPORTED);
+            PushRenderResource(L, RenderResource::pipeline, made);
+            return 1;
+        }
+
+        /// An attachment of a pass: an Image, the frame's "scene_color" or "scene_depth", or a
+        /// table {image, clear = ...}; @p cleared says whether the table asked for a clear.
+        wxl_handle CheckAttachment(lua_State* L, int index, bool depth, bool& cleared, float* clear, const char* where)
+        {
+            cleared = false;
+            int at  = index;
+            if (lua_istable(L, index))
+            {
+                lua_rawgeti(L, index, 1);
+                at = lua_gettop(L);
+                lua_getfield(L, index, "clear");
+                if (!lua_isnil(L, -1))
+                {
+                    cleared = true;
+                    if (depth)
+                    {
+                        if (lua_type(L, -1) != LUA_TNUMBER) luaL_error(L, "%s: 'clear' must be a depth, a number from 0 to 1", where);
+                        clear[0] = static_cast<float>(lua_tonumber(L, -1));
+                    }
+                    else
+                    {
+                        if (!lua_istable(L, -1)) luaL_error(L, "%s: 'clear' must be a colour, a table {r, g, b, a}", where);
+                        for (int c = 0; c < 4; ++c)
+                        {
+                            lua_rawgeti(L, -1, c + 1);
+                            clear[c] = lua_isnumber(L, -1) ? static_cast<float>(lua_tonumber(L, -1)) : (c == 3 ? 1.0f : 0.0f);
+                            lua_pop(L, 1);
+                        }
+                    }
+                }
+                lua_pop(L, 1);
+            }
+            wxl_handle handle = WXL_HANDLE_NONE;
+            if (lua_type(L, at) == LUA_TSTRING)
+            {
+                const char* text = lua_tostring(L, at);
+                if (!depth && std::strcmp(text, "scene_color") == 0) handle = WXL_RENDER_SCENE_COLOR;
+                if (depth && std::strcmp(text, "scene_depth") == 0) handle = WXL_RENDER_SCENE_DEPTH;
+            }
+            else
+                handle = ToRenderResource(L, at, RenderResource::image);
+            if (handle == WXL_HANDLE_NONE)
+                luaL_error(L, "%s must be an image of wxl.render (not given back), \"%s\", or a table {image, clear = ...}", where,
+                           depth ? "scene_depth" : "scene_color");
+            if (at != index) lua_pop(L, 1);
+            return handle;
+        }
+
+        /// Begin(pass): true, or nil and why.
+        int L_RenderBegin(lua_State* L)
+        {
+            if (!lua_istable(L, 1)) luaL_error(L, "wxl.render.Begin: 'pass' (argument 1) must be a table {colors = {...}, depth = ...}");
+            wxl_render_pass pass{};
+            pass.struct_size = sizeof pass;
+            lua_getfield(L, 1, "colors");
+            const int colors = lua_gettop(L);
+            if (lua_istable(L, colors))
+            {
+                const size_t count = lua_objlen(L, colors);
+                if (count > WXL_RENDER_MAX_COLORS) luaL_error(L, "wxl.render.Begin: 'colors' holds more than %d attachments", WXL_RENDER_MAX_COLORS);
+                for (size_t i = 0; i < count; ++i)
+                {
+                    lua_rawgeti(L, colors, static_cast<int>(i) + 1);
+                    bool cleared = false;
+                    pass.colors[i] = CheckAttachment(L, lua_gettop(L), false, cleared, pass.clear_colors[i],
+                                                     "wxl.render.Begin: an entry of 'colors'");
+                    if (cleared) pass.clear |= 1u << i;
+                    lua_pop(L, 1);
+                }
+                pass.color_count = static_cast<uint32_t>(count);
+            }
+            else if (!lua_isnil(L, colors))
+                luaL_error(L, "wxl.render.Begin: 'colors' must be a list of attachments");
+            lua_pop(L, 1);
+            lua_getfield(L, 1, "depth");
+            if (!lua_isnil(L, -1))
+            {
+                bool  cleared = false;
+                float value[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+                pass.depth     = CheckAttachment(L, lua_gettop(L), true, cleared, value, "wxl.render.Begin: 'depth'");
+                if (cleared)
+                {
+                    pass.clear |= WXL_RENDER_CLEAR_DEPTH;
+                    pass.clear_depth = value[0];
+                }
+            }
+            lua_pop(L, 1);
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::begin)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->begin(&pass);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        wxl_handle CheckPipeline(lua_State* L, int index, const char* fn)
+        {
+            const wxl_handle pipeline = ToRenderResource(L, index, RenderResource::pipeline);
+            if (pipeline == WXL_HANDLE_NONE)
+                luaL_error(L, "%s: 'pipeline' (argument %d) must be a pipeline of wxl.render, not given back", fn, index);
+            return pipeline;
+        }
+
+        uint32_t CheckRenderCount(lua_State* L, int index, const char* fn, const char* name)
+        {
+            if (lua_isnoneornil(L, index)) luaL_error(L, "%s: '%s' (argument %d) is missing; it takes a whole number", fn, name, index);
+            const double value = luaL_checknumber(L, index);
+            if (value < 0.0 || value > 4294967295.0 || value != static_cast<double>(static_cast<uint32_t>(value)))
+                luaL_error(L, "%s: '%s' (argument %d) must be a whole number from 0", fn, name, index);
+            return static_cast<uint32_t>(value);
+        }
+
+        int PushOk(lua_State* L, wxl_result result)
+        {
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// Draw(pipeline, vertex_count, instance_count [, push])
+        int L_RenderDraw(lua_State* L)
+        {
+            const char*      fn       = "wxl.render.Draw";
+            const wxl_handle pipeline = CheckPipeline(L, 1, fn);
+            const uint32_t   vertices = CheckRenderCount(L, 2, fn, "vertex_count");
+            const uint32_t   copies   = lua_isnoneornil(L, 3) ? 1u : CheckRenderCount(L, 3, fn, "instance_count");
+            std::string      push;
+            ReadPush(L, 4, push, "wxl.render.Draw: 'push' (argument 4)");
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::draw)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            return PushOk(L, api->draw(pipeline, vertices, copies, push.empty() ? nullptr : push.data(), static_cast<uint32_t>(push.size())));
+        }
+
+        /// DrawIndexed(pipeline, indices, first_index, index_count, instance_count [, push])
+        int L_RenderDrawIndexed(lua_State* L)
+        {
+            const char*      fn       = "wxl.render.DrawIndexed";
+            const wxl_handle pipeline = CheckPipeline(L, 1, fn);
+            const wxl_handle indices  = ToRenderResource(L, 2, RenderResource::buffer);
+            if (indices == WXL_HANDLE_NONE) luaL_error(L, "%s: 'indices' (argument 2) must be a buffer of wxl.render, not given back", fn);
+            const uint32_t first  = CheckRenderCount(L, 3, fn, "first_index");
+            const uint32_t count  = CheckRenderCount(L, 4, fn, "index_count");
+            const uint32_t copies = lua_isnoneornil(L, 5) ? 1u : CheckRenderCount(L, 5, fn, "instance_count");
+            std::string    push;
+            ReadPush(L, 6, push, "wxl.render.DrawIndexed: 'push' (argument 6)");
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::draw_indexed)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            return PushOk(L, api->draw_indexed(pipeline, indices, first, count, copies, push.empty() ? nullptr : push.data(),
+                                               static_cast<uint32_t>(push.size())));
+        }
+
+        /// Fullscreen(pipeline [, push])
+        int L_RenderFullscreen(lua_State* L)
+        {
+            const wxl_handle pipeline = CheckPipeline(L, 1, "wxl.render.Fullscreen");
+            std::string      push;
+            ReadPush(L, 2, push, "wxl.render.Fullscreen: 'push' (argument 2)");
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::fullscreen)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            return PushOk(L, api->fullscreen(pipeline, push.empty() ? nullptr : push.data(), static_cast<uint32_t>(push.size())));
+        }
+
+        /// DrawBatch(batch, pipeline [, constants])
+        int L_RenderDrawBatch(lua_State* L)
+        {
+            const char* fn = "wxl.render.DrawBatch";
+            if (lua_type(L, 1) != LUA_TLIGHTUSERDATA)
+                luaL_error(L, "%s: 'batch' (argument 1) must be a batch: OnModelBatchDrawn's, or one KeepBatch answered", fn);
+            const void*      batch    = lua_touserdata(L, 1);
+            const wxl_handle pipeline = CheckPipeline(L, 2, fn);
+            std::string      constants;
+            ReadPush(L, 3, constants, "wxl.render.DrawBatch: 'constants' (argument 3)");
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::draw_batch)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            return PushOk(L, api->draw_batch(batch, pipeline, constants.empty() ? nullptr : constants.data(),
+                                             static_cast<uint32_t>(constants.size())));
+        }
+
+        /// The client shaders a Lua mod replaced: the runtime sees them as wxl.lua's, by name and stage.
+        struct Replaced
+        {
+            ScriptMod*  mod;
+            std::string name;
+            uint32_t    stage;
+        };
+        std::vector<Replaced> g_replaced;
+
+        uint32_t CheckStage(lua_State* L, int index, const char* fn)
+        {
+            const uint32_t stage = CheckRenderCount(L, index, fn, "stage");
+            if (stage > 1) luaL_error(L, "%s: 'stage' (argument %d) must be 0 (vertex) or 1 (pixel)", fn, index);
+            return stage;
+        }
+
+        /// ReplaceShader(name, stage, spirv): spirv the bytes, or a .spv file of the mod's folder.
+        int L_RenderReplaceShader(lua_State* L)
+        {
+            ScriptMod&  mod  = Self(L);
+            const char* fn   = "wxl.render.ReplaceShader";
+            size_t      size = 0;
+            if (lua_type(L, 1) != LUA_TSTRING) luaL_error(L, "%s: 'name' (argument 1) must be a shader's name, or the start of names", fn);
+            const char*    text  = lua_tolstring(L, 1, &size);
+            const uint32_t stage = CheckStage(L, 2, fn);
+            if (lua_isnoneornil(L, 3)) luaL_error(L, "%s: 'spirv' (argument 3) is missing; it takes SPIR-V", fn);
+            std::string spirv;
+            ReadSpirv(L, mod, 3, spirv, "wxl.render.ReplaceShader: 'spirv' (argument 3)");
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::replace_shader)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const std::string name(text, size);
+            const wxl_result  result = api->replace_shader(Str(name), stage, spirv.data(), static_cast<uint32_t>(spirv.size()));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            for (Replaced& held : g_replaced)
+                if (held.name == name && held.stage == stage)
+                {
+                    held.mod = &mod; // the last Lua mod to replace it holds it
+                    lua_pushboolean(L, 1);
+                    return 1;
+                }
+            g_replaced.push_back(Replaced{&mod, name, stage});
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// RestoreShader(name, stage)
+        int L_RenderRestoreShader(lua_State* L)
+        {
+            ScriptMod&  mod  = Self(L);
+            const char* fn   = "wxl.render.RestoreShader";
+            size_t      size = 0;
+            if (lua_type(L, 1) != LUA_TSTRING) luaL_error(L, "%s: 'name' (argument 1) must be the name ReplaceShader was given", fn);
+            const std::string name(lua_tolstring(L, 1, &size), size);
+            const uint32_t    stage = CheckStage(L, 2, fn);
+            const auto held = std::find_if(g_replaced.begin(), g_replaced.end(), [&](const Replaced& r) {
+                return r.mod == &mod && r.name == name && r.stage == stage;
+            });
+            if (held == g_replaced.end()) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            g_replaced.erase(held);
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::restore_shader)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            return PushOk(L, api->restore_shader(Str(name), stage));
+        }
+
+        /// A Lua mod's replaced shaders get the client's programs back.
+        void RestoreShaders(ScriptMod& mod)
+        {
+            const wxl_render_api* api = Render();
+            for (size_t i = g_replaced.size(); i-- > 0;)
+            {
+                if (g_replaced[i].mod != &mod) continue;
+                if (api && wxl::detail::Carries(api, &wxl_render_api::restore_shader))
+                    api->restore_shader(Str(g_replaced[i].name), g_replaced[i].stage);
+                g_replaced.erase(g_replaced.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
     } // namespace
 
     lua_CFunction Find(std::string_view service, std::string_view name)
@@ -2490,6 +2957,14 @@ namespace wxl::lua::shims
         if (service == "texture" && name == "Stats") return &L_TextureStats;
         if (service == "cvar" && name == "Register") return &L_CVarRegister;
         if (service == "cvar" && name == "Release") return &L_CVarRelease;
+        if (service == "render" && name == "CreatePipeline") return &L_RenderCreatePipeline;
+        if (service == "render" && name == "Begin") return &L_RenderBegin;
+        if (service == "render" && name == "Draw") return &L_RenderDraw;
+        if (service == "render" && name == "DrawIndexed") return &L_RenderDrawIndexed;
+        if (service == "render" && name == "Fullscreen") return &L_RenderFullscreen;
+        if (service == "render" && name == "DrawBatch") return &L_RenderDrawBatch;
+        if (service == "render" && name == "ReplaceShader") return &L_RenderReplaceShader;
+        if (service == "render" && name == "RestoreShader") return &L_RenderRestoreShader;
         if (service == "profile" && name == "Begin") return &profile::L_Begin;
         if (service == "profile" && name == "End") return &profile::L_End;
         if (service == "profile" && name == "Text") return &profile::L_Text;
@@ -2502,6 +2977,7 @@ namespace wxl::lua::shims
         ReleaseViewAndPointer(mod);
         ReleaseStorage(mod);
         ReleaseRelay(mod);
+        RestoreShaders(mod);
         for (size_t i = g_folders.size(); i-- > 0;)
             if (std::find(g_folders[i].holders.begin(), g_folders[i].holders.end(), &mod) != g_folders[i].holders.end())
                 LetGo(i, mod);

@@ -1302,6 +1302,14 @@
 ---arrives as its number.
 ---@alias wxl.InterfaceSignature "missing"|"corrupt"|"modified"|"signed"
 
+---A wxl_gx_backend value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.GxBackend "none"|"d3d9"|"d3d9ex"|"opengl"|"vulkan"
+
+---A wxl_render_point value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.RenderPoint "after_opaque_world"|"after_liquids"|"after_world"|"after_ui"
+
 -- The script families. A function defined on one of these tables as On<Event> is
 -- subscribed when the entry file has run and called with the event's parameters;
 -- on an event that can be answered its return values are taken, as Override
@@ -1331,9 +1339,10 @@ WorldScript = {}
 ---@field OnUiRenderEnd fun(self: RenderScript, index: integer, delta: number)
 ---@field OnSwapchainLost fun(self: RenderScript, width: integer, height: integer)
 ---@field OnSwapchainRestored fun(self: RenderScript, width: integer, height: integer)
----@field OnModelBatchDrawn fun(self: RenderScript, model: lightuserdata|nil, root_model: lightuserdata|nil, primitive_type: integer, base_vertex: integer, min_index: integer, vertex_count: integer, start_index: integer, primitive_count: integer, blend_mode: integer, viewport_x: integer, viewport_y: integer, viewport_width: integer, viewport_height: integer, viewport_min_z: number, viewport_max_z: number)
+---@field OnModelBatchDrawn fun(self: RenderScript, model: lightuserdata|nil, root_model: lightuserdata|nil, primitive_type: integer, base_vertex: integer, min_index: integer, vertex_count: integer, start_index: integer, primitive_count: integer, blend_mode: integer, viewport_x: integer, viewport_y: integer, viewport_width: integer, viewport_height: integer, viewport_min_z: number, viewport_max_z: number, batch: lightuserdata|nil)
 ---@field OnCameraUpdate fun(self: RenderScript, index: integer, delta: number)
 ---@field OnImGuiFrame fun(self: RenderScript, index: integer, delta: number)
+---@field OnRenderPoint fun(self: RenderScript, point: wxl.RenderPoint|integer, frame: integer, width: integer, height: integer, samples: integer)
 RenderScript = {}
 
 ---@class ObjectScript
@@ -1643,7 +1652,7 @@ SocialScript = {}
 ---@overload fun(family: "AssetScript", method: "OnSkinProfileParsed", handler: fun(path: string, file: lightuserdata|nil, header: lightuserdata|nil, skin: lightuserdata|nil)): integer
 ---@overload fun(family: "AssetScript", method: "OnModelSequenceLoad", handler: fun(path: string, file: lightuserdata|nil, sequence_index: integer, data: wxl.Bytes)): integer
 ---@overload fun(family: "ObjectScript", method: "OnAppearanceChanged", handler: fun(change: wxl.AppearanceChange|integer, wearer: lightuserdata|nil, model: lightuserdata|nil, race_id: integer, sex_id: integer, item_slot: integer, display_id: integer, npc: boolean)): integer
----@overload fun(family: "RenderScript", method: "OnModelBatchDrawn", handler: fun(model: lightuserdata|nil, root_model: lightuserdata|nil, primitive_type: integer, base_vertex: integer, min_index: integer, vertex_count: integer, start_index: integer, primitive_count: integer, blend_mode: integer, viewport_x: integer, viewport_y: integer, viewport_width: integer, viewport_height: integer, viewport_min_z: number, viewport_max_z: number)): integer
+---@overload fun(family: "RenderScript", method: "OnModelBatchDrawn", handler: fun(model: lightuserdata|nil, root_model: lightuserdata|nil, primitive_type: integer, base_vertex: integer, min_index: integer, vertex_count: integer, start_index: integer, primitive_count: integer, blend_mode: integer, viewport_x: integer, viewport_y: integer, viewport_width: integer, viewport_height: integer, viewport_min_z: number, viewport_max_z: number, batch: lightuserdata|nil)): integer
 ---@overload fun(family: "AssetScript", method: "OnFileMissing", handler: fun(path: string, kind: wxl.AssetKind|integer, open: boolean, pending: boolean, loader: boolean)): integer
 ---@overload fun(family: "WorldScript", method: "OnMouseMotion", handler: fun(dx: integer, dy: integer)): integer
 ---@overload fun(family: "WorldScript", method: "OnMouseWheel", handler: fun(delta: number, handled: boolean|nil)): integer
@@ -1652,6 +1661,7 @@ SocialScript = {}
 ---@overload fun(family: "WorldScript", method: "OnWorldClickRequest", handler: fun(button: wxl.MouseButton|integer, hit: wxl.WorldHit|integer, object: wxl.Object|nil, object_guid: wxl.Guid, point: wxl.Vec3, targeting: boolean, refused: boolean|nil)): integer
 ---@overload fun(family: "LuaScript", method: "OnInterfaceSignature", handler: fun(file: string, extra: string, verdict: wxl.InterfaceSignature|integer, accepted: boolean|nil)): integer
 ---@overload fun(family: "LuaScript", method: "OnInterfaceCleanupRequest", handler: fun(refused: boolean|nil)): integer
+---@overload fun(family: "RenderScript", method: "OnRenderPoint", handler: fun(point: wxl.RenderPoint|integer, frame: integer, width: integer, height: integer, samples: integer)): integer
 ---@param family wxl.Family
 ---@param method string
 ---@param handler function
@@ -2651,6 +2661,59 @@ function Model:SetAlpha(alpha) end
 ---@param emitting boolean
 function Model:SetEmitting(emitting) end
 
+---A Image of wxl.render.
+---@class wxl.Image
+local Image = {}
+
+---Gives the image back; one the mod lets go of is given back for it.
+function Image:DestroyImage() end
+
+---The image's index in the bindless table, what a program samples it by.
+---@return integer|nil
+---@return string|nil reason
+function Image:ImageSlot() end
+
+---The image's width in pixels now.
+---@return integer|nil
+---@return string|nil reason
+function Image:ImageWidth() end
+
+---The image's height in pixels now.
+---@return integer|nil
+---@return string|nil reason
+function Image:ImageHeight() end
+
+---A Buffer of wxl.render.
+---@class wxl.Buffer
+local Buffer = {}
+
+---Gives the buffer back; one the mod lets go of is given back for it.
+function Buffer:DestroyBuffer() end
+
+---Copies a string of bytes into the buffer at an offset, before the frame's first draw.
+---@param offset integer
+---@param data string the bytes, as a string
+---@return true|nil ok
+---@return string|nil reason
+function Buffer:WriteBuffer(offset, data) end
+
+---The buffer's address on the GPU, for a program's buffer reference.
+---@return integer|nil
+---@return string|nil reason
+function Buffer:BufferAddress() end
+
+---A Pipeline of wxl.render.
+---@class wxl.Pipeline
+local Pipeline = {}
+
+---Gives the pipeline back; one the mod lets go of is given back for it.
+function Pipeline:DestroyPipeline() end
+
+---Whether the pipeline draws now.
+---@return boolean|nil
+---@return string|nil reason
+function Pipeline:PipelineReady() end
+
 ---wxl.script. The client's own script: functions and events added to it, text run in it.
 ---@class wxl.script
 local script = {}
@@ -3019,6 +3082,17 @@ function profile.Message(text) end
 ---@param name string
 function profile.FrameMark(name) end
 
+---Came with abi 0.1.33: a mod whose mod.json asks for an older abi cannot use it.
+---Opens a zone of the GPU's time named name around the commands the mod records inside RenderPoint, on the Vulkan renderer.
+---@param name string
+---@return true|nil ok
+---@return string|nil reason
+function profile.GpuZoneBegin(name) end
+
+---Came with abi 0.1.33: a mod whose mod.json asks for an older abi cannot use it.
+---Closes the innermost GPU zone the mod opened.
+function profile.GpuZoneEnd() end
+
 ---wxl.action. What the player can do, through the client's own functions: target, interact, cast, use, follow, move. Main thread only.
 ---Came with abi 0.1.18: a mod whose mod.json asks for an older abi cannot use it.
 ---@class wxl.action
@@ -3171,6 +3245,18 @@ function m2.AttachmentWorld(model, attachment) end
 ---@return number|nil
 ---@return string|nil reason
 function m2.GroundHeight(at, up, down) end
+
+---wxl.gx. Which device the client draws with, and its Direct3D 9 device for a mod that draws with it.
+---Came with abi 0.1.20: a mod whose mod.json asks for an older abi cannot use it.
+---Raw: present only when the mod's mod.json declares it, in "requires" or "optional".
+---@class wxl.gx
+local gx = {}
+
+---Came with abi 0.1.33: a mod whose mod.json asks for an older abi cannot use it.
+---The API the client's device runs on: none, d3d9, d3d9ex, opengl or vulkan.
+---@return wxl.GxBackend|integer|nil
+---@return string|nil reason
+function gx.Api() end
 
 ---wxl.engine. The client's own structures as this runtime lays them out.
 ---Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
@@ -3664,6 +3750,148 @@ function cvar.Reset(name) end
 ---@return string|nil reason
 function cvar.Flags(name) end
 
+---wxl.render. Drawing into the client's frame on the Vulkan renderer: images, buffers and pipelines of the mod's own, its passes at the points of the frame, the client's model batches drawn again. Main thread only.
+---Came with abi 0.1.33: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.render
+local render = {}
+
+---Whether the client draws through a device this service drives: the Vulkan renderer.
+---@return boolean|nil
+---@return string|nil reason
+function render.Supported() end
+
+---Why it does not, in a sentence for a log; empty when it does.
+---@return string|nil
+---@return string|nil reason
+function render.UnsupportedReason() end
+
+---An image of a size, a format (1 rgba8, 2 bgra8 the frame's, 3 r8, 4 rg8, 5 r16f, 6 rg16f, 7 rgba16f, 8 r32f, 9 rgba32f, 10 depth32f) and samples per pixel (0: the frame's own, 1 for one), a render target and a texture.
+---@param width integer
+---@param height integer
+---@param format integer
+---@param samples integer
+---@return wxl.Image|nil
+---@return string|nil reason
+function render.CreateImage(width, height, format, samples) end
+
+---An image of the frame's size divided by divisor (1 the full size), format and samples as CreateImage's, made again when the frame's size changes.
+---@param divisor integer
+---@param format integer
+---@param samples integer
+---@return wxl.Image|nil
+---@return string|nil reason
+function render.CreateScreenImage(divisor, format, samples) end
+
+---A buffer of size bytes, read by a program through its address, or as a draw's 32-bit indices.
+---@param size integer
+---@return wxl.Buffer|nil
+---@return string|nil reason
+function render.CreateBuffer(size) end
+
+---The index in the bindless table of a sampler: SAMPLER_LINEAR, SAMPLER_WRAP and SAMPLER_MIPS added together, 0 for nearest and clamped.
+---@param flags integer
+---@return integer|nil
+---@return string|nil reason
+function render.Sampler(flags) end
+
+---A pipeline of the mod's SPIR-V and the state it draws with, compiled now; nil and why when the
+---device refuses it. `vertex`/`fragment`: SPIR-V bytes, or the path of a .spv file of the mod's
+---folder. `kind`: "graphics" (vertex and fragment, vertices read from buffers), "fullscreen"
+---(fragment over the pass, `uv` at location 0), "batch" (fragment behind a client batch).
+---`colors`: formats ("rgba8", "bgra8" the frame's, "r8", "rg8", "r16f", "rg16f",
+---"rgba16f", "r32f", "rgba32f"), the frame's by default. `depth`: "depth32f" or nil.
+---`samples`: 0 the frame's, 1, 2, 4, 8. `blend`: "none", "alpha", "add", "premultiplied",
+---"multiply", one or one per colour. `depth_test`: "off", "less", "less_equal", "equal",
+---"greater", "greater_equal", "always". `cull`: "none", "back", "front", "batch".
+---`topology`: "triangles", "triangle_strip", "lines", "points".
+---@param desc {kind: string?, name: string?, vertex: string?, fragment: string, colors: string|string[]?, depth: string?, samples: integer?, blend: string|string[]?, depth_test: string?, depth_write: boolean?, cull: string?, topology: string?}
+---@return wxl.Pipeline|nil pipeline
+---@return string|nil reason
+function render.CreatePipeline(desc) end
+
+---Opens a pass inside OnRenderPoint: what the draws until End go into. `colors`: Images,
+---"scene_color" (the frame's colour), or {image, clear = {r, g, b, a}}; `depth`: an Image,
+---"scene_depth" (the frame's depth), or {image, clear = z}. Every attachment has one size.
+---@param pass {colors: (wxl.Image|string|table)[]?, depth: wxl.Image|string|table|nil}
+---@return true|nil ok
+---@return string|nil reason
+function render.Begin(pass) end
+
+---Closes the pass; the frame goes on.
+function render.End() end
+
+---Draws `vertex_count` vertices `instance_count` times (1 when nil) with a graphics pipeline.
+---`push`: a table of numbers (each a 32-bit float) or a string of bytes, up to 128 bytes; nil for none.
+---@param pipeline wxl.Pipeline
+---@param vertex_count integer
+---@param instance_count? integer
+---@param push? number[]|string
+---@return true|nil ok
+---@return string|nil reason
+function render.Draw(pipeline, vertex_count, instance_count, push) end
+
+---Draws `index_count` 32-bit indices of a buffer from `first_index`, `instance_count` times.
+---`push`: a table of numbers (each a 32-bit float) or a string of bytes, up to 128 bytes; nil for none.
+---@param pipeline wxl.Pipeline
+---@param indices wxl.Buffer
+---@param first_index integer
+---@param index_count integer
+---@param instance_count? integer
+---@param push? number[]|string
+---@return true|nil ok
+---@return string|nil reason
+function render.DrawIndexed(pipeline, indices, first_index, index_count, instance_count, push) end
+
+---Draws a fullscreen pipeline over the pass.
+---`push`: a table of numbers (each a 32-bit float) or a string of bytes, up to 128 bytes; nil for none.
+---@param pipeline wxl.Pipeline
+---@param push? number[]|string
+---@return true|nil ok
+---@return string|nil reason
+function render.Fullscreen(pipeline, push) end
+
+---Draws a client batch (OnModelBatchDrawn's `batch`, or one KeepBatch answered) again with a batch
+---pipeline, into the open pass. `constants`: as Draw's push, up to 4096 bytes, read at pc.pixelRegs.
+---@param batch lightuserdata
+---@param pipeline wxl.Pipeline
+---@param constants? number[]|string
+---@return true|nil ok
+---@return string|nil reason
+function render.DrawBatch(batch, pipeline, constants) end
+
+---A copy of ModelBatchDrawn's batch, to draw later in the same frame; nil when none can be kept.
+---@param batch lightuserdata|wxl.Model an address an event or a call handed you
+---@return lightuserdata|nil address
+---@return string|nil reason
+function render.KeepBatch(batch) end
+
+---The frame's colour as drawn so far, copied into a texture: its index in the bindless table, inside RenderPoint.
+---@return integer|nil
+---@return string|nil reason
+function render.SceneColorSlot() end
+
+---The frame's depth as drawn so far, as a one-channel texture: its index in the bindless table, inside RenderPoint.
+---@return integer|nil
+---@return string|nil reason
+function render.SceneDepthSlot() end
+
+---Gives the client's shaders named `name` (or starting with it) the mod's SPIR-V for `stage` (0 vertex,
+---1 pixel): bytes, or a .spv file of the mod's folder. Kept until RestoreShader, or until the mod is
+---disabled, reloads or unloads; the last Lua mod to replace a name holds it.
+---@param name string
+---@param stage integer
+---@param spirv string
+---@return true|nil ok
+---@return string|nil reason
+function render.ReplaceShader(name, stage, spirv) end
+
+---Gives a shader this mod replaced its own program back; nil, "not_found" for one it did not replace.
+---@param name string
+---@param stage integer
+---@return true|nil ok
+---@return string|nil reason
+function render.RestoreShader(name, stage) end
+
 ---@class wxl.ModInfo
 ---@field id string
 ---@field name string
@@ -3736,6 +3964,7 @@ function object.Unwatch(type, name) end
 ---@field action wxl.action
 ---@field point wxl.point
 ---@field m2 wxl.m2
+---@field gx wxl.gx
 ---@field engine wxl.engine
 ---@field relay wxl.relay
 ---@field camera wxl.camera
@@ -3746,6 +3975,7 @@ function object.Unwatch(type, name) end
 ---@field selectioncircle wxl.selectioncircle
 ---@field texture wxl.texture
 ---@field cvar wxl.cvar
+---@field render wxl.render
 ---@field events table<wxl.Family, string[]> every family's events, as On<Event>
 wxl = {}
 

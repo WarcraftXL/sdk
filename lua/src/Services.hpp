@@ -38,6 +38,21 @@ namespace wxl::lua
 
     /// nil and ReasonOf(result): what a call that failed answers. Returns 2.
     int PushResultFailure(lua_State* L, wxl_result result);
+
+    /// wxl.render's resources, which its shims hand out and read as the generated rows do.
+    enum class RenderResource
+    {
+        image,
+        buffer,
+        pipeline,
+    };
+
+    /// Pushes a wxl.<Image|Buffer|Pipeline> box holding @p value, given back when collected.
+    void PushRenderResource(lua_State* L, RenderResource kind, wxl_handle value);
+
+    /// The handle of the box of that kind at @p index; WXL_HANDLE_NONE for anything else, or one
+    /// given back already.
+    wxl_handle ToRenderResource(lua_State* L, int index, RenderResource kind);
 } // namespace wxl::lua
 
 #endif // WXL_LUA_SERVICES_HPP

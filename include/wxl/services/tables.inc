@@ -29,3 +29,5 @@
 #include "wxl/services/selectioncircle.def"
 #include "wxl/services/texture.def"
 #include "wxl/services/cvar.def"
+#include "wxl/services/render.def"
+#include "wxl/services/vk.def"

@@ -28,9 +28,11 @@
 #include "wxl/services/pose.hpp"
 #include "wxl/services/profile.hpp"
 #include "wxl/services/relay.hpp"
+#include "wxl/services/render.hpp"
 #include "wxl/services/script.hpp"
 #include "wxl/services/storage.hpp"
 #include "wxl/services/ui.hpp"
+#include "wxl/services/vk.hpp"
 #include "wxl/services/world.hpp"
 
 #endif // WXL_SERVICES_HPP

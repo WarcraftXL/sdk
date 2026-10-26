@@ -27,6 +27,11 @@ WXL_API(profile, message, Message, none, (str text), generated, generated,
         "A line of text on the timeline, now.")
 WXL_API(profile, frame_mark, FrameMark, none, (str name), generated, generated,
         "Ends a frame of a frame set of the mod's own, drawn beside the client's frames.")
+WXL_API_SINCE(profile, gpu_zone_begin, (0, 1, 33))
+WXL_API(profile, gpu_zone_begin, GpuZoneBegin, result, (str name), generated, generated,
+        "Opens a zone of the GPU's time named name around the commands the mod records inside RenderPoint, on the Vulkan renderer.")
+WXL_API(profile, gpu_zone_end, GpuZoneEnd, none, (), generated, generated,
+        "Closes the innermost GPU zone the mod opened.")
 
 // MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
 // guarded by X, and skips it when it is included again with X defined: this table is read

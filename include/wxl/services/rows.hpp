@@ -64,6 +64,9 @@
 //   bones_fn wxl_m2_bones_fn: what wxl.m2's bone watchers take; no script reaches them
 //   texture_request const wxl_texture_request*: what wxl.texture makes a texture of; a script
 //       passes the source, the size, a table of groups and a tint, C++ a wxl::TextureRequest
+//   render_pipeline const wxl_render_pipeline_desc*: what wxl.render makes a pipeline of; a
+//       script passes a table (its shim reads the SPIR-V from the mod's folder)
+//   render_pass const wxl_render_pass*: what a wxl.render pass draws into; a script passes a table
 //   provider const wxl_asset_provider*  transform const wxl_asset_transform*: what a native
 //       mod hands wxl.storage; no script reaches a row taking one
 //   hash_fn wxl_file_hash_fn  relay_endpoint const wxl_relay_endpoint*
@@ -120,6 +123,8 @@
 #include "wxl/services/selectioncircle.h"
 #include "wxl/services/texture.h"
 #include "wxl/services/cvar.h"
+#include "wxl/services/render.h"
+#include "wxl/services/vk.h"
 #include "wxl/services/m2.h"
 #include "wxl/services/m2file.h"
 #include "wxl/services/relay.h"
@@ -174,6 +179,8 @@ namespace wxl::api
         struct bones_filter_fn {};
         struct bones_fn {};
         struct texture_request {};
+        struct render_pipeline {};
+        struct render_pass {};
         struct texture {};
         struct texture_stats {};
         template <class K>
@@ -283,6 +290,8 @@ namespace wxl::api
     template <> struct Param<kind::bones_filter_fn> { using C = List<wxl_m2_bones_filter_fn>; };
     template <> struct Param<kind::bones_fn> { using C = List<wxl_m2_bones_fn>; };
     template <> struct Param<kind::texture_request> { using C = List<const wxl_texture_request*>; };
+    template <> struct Param<kind::render_pipeline> { using C = List<const wxl_render_pipeline_desc*>; };
+    template <> struct Param<kind::render_pass> { using C = List<const wxl_render_pass*>; };
     template <class R>
     struct Param<R, std::enable_if_t<IsResource<R>::value>>
     {
@@ -786,6 +795,31 @@ namespace wxl::api
     {
         using type = const void*;
         static const void* ToC(const void* value) { return value; }
+    };
+    /// Bytes are their address and their length, two parameters in C++ as in C.
+    template <>
+    struct CxxParam<kind::bytes>
+    {
+        using type = const void*;
+        static const void* ToC(const void* value) { return value; }
+    };
+    template <>
+    struct CxxParam<kind::bytes_size>
+    {
+        using type = uint32_t;
+        static uint32_t ToC(uint32_t value) { return value; }
+    };
+    template <>
+    struct CxxParam<kind::render_pipeline>
+    {
+        using type = const wxl_render_pipeline_desc&;
+        static const wxl_render_pipeline_desc* ToC(const wxl_render_pipeline_desc& value) { return &value; }
+    };
+    template <>
+    struct CxxParam<kind::render_pass>
+    {
+        using type = const wxl_render_pass&;
+        static const wxl_render_pass* ToC(const wxl_render_pass& value) { return &value; }
     };
     /// A resource is its C value in C++: what the row that handed it out answered.
     template <class R>

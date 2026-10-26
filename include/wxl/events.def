@@ -574,6 +574,16 @@ WXL_EVENT(Lua, InterfaceSignature,      146, wxl_interface_signature_args)
     renamed to <name>.old. A handler may refuse it, and the folders stay where they are. */
 WXL_EVENT(Lua, InterfaceCleanupRequest, 147, wxl_interface_cleanup_args)
 
+// --- Points of the frame where mods draw -------------------------------------------------------
+
+WXL_EVENTS_SINCE(0, 1, 33, 148)
+
+/** A point of the frame (wxl_render_point) where a mod draws: on the Vulkan renderer through
+    wxl.render (its passes, its pipelines, the batches it kept), on Direct3D 9 through wxl.gx's
+    device. Raised at each point while a mod listens, with the size the frame is drawn at. Main
+    thread, inside the frame. */
+WXL_EVENT(Render, RenderPoint,     148, wxl_render_point_args)
+
 // Give back whatever was defaulted above, so the file can be included again right after with a
 // different selector. What the consumer defined itself is left alone: undefining it here would
 // break the consumer that includes the table twice on purpose.

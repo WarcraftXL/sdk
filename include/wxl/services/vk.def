@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.vk as data: one row per member of wxl_vk_api, in member order. The shapes and their columns
+// are described in wxl/services/rows.hpp.
+//
+// Every member is the device's own: no script reaches them.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including vk.def"
+#endif
+
+WXL_API_SERVICE(vk, WXL_VK_SERVICE, WXL_VK_SERVICE_VERSION, (0, 1, 33), raw,
+                "The runtime's Vulkan device and the frame's command buffer, for a mod that records commands of its own.")
+
+WXL_API(vk, instance, Instance, ptr, (), native, generated, "")
+WXL_API(vk, physical_device, PhysicalDevice, ptr, (), native, generated, "")
+WXL_API(vk, device, Device, ptr, (), native, generated, "")
+WXL_API(vk, queue, Queue, ptr, (), native, generated, "")
+WXL_API(vk, queue_family, QueueFamily, u32, (), native, generated, "")
+WXL_API(vk, get_instance_proc_addr, GetInstanceProcAddr, ptr, (), native, generated, "")
+WXL_API(vk, api_version, ApiVersion, u32, (), native, generated, "")
+WXL_API(vk, command_buffer, CommandBuffer, ptr, (), native, generated, "")
+WXL_API(vk, image, Image, out<u64>, (u64 image, boolean resolved), native, generated, "")
+WXL_API(vk, image_view, ImageView, out<u64>, (u64 image, boolean resolved), native, generated, "")
+WXL_API(vk, buffer, Buffer, out<u64>, (u64 buffer), native, generated, "")
+WXL_API(vk, scene_color, SceneColor, out<u64>, (), native, generated, "")
+WXL_API(vk, scene_depth, SceneDepth, out<u64>, (), native, generated, "")
+WXL_API(vk, frame, Frame, out<u64>, (), native, generated, "")
+WXL_API(vk, frames_completed, FramesCompleted, out<u64>, (), native, generated, "")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif
