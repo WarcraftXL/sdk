@@ -2411,6 +2411,9 @@ print("head " .. tostring(wxl.pose.Head(wxl.object.LocalPlayer(), 0.5, 0.1, 0.1)
       tostring(wxl.pose.ReleaseHead(wxl.object.LocalPlayer())) .. " " ..
       tostring(wxl.pose.Head(wxl.object.LocalPlayer(), 0.25, 0, 0)))
 print("missing " .. tostring(select(2, pcall(function() return wxl.camera.SetView({ x = 1, y = 2, z = 3 }) end))))
+print("lit " .. tostring(wxl.highlight.Set(wxl.object.LocalPlayer(), 0xFFE03030, 3, 12, 0.5)) .. " " ..
+      tostring(wxl.highlight.Supported()) .. " " .. wxl.highlight.Drawn() .. " [" .. wxl.highlight.UnsupportedReason() .. "]")
+print("lit colour " .. tostring(select(2, pcall(function() return wxl.highlight.Set(wxl.object.LocalPlayer(), -1, 1, 1, 1) end))))
 Observe("WorldScript", "OnMouseMotion", function(dx, dy) print("motion " .. dx .. " " .. dy) end)
 Override("WorldScript", "OnMouseWheel", function(delta) print("wheel " .. delta) return true end)
 Observe("RenderScript", "OnCameraUpdate", function(index, delta) print("camera " .. index) end)
@@ -2423,6 +2426,7 @@ end)
         WriteFile(mods / "aim-b" / "init.lua", R"(
 print("b set " .. tostring(wxl.camera.SetView({ x = 9, y = 9, z = 9 }, { x = 0, y = 1, z = 0 }, 1.2)))
 print("b capture " .. tostring(wxl.input.CaptureCursor(true)))
+print("b unlit " .. tostring(select(2, wxl.highlight.Clear(wxl.object.LocalPlayer()))))
 Observe("WorldScript", "OnMouseMotion", function(dx)
     if dx ~= 99 then return end
     print("b release " .. tostring(wxl.camera.ReleaseView()) .. " " .. tostring(wxl.input.CaptureCursor(false)))
@@ -2436,7 +2440,9 @@ end)
         config.services.push_back(PublishedService{WXL_INPUT_SERVICE, WXL_INPUT_SERVICE_VERSION, FakeView::InputTable()});
         config.services.push_back(PublishedService{WXL_WORLD_SERVICE, WXL_WORLD_SERVICE_VERSION, FakeView::WorldTable()});
         config.services.push_back(PublishedService{WXL_POSE_SERVICE, WXL_POSE_SERVICE_VERSION, FakeView::PoseTable()});
+        config.services.push_back(PublishedService{WXL_HIGHLIGHT_SERVICE, WXL_HIGHLIGHT_SERVICE_VERSION, FakeView::HighlightTable()});
         FakeView::Calls().clear();
+        FakeView::HighlightColors().clear();
         wxltest::FakeActions::Calls().clear();
         {
             ModHost host(std::move(config));
@@ -2453,6 +2459,12 @@ end)
                   "BlockMouseLook and Head answer true; releasing a head turned again answers");
             Check(sink.Has("[wxl.aim-a] missing") && sink.Has("'forward' (argument 2) is missing"),
                   "a view without its direction is an error naming it");
+            Check(sink.Has("[wxl.aim-a] lit true true 7 []") && FakeView::HighlightColors().size() == 1 &&
+                      FakeView::HighlightColors()[0] == 0xFFE03030u,
+                  "Set highlights an object with its colour whole; Available, Drawn and UnsupportedReason answer");
+            Check(sink.Has("[wxl.aim-a] lit colour") && sink.Has("'color' (argument 2) must be a whole number") &&
+                      sink.Has("[wxl.aim-b] b unlit not_found"),
+                  "a colour out of range is an error naming it; clearing what the mod did not set is not found");
             const auto& actions = wxltest::FakeActions::Calls();
             Check(!actions.empty() && actions.back().name == "face" && actions.back().point.x == 2.5f,
                   "Face reaches wxl.action");
@@ -2494,17 +2506,19 @@ end)
             host.Shutdown();
         }
         const auto& calls = FakeView::Calls();
-        bool released = false, freed = false, unblocked = false, headReleased = false;
+        bool released = false, freed = false, unblocked = false, headReleased = false, unlit = false;
         for (const auto& call : calls)
         {
             if (call.name == "release_view") released = true;
             if (call.name == "free") freed = true;
             if (call.name == "unblock") unblocked = true;
             if (call.name == "release_head") headReleased = true;
+            if (call.name == "highlight_clear") unlit = true;
         }
         Check(released && freed && FakeView::Captures() == 0,
               "the last mod's view and capture go when it unloads");
         Check(unblocked && headReleased && FakeView::Blocks() == 0, "and so do its block of the mouse look and its heads");
+        Check(unlit, "and its highlights");
         if (g_failures) sink.Dump();
     }
 

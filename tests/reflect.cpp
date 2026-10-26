@@ -513,7 +513,7 @@ int main()
         uint32_t                     serviceCount = 0, rowCount = 0;
         const wxl::api::ServiceRow*  services     = wxl::api::Services(&serviceCount);
         const wxl::api::Row*         rows         = wxl::api::Rows(&rowCount);
-        Check(serviceCount == 20, "twenty service tables: script, storage, data, hook, hook.raw, patch, footprint, profile, point, action, m2file, m2, gx, engine, relay, camera, input, world, pose, imgui");
+        Check(serviceCount == 21, "twenty-one service tables: script, storage, data, hook, hook.raw, patch, footprint, profile, point, action, m2file, m2, gx, engine, relay, camera, input, world, pose, imgui, highlight");
 
         // A service's rows follow each other, from the first member after struct_size to the
         // last, one function pointer apart: a member missing from its table, or one the table

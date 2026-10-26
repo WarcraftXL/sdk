@@ -30,6 +30,7 @@
 #include "wxl/services/input.h"
 #include "wxl/services/world.h"
 #include "wxl/services/pose.h"
+#include "wxl/services/highlight.h"
 #include "wxl/services/imgui.h"
 #include "wxl/services/data.h"
 #include "wxl/services/hook.h"
@@ -622,6 +623,29 @@ namespace wxltest
             Calls().push_back(Call{"release_head", {}, {}, static_cast<double>(unit)});
             return WXL_OK;
         }
+        // wxl.highlight: drawn, with the colour of every set kept apart (a float would round it).
+        static std::vector<uint32_t>& HighlightColors()
+        {
+            static std::vector<uint32_t> colors;
+            return colors;
+        }
+        static wxl_bool WXL_CALL HighlightSupported() { return WXL_TRUE; }
+        static wxl_str WXL_CALL HighlightUnsupportedReason() { return wxl_str{"", 0}; }
+        static wxl_result WXL_CALL HighlightSet(wxl_handle target, uint32_t color, float outline, float glow, float strength)
+        {
+            if (!FakeObjects::Live(target)) return WXL_E_NOT_FOUND;
+            if (!(outline >= 0.0f) || !(glow >= 0.0f) || !(strength >= 0.0f)) return WXL_E_INVALID;
+            Calls().push_back(Call{"highlight_set", {outline, glow, strength}, {}, static_cast<double>(target)});
+            HighlightColors().push_back(color);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL HighlightClear(wxl_handle target)
+        {
+            Calls().push_back(Call{"highlight_clear", {}, {}, static_cast<double>(target)});
+            return WXL_OK;
+        }
+        static void WXL_CALL HighlightClearAll() { Calls().push_back(Call{"highlight_clear_all", {}, {}, 0.0}); }
+        static uint32_t WXL_CALL HighlightDrawn() { return 7; }
         static wxl_str WXL_CALL ImGuiVersion() { return wxl_str{"1.0;0.1", 7}; }
         static void* WXL_CALL ImGuiContext() { return reinterpret_cast<void*>(0x1000); }
         static void* WXL_CALL PlotContext() { return reinterpret_cast<void*>(0x2000); }
@@ -680,6 +704,22 @@ namespace wxltest
                 t.struct_size  = sizeof t;
                 t.head         = &Head;
                 t.release_head = &ReleaseHead;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_highlight_api* HighlightTable()
+        {
+            static const wxl_highlight_api api = [] {
+                wxl_highlight_api t{};
+                t.struct_size        = sizeof t;
+                t.supported          = &HighlightSupported;
+                t.unsupported_reason = &HighlightUnsupportedReason;
+                t.set                = &HighlightSet;
+                t.clear              = &HighlightClear;
+                t.clear_all          = &HighlightClearAll;
+                t.drawn              = &HighlightDrawn;
                 return t;
             }();
             return &api;

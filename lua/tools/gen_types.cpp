@@ -494,6 +494,23 @@ namespace
             return "---Gives a unit's head this mod turned back to its animation; nil, \"not_found\" for one it does not hold.\n"
                    "---@param unit wxl.Object\n---@return true|nil ok\n---@return string|nil reason\n"
                    "function " + owner + ".ReleaseHead(unit) end\n\n";
+        if (std::strcmp(row.service, "highlight") == 0 && name == "Set")
+            return "---Highlights an object until cleared, where it is seen and never through a wall: a sharp outline\n"
+                   "---`outline` pixels wide (up to 16) and a glow fading over `glow` pixels (up to 64), `glow_strength`\n"
+                   "---(0 to 1) bright, both in `color` (0xAARRGGBB); 0 for none. Called again, it changes the style.\n"
+                   "---Kept until Clear, ClearAll, the object leaving view, or the mod disabled, reloaded or unloaded;\n"
+                   "---nil, \"unsupported\" where this runtime does not draw highlights (see UnsupportedReason).\n"
+                   "---@param target wxl.Object\n---@param color integer\n---@param outline number\n"
+                   "---@param glow number\n---@param glow_strength number\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Set(target, color, outline, glow, glow_strength) end\n\n";
+        if (std::strcmp(row.service, "highlight") == 0 && name == "Clear")
+            return "---Takes this mod's highlight off an object; nil, \"not_found\" for one it does not hold.\n"
+                   "---@param target wxl.Object\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Clear(target) end\n\n";
+        if (std::strcmp(row.service, "highlight") == 0 && name == "ClearAll")
+            return "---Takes off every highlight of this mod.\n"
+                   "function " + owner + ".ClearAll() end\n\n";
         if (name == "Begin")
             return "---Opens a zone named `name` on the profiler's timeline, inside the handler or callback running\n"
                    "---now; End closes it. Zones nest. Whatever this call left open is closed when it returns or\n"

@@ -113,6 +113,7 @@
 #include "wxl/services/world.h"
 #include "wxl/services/pose.h"
 #include "wxl/services/imgui.h"
+#include "wxl/services/highlight.h"
 #include "wxl/services/m2.h"
 #include "wxl/services/m2file.h"
 #include "wxl/services/relay.h"

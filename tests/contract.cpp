@@ -1051,6 +1051,7 @@ int main()
         host.Table()->publish_service(WXL_WORLD_SERVICE, WXL_WORLD_SERVICE_VERSION, wxltest::FakeView::WorldTable());
         host.Table()->publish_service(WXL_POSE_SERVICE, WXL_POSE_SERVICE_VERSION, wxltest::FakeView::PoseTable());
         host.Table()->publish_service(WXL_IMGUI_SERVICE, WXL_IMGUI_SERVICE_VERSION, wxltest::FakeView::ImGuiTable());
+        host.Table()->publish_service(WXL_HIGHLIGHT_SERVICE, WXL_HIGHLIGHT_SERVICE_VERSION, wxltest::FakeView::HighlightTable());
     }
 
     Section("reads that can fail");
@@ -1524,6 +1525,30 @@ int main()
         Check(imgui && wxl::View(imgui->version()) == "1.0;0.1" && imgui->context() == reinterpret_cast<void*>(0x1000) &&
                   imgui->plot_context() == reinterpret_cast<void*>(0x2000) && alloc == reinterpret_cast<void*>(0x3000),
               "the runtime's ImGui version, contexts and allocator reach a mod");
+    }
+
+    Section("a highlighted object");
+    {
+        using wxltest::FakeView;
+        using wxltest::FakeObjects;
+        FakeView::Calls().clear();
+        FakeView::HighlightColors().clear();
+        const wxl::Unit boar(FakeObjects::kBoar);
+        Check(wxl::HighlightService::Supported() && wxl::HighlightService::UnsupportedReason().empty(),
+              "the runtime says it draws highlights, with no reason not to");
+        Check(wxl::HighlightService::Set(boar, 0xFFE03030u, 3.0f, 12.0f, 0.5f) == WXL_OK &&
+                  wxl::HighlightService::Set(wxl::Unit(FakeObjects::kStale), 0xFFFFFFFFu, 1.0f, 0.0f, 0.0f) == WXL_E_NOT_FOUND &&
+                  wxl::HighlightService::Set(boar, 0xFF00FF00u, -1.0f, 0.0f, 0.0f) == WXL_E_INVALID,
+              "an object is highlighted; one gone is not found, a negative width refused");
+        Check(wxl::HighlightService::Clear(boar) == WXL_OK && *wxl::HighlightService::Drawn() == 7u, "cleared, and the count drawn read");
+        wxl::HighlightService::ClearAll();
+        const auto& calls = FakeView::Calls();
+        Check(calls.size() == 3 && calls[0].name == "highlight_set" && calls[0].position.x == 3.0f &&
+                  calls[0].position.y == 12.0f && calls[0].position.z == 0.5f &&
+                  calls[0].fov == static_cast<double>(FakeObjects::kBoar) && FakeView::HighlightColors().size() == 1 &&
+                  FakeView::HighlightColors()[0] == 0xFFE03030u && calls[1].name == "highlight_clear" &&
+                  calls[2].name == "highlight_clear_all",
+              "with the object, its colour, its widths and its strength");
     }
 
     Section("objects in handlers, and data kept per object");

@@ -29,6 +29,7 @@
 #include "wxl/services/footprint.h"
 #include "wxl/services/input.h"
 #include "wxl/services/pose.h"
+#include "wxl/services/highlight.h"
 #include "wxl/services/relay.h"
 #include "wxl/services/storage.h"
 
@@ -1627,9 +1628,91 @@ namespace wxl::lua::shims
             return 1;
         }
 
-        /// A mod's view, its hold on the pointer, its block of the mouse look and its heads go with it.
+        // --- wxl.highlight: the objects each Lua mod highlighted -------------------------------
+
+        const wxl_highlight_api* Highlight() { return wxl::api::Table<wxl_highlight_api>(); }
+
+        /// The highlights a Lua mod holds: the runtime sees them as wxl.lua's, one per object.
+        struct Lit
+        {
+            ScriptMod* mod;
+            wxl_handle target;
+        };
+        std::vector<Lit> g_lit;
+
+        float CheckWidth(lua_State* L, int index, const char* name)
+        {
+            if (lua_isnoneornil(L, index))
+                luaL_error(L, "wxl.highlight.Set: '%s' (argument %d) is missing; it takes a number", name, index);
+            return static_cast<float>(luaL_checknumber(L, index));
+        }
+
+        int L_HighlightSet(lua_State* L)
+        {
+            ScriptMod&       mod    = Self(L);
+            const wxl_handle target = CheckObject(L, 1);
+            if (lua_isnoneornil(L, 2)) luaL_error(L, "wxl.highlight.Set: 'color' (argument 2) is missing; it takes 0xAARRGGBB");
+            const double color = luaL_checknumber(L, 2);
+            if (!(color >= 0.0 && color <= 4294967295.0) || color != static_cast<double>(static_cast<uint32_t>(color)))
+                luaL_error(L, "wxl.highlight.Set: 'color' (argument 2) must be a whole number from 0 to 0xFFFFFFFF");
+            const float outline  = CheckWidth(L, 3, "outline");
+            const float glow     = CheckWidth(L, 4, "glow");
+            const float strength = CheckWidth(L, 5, "glow_strength");
+            const wxl_highlight_api* api = Highlight();
+            if (!api || !wxl::detail::Carries(api, &wxl_highlight_api::set)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set(target, static_cast<uint32_t>(color), outline, glow, strength);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            for (Lit& lit : g_lit)
+                if (lit.target == target)
+                {
+                    lit.mod = &mod; // the last Lua mod to set it holds it, as among native mods
+                    lua_pushboolean(L, 1);
+                    return 1;
+                }
+            g_lit.push_back(Lit{&mod, target});
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_HighlightClear(lua_State* L)
+        {
+            ScriptMod&       mod    = Self(L);
+            const wxl_handle target = CheckObject(L, 1);
+            const auto held = std::find_if(g_lit.begin(), g_lit.end(),
+                                           [&](const Lit& lit) { return lit.mod == &mod && lit.target == target; });
+            if (held == g_lit.end()) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            g_lit.erase(held);
+            const wxl_highlight_api* api = Highlight();
+            if (!api || !wxl::detail::Carries(api, &wxl_highlight_api::clear)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->clear(target);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// A Lua mod's highlights are taken off.
+        void ClearHighlights(ScriptMod& mod)
+        {
+            const wxl_highlight_api* api = Highlight();
+            for (size_t i = g_lit.size(); i-- > 0;)
+            {
+                if (g_lit[i].mod != &mod) continue;
+                if (api && wxl::detail::Carries(api, &wxl_highlight_api::clear)) api->clear(g_lit[i].target);
+                g_lit.erase(g_lit.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
+
+        int L_HighlightClearAll(lua_State* L)
+        {
+            ClearHighlights(Self(L));
+            return 0;
+        }
+
+        /// A mod's view, its hold on the pointer, its block of the mouse look, its heads and its
+        /// highlights go with it.
         void ReleaseViewAndPointer(ScriptMod& mod)
         {
+            ClearHighlights(mod);
             LetGoView(mod);
             CaptureFor(mod, false);
             BlockFor(mod, false);
@@ -1673,6 +1756,9 @@ namespace wxl::lua::shims
         if (service == "input" && name == "BlockMouseLook") return &L_BlockMouseLook;
         if (service == "pose" && name == "Head") return &L_Head;
         if (service == "pose" && name == "ReleaseHead") return &L_ReleaseHead;
+        if (service == "highlight" && name == "Set") return &L_HighlightSet;
+        if (service == "highlight" && name == "Clear") return &L_HighlightClear;
+        if (service == "highlight" && name == "ClearAll") return &L_HighlightClearAll;
         if (service == "profile" && name == "Begin") return &profile::L_Begin;
         if (service == "profile" && name == "End") return &profile::L_End;
         if (service == "profile" && name == "Text") return &profile::L_Text;

@@ -3358,6 +3358,49 @@ function pose.Head(unit, yaw, pitch, smoothing) end
 ---@return string|nil reason
 function pose.ReleaseHead(unit) end
 
+---wxl.highlight. A world object outlined and lit by a glow, where it is seen, never through a wall. Main thread only.
+---Came with abi 0.1.27: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.highlight
+local highlight = {}
+
+---Whether this runtime draws highlights on the device it runs now.
+---@return boolean|nil
+---@return string|nil reason
+function highlight.Supported() end
+
+---Why highlights are not drawn, in a sentence for a log; empty when they are.
+---@return string|nil
+---@return string|nil reason
+function highlight.UnsupportedReason() end
+
+---Highlights an object until cleared, where it is seen and never through a wall: a sharp outline
+---`outline` pixels wide (up to 16) and a glow fading over `glow` pixels (up to 64), `glow_strength`
+---(0 to 1) bright, both in `color` (0xAARRGGBB); 0 for none. Called again, it changes the style.
+---Kept until Clear, ClearAll, the object leaving view, or the mod disabled, reloaded or unloaded;
+---nil, "unsupported" where this runtime does not draw highlights (see UnsupportedReason).
+---@param target wxl.Object
+---@param color integer
+---@param outline number
+---@param glow number
+---@param glow_strength number
+---@return true|nil ok
+---@return string|nil reason
+function highlight.Set(target, color, outline, glow, glow_strength) end
+
+---Takes this mod's highlight off an object; nil, "not_found" for one it does not hold.
+---@param target wxl.Object
+---@return true|nil ok
+---@return string|nil reason
+function highlight.Clear(target) end
+
+---Takes off every highlight of this mod.
+function highlight.ClearAll() end
+
+---How many batches of highlighted objects the last frame with highlights drew again.
+---@return integer|nil
+---@return string|nil reason
+function highlight.Drawn() end
+
 ---@class wxl.ModInfo
 ---@field id string
 ---@field name string
@@ -3436,6 +3479,7 @@ function object.Unwatch(type, name) end
 ---@field input wxl.input
 ---@field world wxl.world
 ---@field pose wxl.pose
+---@field highlight wxl.highlight
 ---@field events table<wxl.Family, string[]> every family's events, as On<Event>
 wxl = {}
 
