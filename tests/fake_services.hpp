@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstring>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -34,6 +35,7 @@
 #include "wxl/services/highlight.h"
 #include "wxl/services/selectioncircle.h"
 #include "wxl/services/texture.h"
+#include "wxl/services/cvar.h"
 #include "wxl/services/imgui.h"
 #include "wxl/services/data.h"
 #include "wxl/services/hook.h"
@@ -877,6 +879,156 @@ namespace wxltest
                 t.clear              = &HighlightClear;
                 t.clear_all          = &HighlightClearAll;
                 t.drawn              = &HighlightDrawn;
+                return t;
+            }();
+            return &api;
+        }
+
+        // wxl.cvar: variables kept by name without case, every register and release kept whole.
+        struct FakeCVar
+        {
+            std::string value, defaultValue, help;
+            uint32_t    flags = 0;
+            double      min = 0.0, max = 0.0;
+        };
+        struct CVarCall
+        {
+            std::string what, name, value, help;
+            uint32_t    flags = 0;
+        };
+        static std::map<std::string, FakeCVar>& CVars()
+        {
+            static std::map<std::string, FakeCVar> vars;
+            return vars;
+        }
+        static std::vector<CVarCall>& CVarCalls()
+        {
+            static std::vector<CVarCall> calls;
+            return calls;
+        }
+        static std::string CVarKey(wxl_str name)
+        {
+            std::string key(name.data ? name.data : "", name.size);
+            for (char& c : key) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return key;
+        }
+        static FakeCVar* FindCVar(wxl_str name)
+        {
+            const auto found = CVars().find(CVarKey(name));
+            return found == CVars().end() ? nullptr : &found->second;
+        }
+        static wxl_result WXL_CALL CVarRegister(wxl_str name, wxl_str value, uint32_t flags, wxl_str help)
+        {
+            if (!name.size || (flags & ~WXL_CVAR_ALL_FLAGS)) return WXL_E_INVALID;
+            CVarCalls().push_back(CVarCall{"register", std::string(name.data, name.size), std::string(value.data, value.size),
+                                           std::string(help.data ? help.data : "", help.size), flags});
+            FakeCVar& var = CVars()[CVarKey(name)];
+            if (var.defaultValue.empty() && var.value.empty()) var.value = std::string(value.data, value.size);
+            var.defaultValue = std::string(value.data, value.size);
+            var.help         = std::string(help.data ? help.data : "", help.size);
+            var.flags        = flags | WXL_CVAR_MOD;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CVarRelease(wxl_str name)
+        {
+            CVarCalls().push_back(CVarCall{"release", std::string(name.data, name.size), {}, {}, 0});
+            return FindCVar(name) ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL CVarSetRange(wxl_str name, double min, double max)
+        {
+            FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            if (!(min <= max)) return WXL_E_INVALID;
+            var->min = min;
+            var->max = max;
+            return WXL_OK;
+        }
+        static wxl_bool WXL_CALL CVarExists(wxl_str name) { return FindCVar(name) ? WXL_TRUE : WXL_FALSE; }
+        static wxl_result WXL_CALL CVarGet(wxl_str name, wxl_str* out)
+        {
+            const FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            *out = wxl_str{var->value.c_str(), static_cast<uint32_t>(var->value.size())};
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CVarGetNumber(wxl_str name, double* out)
+        {
+            const FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            char* end = nullptr;
+            *out      = std::strtod(var->value.c_str(), &end);
+            return end && !*end && end != var->value.c_str() ? WXL_OK : WXL_E_INVALID;
+        }
+        static wxl_result WXL_CALL CVarGetBool(wxl_str name, wxl_bool* out)
+        {
+            const FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            *out = !var->value.empty() && var->value[0] >= '1' && var->value[0] <= '9' ? WXL_TRUE : WXL_FALSE;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CVarGetDefault(wxl_str name, wxl_str* out)
+        {
+            const FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            *out = wxl_str{var->defaultValue.c_str(), static_cast<uint32_t>(var->defaultValue.size())};
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CVarSet(wxl_str name, wxl_str value)
+        {
+            FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            const std::string text(value.data ? value.data : "", value.size);
+            if (var->min != var->max)
+            {
+                char*        end    = nullptr;
+                const double number = std::strtod(text.c_str(), &end);
+                if (!end || *end || end == text.c_str() || number < var->min || number > var->max) return WXL_E_INVALID;
+            }
+            var->value = text;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CVarSetNumber(wxl_str name, double value)
+        {
+            const std::string text = std::to_string(value);
+            return CVarSet(name, wxl_str{text.c_str(), static_cast<uint32_t>(text.size())});
+        }
+        static wxl_result WXL_CALL CVarSetBool(wxl_str name, wxl_bool value)
+        {
+            return CVarSet(name, wxl_str{value ? "1" : "0", 1});
+        }
+        static wxl_result WXL_CALL CVarReset(wxl_str name)
+        {
+            FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            var->value = var->defaultValue;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CVarFlags(wxl_str name, uint32_t* out)
+        {
+            const FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            *out = var->flags;
+            return WXL_OK;
+        }
+
+        static const wxl_cvar_api* CVarTable()
+        {
+            static const wxl_cvar_api api = [] {
+                wxl_cvar_api t{};
+                t.struct_size   = sizeof t;
+                t.register_cvar = &CVarRegister;
+                t.release       = &CVarRelease;
+                t.set_range     = &CVarSetRange;
+                t.exists        = &CVarExists;
+                t.get           = &CVarGet;
+                t.get_number    = &CVarGetNumber;
+                t.get_bool      = &CVarGetBool;
+                t.get_default   = &CVarGetDefault;
+                t.set           = &CVarSet;
+                t.set_number    = &CVarSetNumber;
+                t.set_bool      = &CVarSetBool;
+                t.reset         = &CVarReset;
+                t.flags         = &CVarFlags;
                 return t;
             }();
             return &api;

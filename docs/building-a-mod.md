@@ -1108,6 +1108,60 @@ result and, through its second argument, the reason. The game's interface has th
 `WxlTexture(source, width, height, groups, tint)`; the Lua guide shows a reticle add-on that draws
 itself again when the window or the interface's scale changes.
 
+### Settings: console variables
+
+A mod's settings belong where the game keeps its own: `wxl::CVarService` (abi `0.1.31`) registers
+console variables that the console reads and sets (`/console myMod_scale 2`, `cvarlist`), that the
+game's interface reads and sets with `GetCVar`, `GetCVarBool`, `GetCVarDefault` and `SetCVar`, and
+that the client saves with its own. The same calls read and set the client's variables.
+
+```cpp
+using wxl::CVarService;
+// A size kept in Config.wtf, from 0.5 to 3; a switch per character.
+CVarService::Register("myMod_scale", "1", WXL_CVAR_SAVED, "Size of my mod's frame");
+CVarService::SetRange("myMod_scale", 0.5, 3.0);
+CVarService::Register("myMod_autoLoot", "0", WXL_CVAR_CHARACTER, "Loot everything at once");
+
+const double scale = CVarService::GetNumber("myMod_scale").ValueOr(1.0);
+CVarService::SetNumber("myMod_scale", 2.0);
+const bool farclip = CVarService::GetNumber("farclip").ValueOr(0.0) > 1000.0; // the client's own
+```
+
+Follow a variable with `WorldScript::OnCVarChanged(name, previous, value)`: it is raised for every
+change, whoever made it -- your mod, the console, an add-on's `SetCVar`, a reset -- and not for a
+set that leaves the value as it is.
+
+**Names.** Any name of up to 63 characters without a space, a quote, a comma or a semicolon,
+compared without case. The client, the interface and every mod share one namespace: start yours
+with a prefix of your mod (`myMod_`), which also groups them in Config.wtf. A name the client
+registered, or another mod holds, is refused; the reason is in the log under `cvar`.
+
+**Where it is kept.** Without a flag a variable lives for the session. `WXL_CVAR_SAVED` writes it to
+`WTF/Config.wtf` (the installation's, every account's), `WXL_CVAR_ACCOUNT` to the account's
+settings, `WXL_CVAR_CHARACTER` to the character's (both in `WTF/Account/...`, and on the server
+when it keeps account data). A value equal to the default is not written. The other flags:
+`WXL_CVAR_READ_ONLY` (the console and the interface cannot set it, your mod can),
+`WXL_CVAR_LATCHED` (with `SAVED`: a set waits for the next start; `Flags()` answers
+`WXL_CVAR_PENDING` meanwhile), `WXL_CVAR_PROTECTED` (the interface's `SetCVar` only from the game's
+secure code), `WXL_CVAR_HIDDEN` (the interface does not see it).
+
+**When the saved value arrives.** The client reads Config.wtf once, early, and keeps the lines of
+names nobody has registered yet: register whenever you like, the saved value is found and kept.
+A registration made before the file is read (in `OnLoad`, at `WXL_STAGE_EARLY`) waits and is made
+just before it, so it gets its value too; until then `Get` answers the default and `Set`
+`WXL_E_PENDING`. An account's values are read when the account enters the world, a character's
+when the character does: before that they hold their default.
+
+**Ownership.** A name is your mod's until `Release(name)`, or until the mod is disabled or unloads.
+The variable stays, with its value and flags, for the rest of the session, and a mod reloading
+registers it again. Registering it again yourself updates its flags and the default `Reset` uses
+(the client keeps the first default and help until it restarts).
+
+The game's interface has its own call for the same thing: `WxlRegisterCVar(name, default[, flags[,
+help]])`, flags a number or names apart by spaces (`"saved latched"`). 3.3.5's own
+`RegisterCVar(name[, default])` exists in the game's interface only, and its variables are never
+saved.
+
 ### Models: what characters wear, models of your own, model files
 
 Three things about models reach a mod, from the simplest to the most technical. This part of the

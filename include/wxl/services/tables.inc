@@ -28,3 +28,4 @@
 #include "wxl/services/highlight.def"
 #include "wxl/services/selectioncircle.def"
 #include "wxl/services/texture.def"
+#include "wxl/services/cvar.def"

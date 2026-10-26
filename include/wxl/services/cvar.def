@@ -1,0 +1,46 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.cvar as data: one row per member of wxl_cvar_api, in member order. The shapes and their
+// columns are described in wxl/services/rows.hpp.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including cvar.def"
+#endif
+
+WXL_API_SERVICE(cvar, WXL_CVAR_SERVICE, WXL_CVAR_SERVICE_VERSION, (0, 1, 31), open,
+                "Console variables: settings a mod registers where the game keeps its own, read and set by the console and the interface's GetCVar and SetCVar, saved with the client's. Main thread only.")
+
+WXL_API(cvar, register_cvar, Register, result, (str name, str default_value, u32 flags, str help), shim, generated,
+        "Registers a variable for this mod, with its default, how it is saved (nil, a flag's name, a list of them, or a mask) and a line of help; it keeps a value the client saved for it.")
+WXL_API(cvar, release, Release, result, (str name), shim, generated,
+        "Gives up a variable this mod registered: it stays, with its value, and any mod may register it again.")
+WXL_API(cvar, set_range, SetRange, result, (str name, f64 min, f64 max), generated, generated,
+        "The numbers a variable of this mod accepts, min to max included; any other set is refused from everywhere. 0, 0 lifts it.")
+WXL_API(cvar, exists, Exists, boolean, (str name), generated, generated,
+        "Whether a variable of this name is registered, by the client, the interface or a mod.")
+WXL_API(cvar, get, Get, out<str>, (str name), generated, generated,
+        "A variable's value as text.")
+WXL_API(cvar, get_number, GetNumber, out<f64>, (str name), generated, generated,
+        "A variable's value as a number; nil, \"invalid\" when it is not one.")
+WXL_API(cvar, get_bool, GetBool, out<boolean>, (str name), generated, generated,
+        "A variable's value as a switch, read as GetCVarBool reads it.")
+WXL_API(cvar, get_default, GetDefault, out<str>, (str name), generated, generated,
+        "The value a variable was registered with.")
+WXL_API(cvar, set, Set, result, (str name, str value), generated, generated,
+        "Gives a variable a value, as the console would; CVarChanged follows.")
+WXL_API(cvar, set_number, SetNumber, result, (str name, f64 value), generated, generated,
+        "Gives a variable a number.")
+WXL_API(cvar, set_bool, SetBool, result, (str name, boolean value), generated, generated,
+        "Gives a variable a switch, written \"1\" or \"0\".")
+WXL_API(cvar, reset, Reset, result, (str name), generated, generated,
+        "Gives a variable its default back.")
+WXL_API(cvar, flags, Flags, out<u32>, (str name), generated, generated,
+        "What a variable is: a mask of the flags (saved 1, account 2, character 4, read_only 8, latched 16, protected 32, hidden 64, client 256, interface 512, mod 1024, pending 2048).")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

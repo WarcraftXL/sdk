@@ -32,6 +32,7 @@
 #include "wxl/services/highlight.h"
 #include "wxl/services/selectioncircle.h"
 #include "wxl/services/texture.h"
+#include "wxl/services/cvar.h"
 #include "wxl/services/relay.h"
 #include "wxl/services/storage.h"
 
@@ -2059,10 +2060,178 @@ namespace wxl::lua::shims
             return 0;
         }
 
+        // --- wxl.cvar: the names each Lua mod registered -------------------------------------
+
+        const wxl_cvar_api* CVars() { return wxl::api::Table<wxl_cvar_api>(); }
+
+        /// A variable a Lua mod registered: the runtime sees every Lua mod as wxl.lua, so which
+        /// of them holds a name is kept here.
+        struct CVarName
+        {
+            std::string key; ///< the name without case, as the client compares names
+            std::string name;
+            ScriptMod*  mod;
+        };
+        std::vector<CVarName> g_cvarNames;
+
+        constexpr uint32_t    kCVarFlagCount                 = 7;
+        constexpr const char* kCVarFlagNames[kCVarFlagCount] = {"saved",   "account",   "character", "read_only",
+                                                                "latched", "protected", "hidden"};
+
+        std::string CVarKey(std::string_view name)
+        {
+            std::string key(name);
+            for (char& c : key) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return key;
+        }
+
+        CVarName* HeldCVar(std::string_view name)
+        {
+            const std::string key = CVarKey(name);
+            for (CVarName& held : g_cvarNames)
+                if (held.key == key) return &held;
+            return nullptr;
+        }
+
+        /// A variable's flags as a Lua mod gives them: nil (none), a whole number (the mask), a
+        /// flag's name, or a list of names.
+        uint32_t CheckCVarFlags(lua_State* L, int index)
+        {
+            if (lua_isnoneornil(L, index)) return 0;
+            if (lua_type(L, index) == LUA_TNUMBER)
+            {
+                const double mask = lua_tonumber(L, index);
+                if (!(mask >= 0.0 && mask <= static_cast<double>(WXL_CVAR_ALL_FLAGS)) ||
+                    mask != static_cast<double>(static_cast<uint32_t>(mask)))
+                    luaL_error(L, "wxl.cvar.Register: 'flags' (argument %d) must be a mask from 0 to %u", index,
+                               WXL_CVAR_ALL_FLAGS);
+                return static_cast<uint32_t>(mask);
+            }
+            const auto bitOf = [](const char* name) -> uint32_t {
+                for (uint32_t i = 0; i < kCVarFlagCount; ++i)
+                    if (std::strcmp(kCVarFlagNames[i], name) == 0) return 1u << i;
+                return 0;
+            };
+            if (lua_type(L, index) == LUA_TSTRING)
+            {
+                const char* name = lua_tostring(L, index);
+                if (const uint32_t bit = bitOf(name)) return bit;
+                luaL_error(L,
+                           "wxl.cvar.Register: 'flags' (argument %d) has no flag named \"%s\"; the flags are saved, "
+                           "account, character, read_only, latched, protected and hidden",
+                           index, name);
+            }
+            if (lua_type(L, index) == LUA_TTABLE)
+            {
+                uint32_t mask = 0;
+                for (int i = 1;; ++i)
+                {
+                    lua_rawgeti(L, index, i);
+                    if (lua_isnil(L, -1))
+                    {
+                        lua_pop(L, 1);
+                        break;
+                    }
+                    const char*    name = lua_tostring(L, -1);
+                    const uint32_t bit  = name ? bitOf(name) : 0;
+                    lua_pop(L, 1);
+                    if (!bit)
+                        luaL_error(L, "wxl.cvar.Register: 'flags' (argument %d) has an entry %d that names no flag", index, i);
+                    mask |= bit;
+                }
+                return mask;
+            }
+            luaL_error(L, "wxl.cvar.Register: 'flags' (argument %d) takes nil, a flag's name, a list of names or a mask",
+                       index);
+            return 0;
+        }
+
+        /// A value as a Lua mod gives it: a string, a number (as Lua writes it) or a boolean
+        /// ("1" or "0").
+        std::string CheckCVarValue(lua_State* L, int index, const char* call, const char* what)
+        {
+            switch (lua_type(L, index))
+            {
+            case LUA_TSTRING:
+            case LUA_TNUMBER:
+            {
+                size_t      size = 0;
+                const char* text = lua_tolstring(L, index, &size);
+                return std::string(text, size);
+            }
+            case LUA_TBOOLEAN: return lua_toboolean(L, index) ? "1" : "0";
+            default:
+                luaL_error(L, "wxl.cvar.%s: '%s' (argument %d) is missing; it takes a string, a number or a boolean", call,
+                           what, index);
+                return {};
+            }
+        }
+
+        int L_CVarRegister(lua_State* L)
+        {
+            ScriptMod&        mod = Self(L);
+            size_t            size = 0;
+            const char*       text = luaL_checklstring(L, 1, &size);
+            const std::string name(text, size);
+            const std::string value = CheckCVarValue(L, 2, "Register", "default");
+            const uint32_t    flags = CheckCVarFlags(L, 3);
+            std::string       help;
+            if (!lua_isnoneornil(L, 4))
+            {
+                const char* line = luaL_checklstring(L, 4, &size);
+                help.assign(line, size);
+            }
+            CVarName* held = HeldCVar(name);
+            if (held && held->mod != &mod)
+            {
+                wxl::Log(WXL_LOG_WARN, kTag,
+                         "mod " + mod.Id() + ": wxl.cvar.Register refused '" + name + "': Lua mod " + held->mod->Id() +
+                             " holds it; choose a name of your own (start it with a prefix of your mod)");
+                return PushResultFailure(L, WXL_E_INVALID);
+            }
+            const wxl_cvar_api* api = CVars();
+            if (!api || !wxl::detail::Carries(api, &wxl_cvar_api::register_cvar)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->register_cvar(Str(name), Str(value), flags, Str(help));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            if (!held) g_cvarNames.push_back(CVarName{CVarKey(name), name, &mod});
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_CVarRelease(lua_State* L)
+        {
+            ScriptMod&        mod  = Self(L);
+            size_t            size = 0;
+            const char*       text = luaL_checklstring(L, 1, &size);
+            const std::string name(text, size);
+            CVarName*         held = HeldCVar(name);
+            if (!held || held->mod != &mod) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            g_cvarNames.erase(g_cvarNames.begin() + (held - g_cvarNames.data()));
+            const wxl_cvar_api* api = CVars();
+            if (!api || !wxl::detail::Carries(api, &wxl_cvar_api::release)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->release(Str(name));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// A Lua mod's variables are given up: they stay, with their values.
+        void ReleaseCVars(ScriptMod& mod)
+        {
+            const wxl_cvar_api* api = CVars();
+            for (size_t i = g_cvarNames.size(); i-- > 0;)
+            {
+                if (g_cvarNames[i].mod != &mod) continue;
+                if (api && wxl::detail::Carries(api, &wxl_cvar_api::release)) api->release(Str(g_cvarNames[i].name));
+                g_cvarNames.erase(g_cvarNames.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
+
         /// A mod's view, its hold on the pointer, its block of the mouse look, its heads, its
-        /// highlights and its circles go with it.
+        /// highlights, its circles and its console variables go with it.
         void ReleaseViewAndPointer(ScriptMod& mod)
         {
+            ReleaseCVars(mod);
             ResetCircles(mod);
             ClearHighlights(mod);
             LetGoView(mod);
@@ -2319,6 +2488,8 @@ namespace wxl::lua::shims
         if (service == "selectioncircle" && name == "ResetAll") return &L_CircleResetAll;
         if (service == "texture" && name == "Make") return &L_TextureMake;
         if (service == "texture" && name == "Stats") return &L_TextureStats;
+        if (service == "cvar" && name == "Register") return &L_CVarRegister;
+        if (service == "cvar" && name == "Release") return &L_CVarRelease;
         if (service == "profile" && name == "Begin") return &profile::L_Begin;
         if (service == "profile" && name == "End") return &profile::L_End;
         if (service == "profile" && name == "Text") return &profile::L_Text;

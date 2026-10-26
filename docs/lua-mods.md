@@ -1275,6 +1275,53 @@ UIParent:HookScript("OnSizeChanged", Draw)
 A Lua mod draws its own reticle the same way, with `wxl.texture.Make` and a frame it makes through
 `wxl.script.Run`, or hands the path to an add-on of its own.
 
+### Settings: `wxl.cvar`
+
+`wxl.cvar` (abi `0.1.31`) registers console variables: settings the console reads and sets
+(`/console myMod_scale 2`, `cvarlist`), that the game's interface reads and sets with `GetCVar`,
+`GetCVarBool`, `GetCVarDefault` and `SetCVar`, and that the client saves with its own. The same
+calls read and set the client's own variables.
+
+```lua
+-- A size kept in Config.wtf, from 0.5 to 3, and a switch for each character.
+wxl.cvar.Register("myMod_scale", 1, "saved", "Size of my mod's frame")
+wxl.cvar.SetRange("myMod_scale", 0.5, 3)
+wxl.cvar.Register("myMod_autoLoot", false, "character")
+
+local scale = wxl.cvar.GetNumber("myMod_scale")
+wxl.cvar.SetNumber("myMod_scale", 2)
+print(wxl.cvar.Get("farclip"))            -- the client's own
+
+Observe("WorldScript", "OnCVarChanged", function(name, previous, value)
+    if name == "myMod_scale" then print("scale is now " .. value) end
+end)
+```
+
+`OnCVarChanged` is raised for every change, whoever made it -- your mod, the console, an add-on's
+`SetCVar`, a reset -- and not for a set that leaves the value as it is.
+
+The default may be a string, a number or a boolean (`"1"` or `"0"`). The flags are nil (a variable
+of the session), a name or a list of names: `"saved"` (Config.wtf, the installation's), `"account"`
+or `"character"` (their own settings, also on the server when it keeps account data),
+`"read_only"` (the console and the interface cannot set it, your mod can), `"latched"` (with
+`"saved"`: a set waits for the next start), `"protected"` (the interface's `SetCVar` only from the
+game's secure code), `"hidden"` (the interface does not see it). A value equal to the default is
+not written.
+
+**Names.** Up to 63 characters, no space, quote, comma or semicolon, compared without case. The
+client, the interface and every mod share one namespace: start yours with your mod's prefix. A
+name the client registered, or another mod holds, answers `nil, "invalid"`, the reason in the log.
+
+**When the saved value arrives.** The client reads Config.wtf early and keeps the lines nobody has
+registered: whenever your mod registers, it finds its saved value. An account's values are read
+when the account enters the world, a character's when the character does.
+
+A name is your mod's until `Release(name)`, or until the mod is disabled, reloads or unloads; the
+variable stays, with its value. The game's interface registers its own with
+`WxlRegisterCVar(name, default[, flags[, help]])` (flags: a number or names apart by spaces,
+`"saved latched"`); 3.3.5's `RegisterCVar(name[, default])` exists in the game's interface only,
+and its variables are never saved.
+
 ### Models: `wxl.m2`
 
 What a character wears comes as an event, and a model of your own can be hung on any model the
@@ -2033,6 +2080,10 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.selectioncircle.Drawn()`, `.Hidden()` | the circles the last world frame drew, and left out (abi `0.1.28`) |
 | `wxl.texture.Make(source, width, height, groups, tint)` | the path of a texture made of an SVG or a PNG, then `right`, `bottom` (the picture's texture coordinates) and the texture's width and height; see [Textures from SVG and PNG](#textures-from-svg-and-png-wxltexture) (abi `0.1.30`) |
 | `wxl.texture.Stats()` | `{ textures, resident, texture_limit, bytes, byte_limit, made, reused, released }`: what the service holds (abi `0.1.30`) |
+| `wxl.cvar.Register(name, default, flags, help)`, `.Release(name)` | `true`: a console variable of this mod, kept where the game keeps its own; see [Settings](#settings-wxlcvar) (abi `0.1.31`) |
+| `wxl.cvar.SetRange(name, min, max)` | `true`: the numbers a variable of this mod accepts, from everywhere (abi `0.1.31`) |
+| `wxl.cvar.Exists(name)`, `.Get(name)`, `.GetNumber(name)`, `.GetBool(name)`, `.GetDefault(name)`, `.Flags(name)` | whether a variable is registered; its value as text, a number or a switch; its default; what it is (abi `0.1.31`) |
+| `wxl.cvar.Set(name, value)`, `.SetNumber(name, value)`, `.SetBool(name, value)`, `.Reset(name)` | `true`: a variable given a value, or its default (abi `0.1.31`) |
 
 ### Object methods
 
@@ -2309,7 +2360,7 @@ the `wxl.camera`, `wxl.input` and `wxl.world` modules, `wxl.action.Face` and `Is
 `CanAttack`, `CanInteract` and `CanUse` came with `0.1.26`. The `wxl.highlight`
 module came with `0.1.27`, the `wxl.selectioncircle` module with `0.1.28`.
 `wxl.camera.SetViewRolled` and `Roll`, `wxl.input.CaptureCursorAt` and `CapturePoint` came with
-`0.1.29`, the `wxl.texture` module with `0.1.30`.
+`0.1.29`, the `wxl.texture` module with `0.1.30`, the `wxl.cvar` module with `0.1.31`.
 
 ### Gameplay events
 

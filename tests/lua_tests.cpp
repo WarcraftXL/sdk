@@ -2551,6 +2551,64 @@ end)
         if (g_failures) sink.Dump();
     }
 
+    Section("console variables in Lua");
+    {
+        using wxltest::FakeView;
+        const fs::path mods = MakeTree(scratch, "cvars", binary, fs::path());
+        WriteFile(mods / "cv-a" / "mod.json", LuaManifest("wxl.cv-a"));
+        WriteFile(mods / "cv-a" / "init.lua", R"(
+print("reg " .. tostring(wxl.cvar.Register("cvA_scale", 1.5, { "saved", "latched" }, "a size")) .. " " ..
+      tostring(wxl.cvar.Register("cvA_on", true, "character")) .. " " .. tostring(wxl.cvar.Register("cvA_mask", "x", 9)))
+print("read " .. wxl.cvar.Get("cvA_scale") .. " " .. wxl.cvar.GetNumber("cvA_scale") .. " " ..
+      tostring(wxl.cvar.GetBool("cvA_on")) .. " " .. tostring(wxl.cvar.Exists("CVA_SCALE")) .. " " .. wxl.cvar.GetDefault("cvA_on"))
+print("set " .. tostring(wxl.cvar.SetRange("cvA_scale", 0.5, 3)) .. " " .. tostring(wxl.cvar.SetNumber("cvA_scale", 2)) .. " " ..
+      tostring(select(2, wxl.cvar.Set("cvA_scale", "9"))) .. " " .. tostring(wxl.cvar.SetBool("cvA_on", false)) .. " " ..
+      tostring(wxl.cvar.Reset("cvA_scale")))
+print("missing " .. tostring(select(2, wxl.cvar.Get("cvA_none"))))
+print("flag " .. tostring(select(2, pcall(function() return wxl.cvar.Register("cvA_x", "0", "nope") end))))
+print("value " .. tostring(select(2, pcall(function() return wxl.cvar.Register("cvA_x") end))))
+)");
+        WriteFile(mods / "cv-b" / "mod.json", LuaManifest("wxl.cv-b", "\"loadAfter\": [ \"wxl.cv-a\" ]"));
+        WriteFile(mods / "cv-b" / "init.lua", R"(
+print("b taken " .. tostring(select(2, wxl.cvar.Register("CVA_SCALE", "1"))))
+print("b release " .. tostring(select(2, wxl.cvar.Release("cvA_scale"))))
+print("b own " .. tostring(wxl.cvar.Register("cvB_name", "x")) .. " " .. tostring(wxl.cvar.Release("cvB_name")))
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_CVAR_SERVICE, WXL_CVAR_SERVICE_VERSION, FakeView::CVarTable()});
+        FakeView::CVars().clear();
+        FakeView::CVarCalls().clear();
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            const auto& calls = FakeView::CVarCalls();
+            Check(sink.Has("[wxl.cv-a] reg true true true") && calls.size() >= 3 && calls[0].name == "cvA_scale" &&
+                      calls[0].value == "1.5" && calls[0].flags == (WXL_CVAR_SAVED | WXL_CVAR_LATCHED) &&
+                      calls[0].help == "a size" && calls[1].value == "1" && calls[1].flags == WXL_CVAR_CHARACTER &&
+                      calls[2].flags == 9u,
+                  "Register takes a number, a boolean or a string, and flags as names, a list or a mask");
+            Check(sink.Has("[wxl.cv-a] read 1.5 1.5 true true 1"), "Get, GetNumber, GetBool, Exists and GetDefault answer");
+            Check(sink.Has("[wxl.cv-a] set true true invalid true true"), "a range refuses a set outside it");
+            Check(sink.Has("[wxl.cv-a] missing not_found"), "a name nobody registered is not found");
+            Check(sink.Has("[wxl.cv-a] flag") && sink.Has("has no flag named \"nope\"") &&
+                      sink.Has("'default' (argument 2) is missing"),
+                  "a flag that does not exist, or no default, is an error naming it");
+            Check(sink.Has("[wxl.cv-b] b taken invalid") && sink.Has("[wxl.cv-b] b release not_found") &&
+                      sink.Has("[wxl.cv-b] b own true true") && sink.Has("holds it; choose a name of your own"),
+                  "another Lua mod's name is refused with the reason, and cannot be released by it");
+            FakeView::CVarCalls().clear();
+            host.Shutdown();
+        }
+        size_t released = 0;
+        for (const auto& call : FakeView::CVarCalls())
+            if (call.name.rfind("cvA_", 0) == 0) ++released;
+        Check(released == 3, "a Lua mod's variables are released when it unloads");
+        if (g_failures) sink.Dump();
+    }
+
     Section("a rolled view and a pointer held off the centre in Lua");
     {
         using wxltest::FakeView;

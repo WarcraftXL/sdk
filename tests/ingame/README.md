@@ -150,6 +150,16 @@ off (two seconds, another path), and `assets/disc.png` resampled to 48 x 48 and 
 see-through (a disc shading from red to white, two seconds). A group on a PNG and a missing file
 are refused with their reason, and `Stats` counts what was made.
 
+Phase 22 checks console variables (abi 0.1.31), on both clients. `wxl.cvar` registers a variable
+saved in Config.wtf with a range; the interface's `GetCVar` reads what the mod set, its `SetCVar`
+changes it (`OnCVarChanged` follows), a value outside the range is refused, `GetCVarDefault` reads
+the default and `Reset` brings it back; a read-only variable refuses `SetCVar` and not its mod; the
+interface's `WxlRegisterCVar` registers one of its own, which a mod cannot take, nor `farclip`.
+The phase writes a new token to a variable saved in Config.wtf (registered when the mod loads,
+before the file is read) and to one saved for the character: after a clean exit, the next launch
+must read both back (two NOTEs that read PASS from the second launch on; the character's needs the
+same character, and a server that keeps account data or the local cache).
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the

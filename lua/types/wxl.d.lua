@@ -3554,6 +3554,106 @@ function texture.Make(source, width, height, groups, tint) end
 ---@return string|nil reason
 function texture.Stats() end
 
+---wxl.cvar. Console variables: settings a mod registers where the game keeps its own, read and set by the console and the interface's GetCVar and SetCVar, saved with the client's. Main thread only.
+---Came with abi 0.1.31: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.cvar
+local cvar = {}
+
+---Registers a console variable for this mod: the console, the interface's GetCVar and SetCVar
+---and every mod read and set it, and the client saves it with its own. It keeps a value the
+---client saved for it; a new one starts at `default`. Registering it again updates its flags
+---and the default Reset uses. Held by this mod until Release, or until the mod is disabled,
+---reloads or unloads (the variable stays); another mod's name, or the client's own, is refused.
+---`flags`: nil (a variable of the session), or "saved" (Config.wtf), "account", "character",
+---"read_only" (the console and the interface cannot set it), "latched" (a set waits for the next
+---start, with "saved"), "protected" (SetCVar only from secure code), "hidden" (the interface
+---does not see it), a list of them, or a mask (1, 2, 4, 8, 16, 32, 64).
+---@param name string any name without spaces or quotes, up to 63 characters; start it with your mod's prefix
+---@param default string|number|boolean
+---@param flags? string|string[]|integer
+---@param help? string a line for the console's help
+---@return true|nil ok
+---@return string|nil reason
+function cvar.Register(name, default, flags, help) end
+
+---Gives up a variable this mod registered: it stays, with its value, until the client ends, and
+---any mod may register it again; nil, "not_found" for one this mod does not hold.
+---@param name string
+---@return true|nil ok
+---@return string|nil reason
+function cvar.Release(name) end
+
+---The numbers a variable of this mod accepts, min to max included; any other set is refused from everywhere. 0, 0 lifts it.
+---@param name string
+---@param min number
+---@param max number
+---@return true|nil ok
+---@return string|nil reason
+function cvar.SetRange(name, min, max) end
+
+---Whether a variable of this name is registered, by the client, the interface or a mod.
+---@param name string
+---@return boolean|nil
+---@return string|nil reason
+function cvar.Exists(name) end
+
+---A variable's value as text.
+---@param name string
+---@return string|nil
+---@return string|nil reason
+function cvar.Get(name) end
+
+---A variable's value as a number; nil, "invalid" when it is not one.
+---@param name string
+---@return number|nil
+---@return string|nil reason
+function cvar.GetNumber(name) end
+
+---A variable's value as a switch, read as GetCVarBool reads it.
+---@param name string
+---@return boolean|nil
+---@return string|nil reason
+function cvar.GetBool(name) end
+
+---The value a variable was registered with.
+---@param name string
+---@return string|nil
+---@return string|nil reason
+function cvar.GetDefault(name) end
+
+---Gives a variable a value, as the console would; CVarChanged follows.
+---@param name string
+---@param value string
+---@return true|nil ok
+---@return string|nil reason
+function cvar.Set(name, value) end
+
+---Gives a variable a number.
+---@param name string
+---@param value number
+---@return true|nil ok
+---@return string|nil reason
+function cvar.SetNumber(name, value) end
+
+---Gives a variable a switch, written "1" or "0".
+---@param name string
+---@param value boolean
+---@return true|nil ok
+---@return string|nil reason
+function cvar.SetBool(name, value) end
+
+---Gives a variable its default back.
+---@param name string
+---@return true|nil ok
+---@return string|nil reason
+function cvar.Reset(name) end
+
+---What a variable is: a mask of the flags (saved 1, account 2, character 4, read_only 8, latched 16, protected 32, hidden 64, client 256, interface 512, mod 1024, pending 2048).
+---@param name string
+---@return integer|nil
+---@return string|nil reason
+function cvar.Flags(name) end
+
 ---@class wxl.ModInfo
 ---@field id string
 ---@field name string
@@ -3635,6 +3735,7 @@ function object.Unwatch(type, name) end
 ---@field highlight wxl.highlight
 ---@field selectioncircle wxl.selectioncircle
 ---@field texture wxl.texture
+---@field cvar wxl.cvar
 ---@field events table<wxl.Family, string[]> every family's events, as On<Event>
 wxl = {}
 

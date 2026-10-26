@@ -74,6 +74,10 @@
 //   wxl.selectioncircle.HideObject(target),             ResetObject and ResetAll give back only
 //                      .SetObjectStyle(target, style),  what the mod holds
 //                      .ResetObject(target), .ResetAll()
+//   wxl.cvar.Register(name, default, flags, help)      a console variable, held by the Lua mod that
+//   wxl.cvar.Release(name)                              registered it; another Lua mod's Register of
+//                                                       it is refused, and it is released when its
+//                                                       mod goes (the variable stays)
 //
 // wxl.texture's take a table and answer several values; nothing is kept for the mod:
 //

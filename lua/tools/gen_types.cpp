@@ -551,6 +551,26 @@ namespace
                    "---@return {textures: integer, resident: integer, texture_limit: integer, bytes: integer, byte_limit: integer, made: integer, reused: integer, released: integer}|nil stats\n"
                    "---@return string|nil reason\n"
                    "function " + owner + ".Stats() end\n\n";
+        if (std::strcmp(row.service, "cvar") == 0 && name == "Register")
+            return "---Registers a console variable for this mod: the console, the interface's GetCVar and SetCVar\n"
+                   "---and every mod read and set it, and the client saves it with its own. It keeps a value the\n"
+                   "---client saved for it; a new one starts at `default`. Registering it again updates its flags\n"
+                   "---and the default Reset uses. Held by this mod until Release, or until the mod is disabled,\n"
+                   "---reloads or unloads (the variable stays); another mod's name, or the client's own, is refused.\n"
+                   "---`flags`: nil (a variable of the session), or \"saved\" (Config.wtf), \"account\", \"character\",\n"
+                   "---\"read_only\" (the console and the interface cannot set it), \"latched\" (a set waits for the next\n"
+                   "---start, with \"saved\"), \"protected\" (SetCVar only from secure code), \"hidden\" (the interface\n"
+                   "---does not see it), a list of them, or a mask (1, 2, 4, 8, 16, 32, 64).\n"
+                   "---@param name string any name without spaces or quotes, up to 63 characters; start it with your mod's prefix\n"
+                   "---@param default string|number|boolean\n---@param flags? string|string[]|integer\n"
+                   "---@param help? string a line for the console's help\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Register(name, default, flags, help) end\n\n";
+        if (std::strcmp(row.service, "cvar") == 0 && name == "Release")
+            return "---Gives up a variable this mod registered: it stays, with its value, until the client ends, and\n"
+                   "---any mod may register it again; nil, \"not_found\" for one this mod does not hold.\n"
+                   "---@param name string\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Release(name) end\n\n";
         if (std::strcmp(row.service, "selectioncircle") == 0)
         {
             const std::string masks =

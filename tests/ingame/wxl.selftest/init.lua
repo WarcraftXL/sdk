@@ -59,6 +59,12 @@
 --      the middle of the screen shows them for two seconds each through SetTexture, the
 --      interface's WxlTexture answers the same path for the same request, another colour and an
 --      outline taken off give new paths, and a missing file and a group on a PNG are refused.
+--  22. console variables: wxl.cvar registers one saved in Config.wtf and ranged, sets it and the
+--      interface's GetCVar reads it back; the interface's SetCVar changes it and OnCVarChanged
+--      follows, a value outside the range is refused, a reset brings the default back; a read-only
+--      one refuses SetCVar; the interface's WxlRegisterCVar registers one of its own. The value
+--      the last launch saved (in Config.wtf, and the character's) must come back: a NOTE, since
+--      the first launch with this phase has none, and a launch that did not end cleanly saved none.
 --
 -- Each check is one line in the log: PASS, FAIL, SKIP (what it needs is not there: a class
 -- without a cast-time spell, say) or NOTE (an event the server may not send). The chat box shows
@@ -1913,6 +1919,78 @@ step(function()
     local stats = t.Stats()
     result("Stats counts what was made", stats ~= nil and stats.textures >= 3 and stats.resident >= 1 and stats.reused >= 1,
            stats and (stats.textures .. " textures, " .. stats.bytes .. " bytes, " .. stats.reused .. " reused") or "nil")
+end)
+
+-- 22. Console variables -----------------------------------------------------------------------
+
+-- A flag of wxl.cvar.Flags' mask (1 saved, 256 the client's, 512 the interface's).
+local function hasFlag(mask, bit) return mask ~= nil and math.floor(mask / bit) % 2 == 1 end
+
+-- Registered when the mod loads: before the client reads Config.wtf on a cold start, which is the
+-- registration that waits and is made just before the file is read.
+local CVAR_SAVED, CVAR_CHAR = "wxlSelfTest_saved", "wxlSelfTest_char"
+if wxl.cvar and wxl.cvar.Register then
+    wxl.cvar.Register(CVAR_SAVED, "0", "saved", "wxl.selftest: the token the last launch saved")
+end
+
+step(function()
+    print("phase 22: console variables")
+    local cvar = wxl.cvar
+    if not (cvar and cvar.Register) then
+        result("wxl.cvar", false, "this runtime is older than abi 0.1.31")
+        return
+    end
+    -- What the last launch saved: its token, in Config.wtf and in the character's settings.
+    local savedToken = cvar.Get(CVAR_SAVED)
+    note("the value the last launch saved came back from Config.wtf", savedToken ~= nil and savedToken ~= "0",
+         "none saved yet (the first launch with this phase, or the last did not end cleanly): " .. tostring(savedToken))
+    result("Register a character's variable", cvar.Register(CVAR_CHAR, "0", "character") == true)
+    local charToken = cvar.Get(CVAR_CHAR)
+    note("the character's value the last session saved came back", charToken ~= nil and charToken ~= "0",
+         "none saved yet for this character, or the server keeps no account data: " .. tostring(charToken))
+    local token = tostring(os.time())
+    result("both get a new token, written at the next clean exit (" .. token .. ")",
+           cvar.Set(CVAR_SAVED, token) == true and cvar.Set(CVAR_CHAR, token) == true)
+    print("next launch: the two NOTEs above must read PASS, with the token " .. token)
+
+    -- A setting of the mod, ranged; the interface reads and sets it.
+    local name = "wxlSelfTest_scale"
+    result("Register a saved variable and its range", cvar.Register(name, 1, { "saved" }, "wxl.selftest: a scale") == true and
+           cvar.SetRange(name, 0.5, 3) == true)
+    result("SetNumber, and the interface's GetCVar reads it", cvar.SetNumber(name, 2) == true and
+           select(2, ask("return GetCVar('" .. name .. "')")) == "2", tostring(select(2, ask("return GetCVar('" .. name .. "')"))))
+    local seen
+    local id = Observe("WorldScript", "OnCVarChanged", function(changed, _, value)
+        if changed == name then seen = value end
+    end)
+    local okSet = ask("SetCVar('" .. name .. "', '2.5')")
+    result("the interface's SetCVar changes it, and OnCVarChanged follows", okSet and cvar.GetNumber(name) == 2.5 and seen == "2.5",
+           tostring(cvar.Get(name)) .. " " .. tostring(seen))
+    ask("SetCVar('" .. name .. "', '9')")
+    result("a value outside the range is refused, from the interface too", cvar.Get(name) == "2.5", tostring(cvar.Get(name)))
+    local okDefault, fallback = ask("return GetCVarDefault('" .. name .. "')")
+    result("the interface's GetCVarDefault reads the default", okDefault and fallback == "1", tostring(fallback))
+    result("Reset gives the default back", cvar.Reset(name) == true and cvar.Get(name) == "1")
+    Unobserve(id)
+
+    -- Read-only: the interface is refused, the mod is not.
+    local locked = "wxlSelfTest_locked"
+    cvar.Register(locked, "on", "read_only")
+    local okLocked, why = ask("SetCVar('" .. locked .. "', 'off')")
+    result("the interface's SetCVar is refused a read-only variable", not okLocked and tostring(why):find("read%-only") ~= nil,
+           tostring(why))
+    result("its mod sets it, and GetBool reads it", cvar.SetBool(locked, false) == true and cvar.GetBool(locked) == false)
+
+    -- The interface's own registration.
+    local okUi, made = ask("return WxlRegisterCVar('wxlSelfTestUi_on', '1', 'saved', 'registered by the interface')")
+    local flags = cvar.Flags("wxlSelfTestUi_on")
+    result("the interface's WxlRegisterCVar registers one, saved and the interface's", okUi and made == true and
+           hasFlag(flags, 1) and hasFlag(flags, 512), tostring(made) .. " " .. tostring(flags))
+    local refused = select(2, cvar.Register("wxlSelfTestUi_on", "0"))
+    result("a mod is refused the interface's name", refused == "invalid", tostring(refused))
+    local client = select(2, cvar.Register("farclip", "1"))
+    result("and the client's own", client == "invalid", tostring(client))
+    result("Flags tells the client's own variables", hasFlag(cvar.Flags("farclip"), 256))
 end)
 
 -- The end ----------------------------------------------------------------------------------------

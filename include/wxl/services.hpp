@@ -16,6 +16,7 @@
 #include "wxl/services/highlight.hpp"
 #include "wxl/services/selectioncircle.hpp"
 #include "wxl/services/texture.hpp"
+#include "wxl/services/cvar.hpp"
 #include "wxl/services/gx.hpp"
 #include "wxl/services/hook.hpp"
 #include "wxl/services/input.hpp"

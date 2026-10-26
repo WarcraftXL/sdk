@@ -1055,6 +1055,7 @@ int main()
         host.Table()->publish_service(WXL_SELECTIONCIRCLE_SERVICE, WXL_SELECTIONCIRCLE_SERVICE_VERSION,
                                       wxltest::FakeView::SelectionCircleTable());
         host.Table()->publish_service(WXL_TEXTURE_SERVICE, WXL_TEXTURE_SERVICE_VERSION, wxltest::FakeView::TextureTable());
+        host.Table()->publish_service(WXL_CVAR_SERVICE, WXL_CVAR_SERVICE_VERSION, wxltest::FakeView::CVarTable());
     }
 
     Section("reads that can fail");
@@ -1573,6 +1574,37 @@ int main()
                   FakeView::HighlightColors()[0] == 0xFFE03030u && calls[1].name == "highlight_clear" &&
                   calls[2].name == "highlight_clear_all",
               "with the object, its colour, its widths and its strength");
+    }
+
+    Section("console variables");
+    {
+        using wxltest::FakeView;
+        using wxl::CVarService;
+        FakeView::CVars().clear();
+        FakeView::CVarCalls().clear();
+        Check(CVarService::Register("test_scale", "1.5", WXL_CVAR_SAVED | WXL_CVAR_LATCHED, "a size") == WXL_OK &&
+                  CVarService::Register("test_bad", "0", 0x80u, "") == WXL_E_INVALID,
+              "a variable is registered with its default, flags and help; a flag that names nothing is refused");
+        Check(CVarService::Exists("TEST_SCALE") && !CVarService::Exists("test_none"), "a name is found without case");
+        Check(CVarService::Get("test_scale").ValueOr("") == "1.5" && CVarService::GetNumber("test_scale").ValueOr(0.0) == 1.5 &&
+                  CVarService::GetDefault("test_scale").ValueOr("") == "1.5",
+              "its value reads as text and as a number, and its default");
+        Check(CVarService::SetRange("test_scale", 0.5, 3.0) == WXL_OK && CVarService::SetNumber("test_scale", 2.0) == WXL_OK &&
+                  CVarService::Set("test_scale", "9") == WXL_E_INVALID && CVarService::GetNumber("test_scale").ValueOr(0.0) == 2.0,
+              "a range is kept and a set outside it refused");
+        Check(CVarService::SetBool("test_scale", WXL_TRUE) == WXL_OK && CVarService::GetBool("test_scale").ValueOr(WXL_FALSE) == WXL_TRUE &&
+                  CVarService::Reset("test_scale") == WXL_OK && CVarService::Get("test_scale").ValueOr("") == "1.5",
+              "a switch is written and read, and a reset brings the default back");
+        const auto flags = CVarService::Flags("test_scale");
+        Check(flags && (*flags & WXL_CVAR_SAVED) && (*flags & WXL_CVAR_LATCHED) && (*flags & WXL_CVAR_MOD),
+              "its flags answer what it is");
+        Check(!CVarService::Get("test_none") && CVarService::Get("test_none").Error() == WXL_E_NOT_FOUND &&
+                  CVarService::Release("test_scale") == WXL_OK,
+              "a name nobody registered is not found; a variable is released");
+        const auto& calls = FakeView::CVarCalls();
+        Check(calls.size() == 2 && calls[0].what == "register" && calls[0].name == "test_scale" && calls[0].value == "1.5" && calls[0].help == "a size" &&
+                  calls[0].flags == (WXL_CVAR_SAVED | WXL_CVAR_LATCHED) && calls[1].what == "release" && calls[1].name == "test_scale",
+              "with the name, the default, the flags and the help whole");
     }
 
     Section("the game's selection circles");
