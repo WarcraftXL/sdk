@@ -2573,6 +2573,99 @@ end)
         if (g_failures) sink.Dump();
     }
 
+    Section("drawing into the frame in Lua (wxl.render)");
+    {
+        using wxltest::FakeRender;
+        FakeRender::Reset();
+        const fs::path mods = MakeTree(scratch, "render", binary, fs::path());
+        WriteFile(mods / "draw-a" / "mod.json", LuaManifest("wxl.draw-a"));
+        // SPIR-V as a file of the mod's folder: the magic number, then anything.
+        const std::string spirv("\x03\x02\x23\x07\x00\x05\x01\x00", 8);
+        WriteFile(mods / "draw-a" / "shaders" / "tint.spv", spirv);
+        WriteFile(mods / "draw-a" / "init.lua", R"(
+local SPIRV = "\3\2\35\7\0\5\1\0"
+local tint = wxl.render.CreatePipeline({ kind = "fullscreen", name = "tint", fragment = "shaders/tint.spv", blend = "alpha" })
+local mask = wxl.render.CreatePipeline({ kind = "batch", fragment = SPIRV, colors = { "rgba8", "rgba8" },
+                                         depth_test = "less_equal", samples = 0 })
+local image = wxl.render.CreateScreenImage(2, 1, 0)
+print("made " .. tostring(tint ~= nil) .. " " .. tostring(mask ~= nil) .. " " .. image:ImageWidth() .. " " .. image:ImageSlot())
+print("kind " .. tostring(select(2, pcall(function() return wxl.render.CreatePipeline({ kind = "nope", fragment = SPIRV }) end))))
+print("escape " .. tostring(select(2, pcall(function() return wxl.render.CreatePipeline({ kind = "fullscreen", fragment = "../x.spv" }) end))))
+print("vertexless " .. tostring(select(2, pcall(function() return wxl.render.CreatePipeline({ fragment = SPIRV }) end))))
+print("outside " .. tostring(select(2, wxl.render.Fullscreen(tint, { 1, 0, 0, 1 }))))
+print("replace " .. tostring(wxl.render.ReplaceShader("Diffuse_T1", 1, "shaders/tint.spv")) .. " " ..
+      tostring(select(2, wxl.render.RestoreShader("Ocean", 0))))
+Observe("RenderScript", "OnRenderPoint", function(point, frame, width, height, samples)
+    print("point " .. point .. " " .. frame .. " " .. width .. "x" .. height .. " " .. samples)
+    if point ~= "after_world" then return end
+    print("begin " .. tostring(wxl.render.Begin({ colors = { { image, clear = { 0, 0, 0, 0 } }, "scene_color" }, depth = "scene_depth" })))
+    print("full " .. tostring(wxl.render.Fullscreen(tint, { 1, 0.5, 0.25, 1 })))
+    print("raw " .. tostring(wxl.render.Fullscreen(tint, "abcd")))
+    wxl.render.End()
+    print("slots " .. wxl.render.SceneColorSlot() .. " " .. wxl.render.SceneDepthSlot())
+end)
+Observe("RenderScript", "OnModelBatchDrawn", function(model, root, ...)
+    local batch = select(14, ...)
+    local kept = wxl.render.KeepBatch(batch)
+    print("kept " .. tostring(kept ~= nil))
+    wxl.render.Begin({ colors = { image } })
+    print("batch " .. tostring(wxl.render.DrawBatch(kept, mask, { 1, 0, 0, 1, 0.5, 0, 0, 0.1 })))
+    wxl.render.End()
+end)
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_RENDER_SERVICE, WXL_RENDER_SERVICE_VERSION, FakeRender::Table()});
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            Check(sink.Has("[wxl.draw-a] made true true 960 118"),
+                  "pipelines from a file of the mod's folder and from bytes, and a screen image with its size and slot");
+            Check(FakeRender::Trace().size() >= 2 && FakeRender::Trace()[0] == "pipeline tint 8" && !FakeRender::Pipelines().empty(),
+                  "the file's bytes reach the service with the pipeline's name");
+            bool batchDesc = false;
+            for (const auto& [handle, desc] : FakeRender::Pipelines())
+                if (desc.kind == WXL_RENDER_PIPELINE_BATCH && desc.color_count == 2 && desc.depth_test == WXL_RENDER_DEPTH_LESS_EQUAL &&
+                    desc.cull == WXL_RENDER_CULL_BATCH && desc.color_formats[1] == WXL_RENDER_FORMAT_RGBA8)
+                    batchDesc = true;
+            Check(batchDesc, "a batch pipeline's names become the desc's numbers, culled as the batch by default");
+            Check(sink.Has("[wxl.draw-a] kind") && sink.Has("'kind' must be one of \"graphics\", \"fullscreen\", \"batch\"") &&
+                      sink.Has("[wxl.draw-a] escape") && sink.Has("is not inside the mod's folder") &&
+                      sink.Has("[wxl.draw-a] vertexless") && sink.Has("a graphics pipeline takes a vertex program"),
+                  "a kind of no name, a path out of the folder and a graphics pipeline without its vertex program are errors");
+            Check(sink.Has("[wxl.draw-a] outside invalid"), "a draw outside a pass is refused");
+            Check(sink.Has("[wxl.draw-a] replace true not_found") && FakeRender::Replaced().count("Diffuse_T1/1"),
+                  "a shader replaced from a file; restoring one the mod did not replace is not found");
+
+            const wxl_render_point_args point{WXL_RENDER_POINT_AFTER_WORLD, 12, 1920, 1080, 4};
+            host.Raise(WXL_EV_RenderPoint, &point);
+            Check(sink.Has("[wxl.draw-a] point after_world 12 1920x1080 4") && sink.Has("[wxl.draw-a] begin true") &&
+                      sink.Has("[wxl.draw-a] full true") && sink.Has("[wxl.draw-a] raw true") && sink.Has("[wxl.draw-a] slots 1 2"),
+                  "RenderPoint reaches Lua by name; a pass of an image cleared and the frame's attachments, full-screen draws");
+            const wxl_render_pass& pass = FakeRender::LastPass();
+            float                  first[4] = {};
+            if (!FakeRender::Bytes().empty() && FakeRender::Bytes()[0].size() == 16) std::memcpy(first, FakeRender::Bytes()[0].data(), 16);
+            Check(pass.color_count == 2 && pass.clear == 1u && pass.colors[1] == WXL_RENDER_SCENE_COLOR &&
+                      pass.depth == WXL_RENDER_SCENE_DEPTH && first[1] == 0.5f && first[2] == 0.25f &&
+                      FakeRender::Bytes().size() == 2 && FakeRender::Bytes()[1].size() == 4,
+                  "the pass crosses whole; push as numbers become 32-bit floats, a string its bytes");
+
+            wxl_model_batch_args drawn{};
+            int                  token = 0;
+            drawn.batch                = &token;
+            host.Raise(WXL_EV_ModelBatchDrawn, &drawn);
+            Check(sink.Has("[wxl.draw-a] kept true") && sink.Has("[wxl.draw-a] batch true") && FakeRender::Bytes().size() == 3 &&
+                      FakeRender::Bytes()[2].size() == 32,
+                  "a batch kept from ModelBatchDrawn is drawn again with the mod's constants");
+            host.Shutdown();
+        }
+        Check(FakeRender::Replaced().empty(), "a Lua mod's replaced shaders are restored when it goes");
+        Check(FakeRender::Pipelines().empty() && FakeRender::Images().empty(), "and its pipelines and images are given back");
+        if (g_failures) sink.Dump();
+    }
+
     Section("console variables in Lua");
     {
         using wxltest::FakeView;

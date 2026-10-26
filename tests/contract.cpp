@@ -283,7 +283,7 @@ namespace
         int32_t  base       = 0;
         float    depth      = 0.0f;
         void OnModelBatchDrawn(void*, void*, uint32_t, int32_t base_vertex, uint32_t, uint32_t, uint32_t, uint32_t count,
-                               uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, float, float max_z) override
+                               uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, float, float max_z, void*) override
         {
             primitives = count, base = base_vertex, depth = max_z;
         }
@@ -1061,6 +1061,8 @@ int main()
                                       wxltest::FakeView::SelectionCircleTable());
         host.Table()->publish_service(WXL_TEXTURE_SERVICE, WXL_TEXTURE_SERVICE_VERSION, wxltest::FakeView::TextureTable());
         host.Table()->publish_service(WXL_CVAR_SERVICE, WXL_CVAR_SERVICE_VERSION, wxltest::FakeView::CVarTable());
+        host.Table()->publish_service(WXL_RENDER_SERVICE, WXL_RENDER_SERVICE_VERSION, wxltest::FakeRender::Table());
+        host.Table()->publish_service(WXL_VK_SERVICE, WXL_VK_SERVICE_VERSION, wxltest::FakeRender::VkTable());
     }
 
     Section("reads that can fail");
@@ -1555,6 +1557,80 @@ int main()
         Check(imgui && wxl::View(imgui->version()) == "1.0;0.1" && imgui->context() == reinterpret_cast<void*>(0x1000) &&
                   imgui->plot_context() == reinterpret_cast<void*>(0x2000) && alloc == reinterpret_cast<void*>(0x3000),
               "the runtime's ImGui version, contexts and allocator reach a mod");
+    }
+
+    Section("drawing into the frame (wxl.render, wxl.vk, wxl.gx 2)");
+    {
+        using wxltest::FakeRender;
+        FakeRender::Reset();
+        static const uint32_t kSpirv[] = {0x07230203u, 0x00010500u, 0u, 1u, 0u};
+        Check(wxl::GxService::Api() && *wxl::GxService::Api() == WXL_GX_BACKEND_VULKAN, "wxl.gx 2 answers the device's API");
+        Check(wxl::RenderService::Supported() && wxl::RenderService::UnsupportedReason().empty(), "the render service draws");
+
+        const wxl_handle mask = wxl::RenderService::CreateScreenImage(2, WXL_RENDER_FORMAT_RGBA8, 0);
+        const wxl_handle depth = wxl::RenderService::CreateImage(64, 32, WXL_RENDER_FORMAT_DEPTH32F, 1);
+        Check(mask != WXL_HANDLE_NONE && *wxl::RenderService::ImageWidth(mask) == 960 && *wxl::RenderService::ImageHeight(mask) == 540 &&
+                  *wxl::RenderService::ImageSlot(mask) == mask + 100 && depth != WXL_HANDLE_NONE,
+              "a screen image is the frame's size divided, a fixed one its own; each has a slot");
+        const wxl_handle buffer = wxl::RenderService::CreateBuffer(16);
+        const float      values[4] = {1.0f, 2.0f, 3.0f, 4.0f};
+        Check(wxl::RenderService::WriteBuffer(buffer, 0, values, sizeof values) == WXL_OK &&
+                  wxl::RenderService::WriteBuffer(buffer, 8, values, sizeof values) == WXL_E_INVALID &&
+                  wxl::RenderService::BufferAddress(buffer).HasValue(),
+              "a buffer is written inside its size, refused past it, and has an address");
+
+        wxl::RenderPipelineDesc tint = wxl::RenderPipelineDesc::Fullscreen(kSpirv, sizeof kSpirv);
+        tint.Named("tint").Blend(0, WXL_RENDER_BLEND_ALPHA);
+        const wxl_handle fullscreen = wxl::RenderService::CreatePipeline(tint);
+        wxl::RenderPipelineDesc silhouette = wxl::RenderPipelineDesc::Batch(kSpirv, sizeof kSpirv);
+        silhouette.Colors({WXL_RENDER_FORMAT_RGBA8, WXL_RENDER_FORMAT_RGBA8}).Depth(0, WXL_RENDER_DEPTH_LESS_EQUAL, false);
+        const wxl_handle batch = wxl::RenderService::CreatePipeline(silhouette);
+        Check(fullscreen && batch && wxl::RenderService::PipelineReady(fullscreen) &&
+                  FakeRender::Pipelines()[batch].color_count == 2 && FakeRender::Pipelines()[batch].cull == WXL_RENDER_CULL_BATCH &&
+                  FakeRender::Pipelines()[fullscreen].blend[0] == WXL_RENDER_BLEND_ALPHA &&
+                  FakeRender::Pipelines()[fullscreen].color_formats[0] == WXL_RENDER_FORMAT_BGRA8,
+              "the desc helpers fill a pipeline: the frame's format by default, a batch culled as the batch");
+        Check(wxl::RenderService::CreatePipeline(wxl::RenderPipelineDesc::Graphics(nullptr, 0, kSpirv, sizeof kSpirv)) == WXL_HANDLE_NONE,
+              "a graphics pipeline without a vertex program is refused");
+
+        wxl::RenderPass outside;
+        outside.Color(WXL_RENDER_SCENE_COLOR);
+        Check(wxl::RenderService::Draw(fullscreen, 3, 1, nullptr, 0) == WXL_E_INVALID, "nothing draws outside a pass");
+        wxl::RenderPass pass;
+        pass.Color(mask, 0.0f, 0.0f, 0.0f, 0.0f).Color(WXL_RENDER_SCENE_COLOR).Depth(WXL_RENDER_SCENE_DEPTH);
+        int        kept   = 0;
+        void* const held = wxl::RenderService::KeepBatch(&kept);
+        Check(wxl::RenderService::Begin(pass) == WXL_OK && wxl::RenderService::Begin(pass) == WXL_E_INVALID &&
+                  FakeRender::LastPass().clear == 1u && FakeRender::LastPass().colors[1] == WXL_RENDER_SCENE_COLOR,
+              "a pass opens once, its first colour cleared, the frame's colour and depth named");
+        const float color[4] = {1.0f, 0.5f, 0.0f, 0.25f};
+        Check(wxl::RenderService::Fullscreen(fullscreen, color, sizeof color) == WXL_OK &&
+                  wxl::RenderService::DrawBatch(held, batch, color, sizeof color) == WXL_OK &&
+                  wxl::RenderService::DrawIndexed(fullscreen, buffer, 0, 3, 1, nullptr, 0) == WXL_OK && held != nullptr,
+              "full-screen, a kept batch and indexed draws reach the device with their bytes");
+        wxl::RenderService::End();
+        Check(FakeRender::Bytes().size() == 3 && FakeRender::Bytes()[0].size() == sizeof color &&
+                  std::memcmp(FakeRender::Bytes()[1].data(), color, sizeof color) == 0 && FakeRender::Trace().back() == "end",
+              "the push constants and the batch's constants cross whole");
+        Check(*wxl::RenderService::SceneColorSlot() == 1u && *wxl::RenderService::SceneDepthSlot() == 2u, "the frame's copies have slots");
+        Check(wxl::RenderService::ReplaceShader("Diffuse_T1", 1, kSpirv, sizeof kSpirv) == WXL_OK &&
+                  wxl::RenderService::ReplaceShader("Diffuse_T1", 2, kSpirv, sizeof kSpirv) == WXL_E_INVALID &&
+                  wxl::RenderService::RestoreShader("Diffuse_T1", 1) == WXL_OK &&
+                  wxl::RenderService::RestoreShader("Diffuse_T1", 1) == WXL_E_NOT_FOUND,
+              "a client shader is replaced for a stage and restored once");
+        wxl::RenderService::DestroyPipeline(fullscreen);
+        wxl::RenderService::DestroyImage(mask);
+        wxl::RenderService::DestroyBuffer(buffer);
+        Check(!FakeRender::Pipelines().count(fullscreen) && !FakeRender::Images().count(mask) && !FakeRender::Buffers().count(buffer),
+              "resources are given back");
+
+        Check(wxl::VkService::Device() != nullptr && wxl::VkService::CommandBuffer() != nullptr && *wxl::VkService::QueueFamily() == 0u &&
+                  wxl::VkService::Image(depth, false).HasValue() && !wxl::VkService::Image(mask, false).HasValue() &&
+                  *wxl::VkService::FramesCompleted() < *wxl::VkService::Frame() && *wxl::VkService::SceneColor() == 0xA0u,
+              "wxl.vk hands the device, the frame's commands and a resource's objects; none for one given back");
+        FakeRender::InPoint() = false;
+        Check(wxl::VkService::CommandBuffer() == nullptr && wxl::RenderService::Begin(pass) == WXL_E_INVALID,
+              "outside a point there is no command buffer and no pass");
     }
 
     Section("a highlighted object");

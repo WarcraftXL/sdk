@@ -48,6 +48,8 @@
 #include "wxl/services/m2.h"
 #include "wxl/services/m2file.h"
 #include "wxl/services/profile.h"
+#include "wxl/services/render.h"
+#include "wxl/services/vk.h"
 #include "wxl/services/relay.h"
 #include "wxl/services/script.h"
 #include "wxl/services/storage.h"
@@ -2186,6 +2188,12 @@ namespace wxltest
         {
             if (Connected()) Trace().push_back("frame:" + Text(name));
         }
+        static wxl_result WXL_CALL GpuZoneBegin(wxl_str name)
+        {
+            Trace().push_back("+gpu:" + Text(name));
+            return WXL_OK;
+        }
+        static void WXL_CALL GpuZoneEnd() { Trace().push_back("-gpu"); }
 
         static const wxl_profile_api* Table()
         {
@@ -2200,6 +2208,8 @@ namespace wxltest
                 t.plot        = &Plot;
                 t.message     = &Message;
                 t.frame_mark  = &FrameMark;
+                t.gpu_zone_begin = &GpuZoneBegin;
+                t.gpu_zone_end   = &GpuZoneEnd;
                 return t;
             }();
             return &api;
@@ -2856,6 +2866,7 @@ namespace wxltest
             return &device;
         }
         static void WXL_CALL Invalidate() { ++Invalidated(); }
+        static uint32_t WXL_CALL Api() { return WXL_GX_BACKEND_VULKAN; }
 
         static const wxl_m2_api* Table()
         {
@@ -2911,6 +2922,7 @@ namespace wxltest
                 t.struct_size      = sizeof t;
                 t.d3d9_device      = &Device;
                 t.invalidate_state = &Invalidate;
+                t.api              = &Api;
                 return t;
             }();
             return &api;
@@ -2966,6 +2978,281 @@ namespace wxltest
                 wxl_engine_api t{};
                 t.struct_size = sizeof t;
                 t.layout      = &Layout;
+                return t;
+            }();
+            return &api;
+        }
+    };
+
+    // --- wxl.render, wxl.vk -------------------------------------------------------------------
+    // A device that keeps what it is asked: images, buffers and pipelines by handle (from 16, past
+    // the frame's attachments), a pass open between begin and end, each draw as a line of the trace
+    // with the bytes it was given. ModelBatchDrawn's batch is any pointer; a kept one is a copy.
+    struct FakeRender
+    {
+        struct Image
+        {
+            uint32_t width, height, format, samples, divisor;
+        };
+        static std::map<wxl_handle, Image>& Images() { static std::map<wxl_handle, Image> v; return v; }
+        static std::map<wxl_handle, std::vector<uint8_t>>& Buffers() { static std::map<wxl_handle, std::vector<uint8_t>> v; return v; }
+        static std::map<wxl_handle, wxl_render_pipeline_desc>& Pipelines() { static std::map<wxl_handle, wxl_render_pipeline_desc> v; return v; }
+        static std::vector<std::string>& Trace() { static std::vector<std::string> v; return v; }
+        static std::vector<std::vector<uint8_t>>& Bytes() { static std::vector<std::vector<uint8_t>> v; return v; }
+        static wxl_handle& Next() { static wxl_handle next = 16; return next; }
+        static bool& Open() { static bool open = false; return open; }
+        static bool& InPoint() { static bool in = true; return in; }
+        static wxl_render_pass& LastPass() { static wxl_render_pass pass{}; return pass; }
+        static std::map<std::string, uint32_t>& Replaced() { static std::map<std::string, uint32_t> v; return v; }
+        /// How many batches were kept, and the copies they are (one int each, its number).
+        static int& Kept() { static int count = 0; return count; }
+        static int* KeptAt(int i) { static int kept[64] = {}; return &kept[i & 63]; }
+
+        static void Reset()
+        {
+            Images().clear(), Buffers().clear(), Pipelines().clear(), Trace().clear(), Bytes().clear(), Replaced().clear();
+            Next() = 16, Open() = false, InPoint() = true, Kept() = 0;
+        }
+        static void Keep(const void* data, uint32_t size)
+        {
+            const uint8_t* b = static_cast<const uint8_t*>(data);
+            Bytes().push_back(b ? std::vector<uint8_t>(b, b + size) : std::vector<uint8_t>());
+        }
+
+        static wxl_bool WXL_CALL Supported() { return WXL_TRUE; }
+        static wxl_str WXL_CALL UnsupportedReason() { return wxl_str{"", 0}; }
+        static wxl_handle WXL_CALL CreateImage(uint32_t w, uint32_t h, uint32_t format, uint32_t samples)
+        {
+            if (!w || !h || !format || format > WXL_RENDER_FORMAT_DEPTH32F) return WXL_HANDLE_NONE;
+            Images()[Next()] = Image{w, h, format, samples, 0};
+            return Next()++;
+        }
+        static wxl_handle WXL_CALL CreateScreenImage(uint32_t divisor, uint32_t format, uint32_t samples)
+        {
+            if (!divisor || !format || format > WXL_RENDER_FORMAT_DEPTH32F) return WXL_HANDLE_NONE;
+            Images()[Next()] = Image{(1920 + divisor - 1) / divisor, (1080 + divisor - 1) / divisor, format, samples, divisor};
+            return Next()++;
+        }
+        static void WXL_CALL DestroyImage(wxl_handle image)
+        {
+            Images().erase(image);
+            Trace().push_back("destroy_image " + std::to_string(image));
+        }
+        static uint32_t WXL_CALL ImageSlot(wxl_handle image) { return Images().count(image) ? static_cast<uint32_t>(image) + 100 : WXL_RENDER_NO_SLOT; }
+        static uint32_t WXL_CALL ImageWidth(wxl_handle image) { return Images().count(image) ? Images()[image].width : 0; }
+        static uint32_t WXL_CALL ImageHeight(wxl_handle image) { return Images().count(image) ? Images()[image].height : 0; }
+        static wxl_handle WXL_CALL CreateBuffer(uint32_t size)
+        {
+            if (!size) return WXL_HANDLE_NONE;
+            Buffers()[Next()] = std::vector<uint8_t>(size);
+            return Next()++;
+        }
+        static void WXL_CALL DestroyBuffer(wxl_handle buffer)
+        {
+            Buffers().erase(buffer);
+            Trace().push_back("destroy_buffer " + std::to_string(buffer));
+        }
+        static wxl_result WXL_CALL WriteBuffer(wxl_handle buffer, uint32_t offset, const void* data, uint32_t size)
+        {
+            auto at = Buffers().find(buffer);
+            if (at == Buffers().end()) return WXL_E_NOT_FOUND;
+            if (static_cast<uint64_t>(offset) + size > at->second.size()) return WXL_E_INVALID;
+            if (size) std::memcpy(at->second.data() + offset, data, size);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL BufferAddress(wxl_handle buffer, uint64_t* address)
+        {
+            if (!Buffers().count(buffer)) return WXL_E_NOT_FOUND;
+            *address = 0x10000000ull + buffer * 0x1000ull;
+            return WXL_OK;
+        }
+        static uint32_t WXL_CALL Sampler(uint32_t flags) { return flags & 7u; }
+        static wxl_handle WXL_CALL CreatePipeline(const wxl_render_pipeline_desc* desc)
+        {
+            if (!desc || desc->struct_size < sizeof(wxl_render_pipeline_desc) || !desc->fragment || desc->fragment_size < 4)
+                return WXL_HANDLE_NONE;
+            uint32_t magic = 0;
+            std::memcpy(&magic, desc->fragment, 4);
+            if (magic != 0x07230203u) return WXL_HANDLE_NONE;
+            if (desc->kind == WXL_RENDER_PIPELINE_GRAPHICS && !desc->vertex) return WXL_HANDLE_NONE;
+            wxl_render_pipeline_desc copy = *desc;
+            copy.name = nullptr, copy.vertex = nullptr, copy.fragment = nullptr;
+            Pipelines()[Next()] = copy;
+            Trace().push_back(std::string("pipeline ") + (desc->name ? desc->name : "") + " " + std::to_string(desc->fragment_size));
+            return Next()++;
+        }
+        static void WXL_CALL DestroyPipeline(wxl_handle pipeline)
+        {
+            Pipelines().erase(pipeline);
+            Trace().push_back("destroy_pipeline " + std::to_string(pipeline));
+        }
+        static wxl_bool WXL_CALL PipelineReady(wxl_handle pipeline) { return Pipelines().count(pipeline) ? WXL_TRUE : WXL_FALSE; }
+        static bool Attachment(wxl_handle h, bool depth)
+        {
+            if (h == (depth ? WXL_RENDER_SCENE_DEPTH : WXL_RENDER_SCENE_COLOR)) return true;
+            return Images().count(h) && ((Images()[h].format == WXL_RENDER_FORMAT_DEPTH32F) == depth);
+        }
+        static wxl_result WXL_CALL Begin(const wxl_render_pass* pass)
+        {
+            if (!InPoint() || Open() || !pass || pass->color_count > WXL_RENDER_MAX_COLORS) return WXL_E_INVALID;
+            for (uint32_t i = 0; i < pass->color_count; ++i)
+                if (!Attachment(pass->colors[i], false)) return WXL_E_INVALID;
+            if (pass->depth && !Attachment(pass->depth, true)) return WXL_E_INVALID;
+            LastPass() = *pass;
+            Open()     = true;
+            Trace().push_back("begin " + std::to_string(pass->color_count) + " " + std::to_string(pass->clear));
+            return WXL_OK;
+        }
+        static void WXL_CALL End()
+        {
+            if (Open()) Trace().push_back("end");
+            Open() = false;
+        }
+        static wxl_result Drawn(wxl_handle pipeline, const std::string& line, const void* push, uint32_t size, uint32_t limit)
+        {
+            if (!Open()) return WXL_E_INVALID;
+            if (!Pipelines().count(pipeline)) return WXL_E_NOT_FOUND;
+            if (size > limit) return WXL_E_INVALID;
+            Trace().push_back(line + " " + std::to_string(size));
+            Keep(push, size);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL Draw(wxl_handle pipeline, uint32_t vertices, uint32_t instances, const void* push, uint32_t size)
+        {
+            return Drawn(pipeline, "draw " + std::to_string(vertices) + "x" + std::to_string(instances), push, size, WXL_RENDER_PUSH_BYTES);
+        }
+        static wxl_result WXL_CALL DrawIndexed(wxl_handle pipeline, wxl_handle indices, uint32_t first, uint32_t count, uint32_t instances,
+                                               const void* push, uint32_t size)
+        {
+            if (!Buffers().count(indices)) return WXL_E_NOT_FOUND;
+            return Drawn(pipeline, "draw_indexed " + std::to_string(first) + "+" + std::to_string(count) + "x" + std::to_string(instances),
+                         push, size, WXL_RENDER_PUSH_BYTES);
+        }
+        static wxl_result WXL_CALL Fullscreen(wxl_handle pipeline, const void* push, uint32_t size)
+        {
+            return Drawn(pipeline, "fullscreen", push, size, WXL_RENDER_PUSH_BYTES);
+        }
+        static wxl_result WXL_CALL DrawBatch(const void* batch, wxl_handle pipeline, const void* constants, uint32_t size)
+        {
+            if (!batch) return WXL_E_NOT_FOUND;
+            return Drawn(pipeline, "draw_batch", constants, size, WXL_RENDER_BATCH_BYTES);
+        }
+        static void* WXL_CALL KeepBatch(const void* batch)
+        {
+            if (!batch) return nullptr;
+            const int i = Kept()++;
+            *KeptAt(i) = i;
+            return KeptAt(i);
+        }
+        static uint32_t WXL_CALL SceneColorSlot() { return InPoint() ? 1u : WXL_RENDER_NO_SLOT; }
+        static uint32_t WXL_CALL SceneDepthSlot() { return InPoint() ? 2u : WXL_RENDER_NO_SLOT; }
+        static wxl_result WXL_CALL ReplaceShader(wxl_str name, uint32_t stage, const void* spirv, uint32_t size)
+        {
+            uint32_t magic = 0;
+            if (stage > 1 || !spirv || size < 4) return WXL_E_INVALID;
+            std::memcpy(&magic, spirv, 4);
+            if (magic != 0x07230203u) return WXL_E_INVALID;
+            Replaced()[std::string(name.data, name.size) + "/" + std::to_string(stage)] = size;
+            Trace().push_back("replace " + std::string(name.data, name.size) + " " + std::to_string(stage));
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL RestoreShader(wxl_str name, uint32_t stage)
+        {
+            if (!Replaced().erase(std::string(name.data, name.size) + "/" + std::to_string(stage))) return WXL_E_NOT_FOUND;
+            Trace().push_back("restore " + std::string(name.data, name.size) + " " + std::to_string(stage));
+            return WXL_OK;
+        }
+
+        static const wxl_render_api* Table()
+        {
+            static const wxl_render_api api = [] {
+                wxl_render_api t{};
+                t.struct_size         = sizeof t;
+                t.supported           = &Supported;
+                t.unsupported_reason  = &UnsupportedReason;
+                t.create_image        = &CreateImage;
+                t.create_screen_image = &CreateScreenImage;
+                t.destroy_image       = &DestroyImage;
+                t.image_slot          = &ImageSlot;
+                t.image_width         = &ImageWidth;
+                t.image_height        = &ImageHeight;
+                t.create_buffer       = &CreateBuffer;
+                t.destroy_buffer      = &DestroyBuffer;
+                t.write_buffer        = &WriteBuffer;
+                t.buffer_address      = &BufferAddress;
+                t.sampler             = &Sampler;
+                t.create_pipeline     = &CreatePipeline;
+                t.destroy_pipeline    = &DestroyPipeline;
+                t.pipeline_ready      = &PipelineReady;
+                t.begin               = &Begin;
+                t.end                 = &End;
+                t.draw                = &Draw;
+                t.draw_indexed        = &DrawIndexed;
+                t.fullscreen          = &Fullscreen;
+                t.draw_batch          = &DrawBatch;
+                t.keep_batch          = &KeepBatch;
+                t.scene_color_slot    = &SceneColorSlot;
+                t.scene_depth_slot    = &SceneDepthSlot;
+                t.replace_shader      = &ReplaceShader;
+                t.restore_shader      = &RestoreShader;
+                return t;
+            }();
+            return &api;
+        }
+
+        // wxl.vk: fixed handles, the command buffer only inside a point.
+        static void* WXL_CALL Handle(uintptr_t value) { return reinterpret_cast<void*>(value); }
+        static void* WXL_CALL VkInstance() { return Handle(0x1000); }
+        static void* WXL_CALL VkPhysical() { return Handle(0x2000); }
+        static void* WXL_CALL VkDevice() { return Handle(0x3000); }
+        static void* WXL_CALL VkQueue() { return Handle(0x4000); }
+        static uint32_t WXL_CALL VkFamily() { return 0; }
+        static void* WXL_CALL VkProc() { return Handle(0x5000); }
+        static uint32_t WXL_CALL VkVersion() { return (1u << 22) | (3u << 12); }
+        static void* WXL_CALL VkCommands() { return InPoint() ? Handle(0x6000) : nullptr; }
+        static wxl_result WXL_CALL VkImage(wxl_handle image, wxl_bool resolved, uint64_t* out)
+        {
+            if (!Images().count(image)) return WXL_E_NOT_FOUND;
+            *out = 0x70000000ull + image * 2 + (resolved ? 1 : 0);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL VkView(wxl_handle image, wxl_bool resolved, uint64_t* out)
+        {
+            if (!Images().count(image)) return WXL_E_NOT_FOUND;
+            *out = 0x80000000ull + image * 2 + (resolved ? 1 : 0);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL VkBuffer(wxl_handle buffer, uint64_t* out)
+        {
+            if (!Buffers().count(buffer)) return WXL_E_NOT_FOUND;
+            *out = 0x90000000ull + buffer;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL VkSceneColor(uint64_t* out) { return *out = 0xA0, WXL_OK; }
+        static wxl_result WXL_CALL VkSceneDepth(uint64_t* out) { return *out = 0xB0, WXL_OK; }
+        static wxl_result WXL_CALL VkFrame(uint64_t* out) { return *out = 12, WXL_OK; }
+        static wxl_result WXL_CALL VkCompleted(uint64_t* out) { return *out = 10, WXL_OK; }
+
+        static const wxl_vk_api* VkTable()
+        {
+            static const wxl_vk_api api = [] {
+                wxl_vk_api t{};
+                t.struct_size            = sizeof t;
+                t.instance               = &VkInstance;
+                t.physical_device        = &VkPhysical;
+                t.device                 = &VkDevice;
+                t.queue                  = &VkQueue;
+                t.queue_family           = &VkFamily;
+                t.get_instance_proc_addr = &VkProc;
+                t.api_version            = &VkVersion;
+                t.command_buffer         = &VkCommands;
+                t.image                  = &VkImage;
+                t.image_view             = &VkView;
+                t.buffer                 = &VkBuffer;
+                t.scene_color            = &VkSceneColor;
+                t.scene_depth            = &VkSceneDepth;
+                t.frame                  = &VkFrame;
+                t.frames_completed       = &VkCompleted;
                 return t;
             }();
             return &api;

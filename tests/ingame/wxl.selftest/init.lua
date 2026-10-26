@@ -45,8 +45,8 @@
 --      client's UnitCanAttack for the nearest unit (targeted for the question, then the target is
 --      given back); CanInteract and a game object's CanUse answer for everything in view.
 --  18. a highlight: wxl.highlight outlines the player for two seconds where the runtime draws
---      highlights (the stock client), and the batches drawn again are counted; elsewhere it must
---      say why it draws none, and refuse as unsupported.
+--      highlights (the stock client, the recompiled client on Vulkan), and the batches drawn again
+--      are counted; elsewhere it must say why it draws none, and refuse as unsupported.
 --  19. the game's selection circles: the nearest unit is targeted, its circle counted drawn, then
 --      hidden by wxl.selectioncircle, drawn larger and blue for two seconds, and given back; the
 --      target the player had comes back after.
@@ -70,6 +70,11 @@
 --      each add-on's; a verdict short of signed with the world up means a mod took it as signed
 --      (wxl.glue-unlock with a changed FrameXML), a NOTE. The clearing of loose folders was asked
 --      once, at the login screens.
+--  24. drawing into the frame: wxl.gx names the device; wxl.render draws on the Vulkan renderer
+--      (elsewhere it must say why not): a screen image is made and read, a full-screen pipeline
+--      of the selftest's own SPIR-V tints the frame after the world for two seconds, the four
+--      points of the frame come, a model batch is kept from ModelBatchDrawn, and a GPU zone is
+--      opened and closed around the tint.
 --
 -- Each check is one line in the log: PASS, FAIL, SKIP (what it needs is not there: a class
 -- without a cast-time spell, say) or NOTE (an event the server may not send). The chat box shows
@@ -2045,6 +2050,109 @@ step(function()
         end
     end
     print(addOns .. " add-on(s) judged")
+end)
+
+-- 24. Drawing into the frame ---------------------------------------------------------------------
+
+-- A fragment program over the whole pass writing its push constants' colour (glslang -V
+-- --target-env vulkan1.3 of: #include "wxl/render/render.glsl", layout(push_constant) uniform Push
+-- { vec4 color; } pc; layout(location = 0) in vec2 uv; layout(location = 0) out vec4 outColor;
+-- void main() { outColor = pc.color; }).
+local TINT_SPIRV =
+    "\3\2\35\7\0\6\1\0\11\0\8\0\29\0\0\0\0\0\0\0\17\0\2\0\1\0\0\0\17\0\2\0\182\20\0\0\11\0\6\0\1\0\0" ..
+    "\0\71\76\83\76\46\115\116\100\46\52\53\48\0\0\0\0\14\0\3\0\0\0\0\0\1\0\0\0\15\0\10\0\4\0\0\0\4\0" ..
+    "\0\0\109\97\105\110\0\0\0\0\9\0\0\0\12\0\0\0\21\0\0\0\25\0\0\0\28\0\0\0\16\0\3\0\4\0\0\0\7\0\0\0" ..
+    "\3\0\3\0\2\0\0\0\204\1\0\0\4\0\8\0\71\76\95\69\88\84\95\110\111\110\117\110\105\102\111\114\109" ..
+    "\95\113\117\97\108\105\102\105\101\114\0\4\0\11\0\71\76\95\69\88\84\95\115\97\109\112\108\101" ..
+    "\114\108\101\115\115\95\116\101\120\116\117\114\101\95\102\117\110\99\116\105\111\110\115\0\0\0" ..
+    "\0\4\0\10\0\71\76\95\71\79\79\71\76\69\95\99\112\112\95\115\116\121\108\101\95\108\105\110\101" ..
+    "\95\100\105\114\101\99\116\105\118\101\0\0\4\0\8\0\71\76\95\71\79\79\71\76\69\95\105\110\99\108" ..
+    "\117\100\101\95\100\105\114\101\99\116\105\118\101\0\5\0\4\0\4\0\0\0\109\97\105\110\0\0\0\0\5\0" ..
+    "\5\0\9\0\0\0\111\117\116\67\111\108\111\114\0\0\0\0\5\0\4\0\10\0\0\0\80\117\115\104\0\0\0\0\6\0" ..
+    "\5\0\10\0\0\0\0\0\0\0\99\111\108\111\114\0\0\0\5\0\3\0\12\0\0\0\112\99\0\0\5\0\4\0\21\0\0\0\117" ..
+    "\73\109\97\103\101\115\0\5\0\5\0\25\0\0\0\117\83\97\109\112\108\101\114\115\0\0\0\5\0\3\0\28\0\0" ..
+    "\0\117\118\0\0\71\0\4\0\9\0\0\0\30\0\0\0\0\0\0\0\71\0\3\0\10\0\0\0\2\0\0\0\72\0\5\0\10\0\0\0\0\0" ..
+    "\0\0\35\0\0\0\0\0\0\0\71\0\4\0\21\0\0\0\33\0\0\0\0\0\0\0\71\0\4\0\21\0\0\0\34\0\0\0\0\0\0\0\71\0" ..
+    "\4\0\25\0\0\0\33\0\0\0\1\0\0\0\71\0\4\0\25\0\0\0\34\0\0\0\0\0\0\0\71\0\4\0\28\0\0\0\30\0\0\0\0\0" ..
+    "\0\0\19\0\2\0\2\0\0\0\33\0\3\0\3\0\0\0\2\0\0\0\22\0\3\0\6\0\0\0\32\0\0\0\23\0\4\0\7\0\0\0\6\0\0" ..
+    "\0\4\0\0\0\32\0\4\0\8\0\0\0\3\0\0\0\7\0\0\0\59\0\4\0\8\0\0\0\9\0\0\0\3\0\0\0\30\0\3\0\10\0\0\0\7" ..
+    "\0\0\0\32\0\4\0\11\0\0\0\9\0\0\0\10\0\0\0\59\0\4\0\11\0\0\0\12\0\0\0\9\0\0\0\21\0\4\0\13\0\0\0" ..
+    "\32\0\0\0\1\0\0\0\43\0\4\0\13\0\0\0\14\0\0\0\0\0\0\0\32\0\4\0\15\0\0\0\9\0\0\0\7\0\0\0\25\0\9\0" ..
+    "\18\0\0\0\6\0\0\0\1\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\1\0\0\0\0\0\0\0\29\0\3\0\19\0\0\0\18\0\0\0\32" ..
+    "\0\4\0\20\0\0\0\0\0\0\0\19\0\0\0\59\0\4\0\20\0\0\0\21\0\0\0\0\0\0\0\26\0\2\0\22\0\0\0\29\0\3\0" ..
+    "\23\0\0\0\22\0\0\0\32\0\4\0\24\0\0\0\0\0\0\0\23\0\0\0\59\0\4\0\24\0\0\0\25\0\0\0\0\0\0\0\23\0\4" ..
+    "\0\26\0\0\0\6\0\0\0\2\0\0\0\32\0\4\0\27\0\0\0\1\0\0\0\26\0\0\0\59\0\4\0\27\0\0\0\28\0\0\0\1\0\0" ..
+    "\0\54\0\5\0\2\0\0\0\4\0\0\0\0\0\0\0\3\0\0\0\248\0\2\0\5\0\0\0\65\0\5\0\15\0\0\0\16\0\0\0\12\0\0" ..
+    "\0\14\0\0\0\61\0\4\0\7\0\0\0\17\0\0\0\16\0\0\0\62\0\3\0\9\0\0\0\17\0\0\0\253\0\1\0\56\0\1\0" .. ""
+
+local render = { points = {}, kept = false, batches = 0, drawn = 0, refused = nil }
+
+step(function()
+    print("phase 24: drawing into the frame (wxl.render)")
+    if not (wxl.gx and wxl.gx.Api and wxl.render and wxl.render.Supported) then
+        result("wxl.render", false, "this runtime is older than abi 0.1.33")
+        return
+    end
+    local api = wxl.gx.Api()
+    result("wxl.gx.Api names the client's device (" .. tostring(api) .. ")", type(api) == "string" and api ~= "none", tostring(api))
+    local rd = wxl.render
+    if not rd.Supported() then
+        local why = rd.UnsupportedReason()
+        result("wxl.render draws nothing on " .. tostring(api) .. " and says why", api ~= "vulkan" and type(why) == "string" and #why > 0,
+               tostring(why))
+        local made, err = rd.CreateScreenImage(1, 1, 0)
+        result("and makes no image", made == nil, tostring(err))
+        return
+    end
+    result("wxl.render draws on the Vulkan renderer", api == "vulkan", tostring(api))
+    local image = rd.CreateScreenImage(2, 1, 1)
+    local w, h = image and image:ImageWidth(), image and image:ImageHeight()
+    result("a screen image half the frame's size, with a slot", image ~= nil and (w or 0) > 0 and (h or 0) > 0 and
+           image:ImageSlot() ~= 0xFFFFFFFF, tostring(w) .. "x" .. tostring(h))
+    render.image = image
+    local pipeline, why = rd.CreatePipeline({ kind = "fullscreen", name = "selftest tint", fragment = TINT_SPIRV, blend = "alpha" })
+    result("a full-screen pipeline of the selftest's SPIR-V", pipeline ~= nil and pipeline:PipelineReady() == true, tostring(why))
+    render.pipeline = pipeline
+    render.points.ids = {
+        Observe("RenderScript", "OnRenderPoint", function(point, frame, width, height, samples)
+            render.points[point] = (render.points[point] or 0) + 1
+            render.size = width .. "x" .. height .. ", " .. samples .. " sample(s)"
+            if point ~= "after_world" or not render.pipeline or not render.tinting then return end
+            wxl.profile.GpuZoneBegin("selftest tint")
+            if rd.Begin({ colors = { "scene_color" } }) then
+                local ok, err = rd.Fullscreen(render.pipeline, { 0.2, 0.4, 1.0, 0.15 })
+                if ok then render.drawn = render.drawn + 1 else render.refused = err end
+                rd.End()
+            end
+            wxl.profile.GpuZoneEnd()
+        end),
+        Observe("RenderScript", "OnModelBatchDrawn", function(...)
+            render.batches = render.batches + 1
+            if render.kept then return end
+            local batch = select(16, ...)
+            render.kept = batch ~= nil and rd.KeepBatch(batch) ~= nil
+        end),
+    }
+    render.tinting = true
+    print("look: the world tinted blue for two seconds, the interface not")
+    wait(2)
+end)
+
+step(function()
+    if not render.points.ids then return end
+    render.tinting = false
+    for _, id in ipairs(render.points.ids) do Unobserve(id) end
+    for _, point in ipairs({ "after_opaque_world", "after_liquids", "after_world", "after_ui" }) do
+        result("RenderPoint " .. point .. " comes each frame (" .. tostring(render.points[point] or 0) .. " in two seconds)",
+               (render.points[point] or 0) > 0, render.size)
+    end
+    result("the tint was drawn at after_world (" .. render.drawn .. " frames)", render.drawn > 0, tostring(render.refused))
+    result("a model batch was kept from ModelBatchDrawn (" .. render.batches .. " batches seen)", render.kept == true)
+    result("the scene's colour is copied into a texture inside a point only",
+           wxl.render.SceneColorSlot() == 0xFFFFFFFF)
+    if render.pipeline then render.pipeline:DestroyPipeline() end
+    if render.image then render.image:DestroyImage() end
+    render.pipeline, render.image = nil, nil
 end)
 
 -- The end ----------------------------------------------------------------------------------------

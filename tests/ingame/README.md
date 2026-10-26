@@ -121,9 +121,9 @@ Phase 18 checks a highlight (abi 0.1.27). On the stock client, `wxl.highlight.Se
 player in red with a glow for two seconds (watch it: the outline and the glow around the character,
 hidden where a wall or a tree stands in front, nothing over the character itself), then
 `Drawn` must count the player's batches drawn again (0, a FAIL, in first person, where the player
-is not drawn) and `Clear` takes it off. On the recompiled client, which draws no highlight until
-its Vulkan renderer's render points exist, `Supported` must be false with a reason and `Set` must
-answer `unsupported`.
+is not drawn) and `Clear` takes it off. The recompiled client does the same on its Vulkan renderer
+(`[gx] api = vulkan`), with the same look; on Direct3D 9 it draws no highlight: `Supported` must be
+false with a reason and `Set` must answer `unsupported`.
 
 Phase 19 checks the game's selection circles (abi 0.1.28), on both clients. The nearest unit is
 targeted (stand near a creature or an NPC, or it is a SKIP) and its circle must be counted drawn
@@ -167,6 +167,16 @@ GlueXML.toc and for each add-on. With the game's own interface the verdict is `s
 changed FrameXML (Dawnlight's in Patch-5.MPQ) it is `modified`, and since the world is up a mod
 took it as signed: `wxl.glue-unlock`, whose log says so (a NOTE, not a failure).
 `InterfaceCleanupRequest` must have been asked once, at the login screens.
+
+Phase 24 checks drawing into the frame (abi 0.1.33). `wxl.gx.Api` names the device. On a device
+`wxl.render` does not drive (the stock client, the recompiled client on Direct3D 9), `Supported`
+must be false with a reason and no image is made. On the recompiled client with
+`[gx] api = vulkan`: an image half the frame's size is made and read, a full-screen pipeline of the
+selftest's own SPIR-V tints the world blue for two seconds at `after_world` (watch it: the world
+bluish, the interface not), inside a GPU zone ("selftest tint" on Tracy's Vulkan timeline when a
+viewer is connected); each of the four points (`after_opaque_world`, `after_liquids`,
+`after_world`, `after_ui`) must come during those two seconds, a model batch must be kept from
+`ModelBatchDrawn`, and the frame's colour is copied into no texture outside a point.
 
 ## Building it
 
