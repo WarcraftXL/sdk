@@ -497,7 +497,8 @@ namespace
         if (std::strcmp(row.service, "highlight") == 0 && name == "Set")
             return "---Highlights an object until cleared, where it is seen and never through a wall: a sharp outline\n"
                    "---`outline` pixels wide (up to 16) and a glow fading over `glow` pixels (up to 64), `glow_strength`\n"
-                   "---(0 to 1) bright, both in `color` (0xAARRGGBB); 0 for none. Called again, it changes the style.\n"
+                   "---(0 to 1) bright, both in `color` (0xRRGGBB); 0 for none. Pixels of a 1080-line picture, drawn in\n"
+                   "---proportion at any height. Called again, it changes the style.\n"
                    "---Kept until Clear, ClearAll, the object leaving view, or the mod disabled, reloaded or unloaded;\n"
                    "---nil, \"unsupported\" where this runtime does not draw highlights (see UnsupportedReason).\n"
                    "---@param target wxl.Object\n---@param color integer\n---@param outline number\n"

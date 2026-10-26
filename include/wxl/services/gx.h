@@ -36,9 +36,9 @@ typedef struct wxl_gx_api
      *
      * The client keeps a copy of what it last set on the device and sends only what differs. A
      * mod that set anything itself -- a render state, a shader, a texture, a vertex declaration,
-     * a stream, the render target and with it the viewport -- calls this once it is done, and the
-     * client sends all of its own state again before its next draw. The render target itself is
-     * not resent: a mod puts back the one it found.
+     * an index buffer, a stream, the render target and with it the viewport -- calls this once it
+     * is done, and the client sends all of its own state again before its next draw. The render
+     * target itself is not resent: a mod puts back the one it found.
      */
     void(WXL_CALL* invalidate_state)(void);
 } wxl_gx_api;

@@ -1472,10 +1472,12 @@ see "Windows of your own" in [Building a mod](building-a-mod.md).
 `wxl.highlight.Set(target, color, outline, glow, glow_strength)` (abi `0.1.27`) outlines an object
 and lights it with a soft glow, where it is seen and never through a wall: `color` is `0xRRGGBB`,
 `outline` the sharp edge's width in pixels (up to 16), `glow` how far the glow fades out (up to
-64), `glow_strength` how bright it is (0 to 1); 0 leaves either out. Called again it changes the
-style; it holds until `wxl.highlight.Clear(target)`, `ClearAll()`, the object leaving view, or the
-mod reloading, being disabled or unloading. Widths are pixels of the screen: to keep a far
-object's outline from swallowing it, scale them by its distance yourself. The stock client draws
+64), `glow_strength` how bright it is (0 to 1); 0 leaves either out. Widths are pixels of a picture
+1080 lines high, drawn in proportion at any resolution; parts the game cuts out by their texture
+(hair, leaves) are outlined as shown. Called again it changes the style; it holds until
+`wxl.highlight.Clear(target)`, `ClearAll()`, the object leaving view, or the mod reloading, being
+disabled or unloading. To keep a far object's outline from swallowing it, scale the widths by its
+distance yourself. The stock client draws
 them; where a runtime does not (the recompiled client, until its Vulkan renderer has its render
 points), `wxl.highlight.Supported()` is `false`, `UnsupportedReason()` says why and `Set` answers
 `nil, "unsupported"`: say so once and leave the feature off.

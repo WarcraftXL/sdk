@@ -3375,7 +3375,8 @@ function highlight.UnsupportedReason() end
 
 ---Highlights an object until cleared, where it is seen and never through a wall: a sharp outline
 ---`outline` pixels wide (up to 16) and a glow fading over `glow` pixels (up to 64), `glow_strength`
----(0 to 1) bright, both in `color` (0xAARRGGBB); 0 for none. Called again, it changes the style.
+---(0 to 1) bright, both in `color` (0xRRGGBB); 0 for none. Pixels of a 1080-line picture, drawn in
+---proportion at any height. Called again, it changes the style.
 ---Kept until Clear, ClearAll, the object leaving view, or the mod disabled, reloaded or unloaded;
 ---nil, "unsupported" where this runtime does not draw highlights (see UnsupportedReason).
 ---@param target wxl.Object

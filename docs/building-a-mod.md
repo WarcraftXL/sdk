@@ -1621,9 +1621,11 @@ over `glow` pixels (up to 64), `glow_strength` (0 to 1) bright, both in `color` 
 either leaves it out. What is drawn is the object's model and what hangs on it (weapons, a rider,
 a mount), and only where it is seen: the runtime draws it again against the scene's depth, so a
 wall, a tree or another unit in front hides the highlight as it hides the object. Translucent parts
-are not outlined. Called again, `Set` changes the style; `Clear(target)` and `ClearAll()` take the
-mod's highlights off, and they go when the mod goes or the object leaves view. Widths are pixels of
-the screen: scale them by the object's distance so that a far silhouette is not swallowed.
+are not outlined; parts the game cuts out by their texture's alpha (hair, a mane, leaves) are
+outlined as the game shows them. Widths are pixels of a picture 1080 lines high, drawn in
+proportion at any resolution. Called again, `Set` changes the style; `Clear(target)` and
+`ClearAll()` take the mod's highlights off, and they go when the mod goes or the object leaves
+view. Scale the widths by the object's distance so that a far silhouette is not swallowed.
 
 Not every runtime draws them: the stock client does (Direct3D 9, shader model 3), the recompiled
 client will through its Vulkan renderer's render points. Ask first, and turn the feature off with

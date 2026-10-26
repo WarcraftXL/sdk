@@ -16,7 +16,7 @@ WXL_API(highlight, supported, Supported, boolean, (), generated, generated,
 WXL_API(highlight, unsupported_reason, UnsupportedReason, str, (), generated, generated,
         "Why highlights are not drawn, in a sentence for a log; empty when they are.")
 WXL_API(highlight, set, Set, result, (object target, u32 color, f32 outline, f32 glow, f32 glow_strength), shim, generated,
-        "Highlights an object until cleared: color 0xAARRGGBB, outline and glow in pixels (up to 16 and 64, 0 for none), glow_strength 0 to 1. Called again, changes the style.")
+        "Highlights an object until cleared: color 0xRRGGBB, outline and glow in pixels of a 1080-line picture (up to 16 and 64, 0 for none), glow_strength 0 to 1. Called again, changes the style.")
 WXL_API(highlight, clear, Clear, result, (object target), shim, generated,
         "Takes this mod's highlight off an object.")
 WXL_API(highlight, clear_all, ClearAll, none, (), shim, generated,

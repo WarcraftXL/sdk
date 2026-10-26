@@ -16,11 +16,13 @@
 // through a wall, nor through anything else in front of it. Around what is seen, a sharp outline
 // `outline` pixels wide (0 for none), and a glow that fades over `glow` pixels (0 for none),
 // `glow_strength` (0 to 1) bright, both in `color`. Over the object itself nothing is drawn.
-// Translucent parts (a spell's glow on a weapon, a ghost) are not outlined. Widths are pixels of
-// the screen, the outline up to 16 and the glow up to 64: a mod that wants a far object's outline
-// thinner scales them itself.
+// Translucent parts (a spell's glow on a weapon, a ghost) are not outlined; parts the game cuts
+// out by their texture's alpha (hair, a mane, leaves, a cloak's edge) are outlined as the game
+// shows them. Widths are pixels of a picture 1080 lines high, the outline up to 16 and the glow up
+// to 64, and drawn in proportion at any other height, so that an outline looks the same at any
+// resolution; a mod that wants a far object's outline thinner scales them itself.
 //
-// Colour: 0xAARRGGBB, its alpha scaling the outline and the glow (0xFF for full).
+// Colour: 0xRRGGBB; the top byte is reserved: pass 0.
 //
 // Each highlight belongs to the mod that set it: an object has at most one highlight per mod, a
 // mod's highlights go when it is disabled or unloaded, and an object's when it leaves view. Up to
@@ -67,9 +69,9 @@ typedef struct wxl_highlight_api
 
     /**
      * @brief Highlights an object until cleared, or changes the calling mod's highlight of it.
-     * @param color          0xAARRGGBB
-     * @param outline        the sharp outline's width in pixels, 0 to 16; 0 for none
-     * @param glow           how far the glow reaches in pixels, 0 to 64; 0 for none
+     * @param color          0xRRGGBB
+     * @param outline        the sharp outline's width in pixels at 1080 lines, 0 to 16; 0 for none
+     * @param glow           how far the glow reaches in pixels at 1080 lines, 0 to 64; 0 for none
      * @param glow_strength  how bright the glow is at the object's edge, 0 to 1
      *
      * WXL_E_UNSUPPORTED where highlights are not drawn (see unsupported_reason), WXL_E_NOT_FOUND
