@@ -12,6 +12,7 @@
 #include <cctype>
 #include <cstddef>
 #include <cstring>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -32,6 +33,7 @@
 #include "wxl/services/pose.h"
 #include "wxl/services/highlight.h"
 #include "wxl/services/selectioncircle.h"
+#include "wxl/services/texture.h"
 #include "wxl/services/imgui.h"
 #include "wxl/services/data.h"
 #include "wxl/services/hook.h"
@@ -735,6 +737,68 @@ namespace wxltest
         static void WXL_CALL CircleResetAll() { CircleCalls().push_back(CircleCall{"reset_all", 0, 0, {}, 0, 0.0f, WXL_HANDLE_NONE}); }
         static uint32_t WXL_CALL CircleDrawn() { return 2; }
         static uint32_t WXL_CALL CircleHidden() { return 1; }
+        // wxl.texture: every request kept whole; a source naming "missing" is no file.
+        struct TextureGroupCall
+        {
+            std::string id;
+            uint32_t    set = 0, color = 0;
+            float       width   = 0.0f;
+            bool        visible = true;
+        };
+        struct TextureCall
+        {
+            std::string                   source;
+            uint32_t                      width = 0, height = 0, tint = 0;
+            std::vector<TextureGroupCall> groups;
+        };
+        static std::vector<TextureCall>& TextureCalls()
+        {
+            static std::vector<TextureCall> calls;
+            return calls;
+        }
+        static wxl_result WXL_CALL TextureMake(const wxl_texture_request* request, wxl_texture* out)
+        {
+            if (!request || !out) return WXL_E_INVALID;
+            TextureCall call;
+            call.source.assign(request->source.data ? request->source.data : "", request->source.size);
+            call.width  = request->width;
+            call.height = request->height;
+            call.tint   = request->tint;
+            for (uint32_t i = 0; i < request->group_count; ++i)
+            {
+                const wxl_texture_group& g = request->groups[i];
+                call.groups.push_back(TextureGroupCall{std::string(g.id.data, g.id.size), g.set, g.color, g.width,
+                                                       g.visible != WXL_FALSE});
+            }
+            TextureCalls().push_back(call);
+            if (call.source.find("missing") != std::string::npos)
+            {
+                std::snprintf(out->reason, sizeof out->reason, "no file %s", call.source.c_str());
+                return WXL_E_NOT_FOUND;
+            }
+            std::snprintf(out->path, sizeof out->path, "Interface\\WXL\\fake\\made_%ux%u.blp", call.width, call.height);
+            out->width          = call.width;
+            out->height         = call.height;
+            out->texture_width  = 64;
+            out->texture_height = 32;
+            out->right          = static_cast<float>(call.width) / 64.0f;
+            out->bottom         = static_cast<float>(call.height) / 32.0f;
+            out->reused         = TextureCalls().size() > 1 ? WXL_TRUE : WXL_FALSE;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL TextureStats(wxl_texture_stats* out)
+        {
+            if (!out) return WXL_E_INVALID;
+            out->textures      = 3;
+            out->resident      = 2;
+            out->texture_limit = 2048;
+            out->bytes         = 4096;
+            out->byte_limit    = 64u << 20;
+            out->made          = 3;
+            out->reused        = 5;
+            out->released      = 1;
+            return WXL_OK;
+        }
         static wxl_str WXL_CALL ImGuiVersion() { return wxl_str{"1.0;0.1", 7}; }
         static void* WXL_CALL ImGuiContext() { return reinterpret_cast<void*>(0x1000); }
         static void* WXL_CALL PlotContext() { return reinterpret_cast<void*>(0x2000); }
@@ -813,6 +877,18 @@ namespace wxltest
                 t.clear              = &HighlightClear;
                 t.clear_all          = &HighlightClearAll;
                 t.drawn              = &HighlightDrawn;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_texture_api* TextureTable()
+        {
+            static const wxl_texture_api api = [] {
+                wxl_texture_api t{};
+                t.struct_size = sizeof t;
+                t.make        = &TextureMake;
+                t.stats       = &TextureStats;
                 return t;
             }();
             return &api;

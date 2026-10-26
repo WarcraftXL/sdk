@@ -75,6 +75,13 @@
 //                      .SetObjectStyle(target, style),  what the mod holds
 //                      .ResetObject(target), .ResetAll()
 //
+// wxl.texture's take a table and answer several values; nothing is kept for the mod:
+//
+//   wxl.texture.Make(source, width, height             path, right, bottom, texture width and
+//                    [, groups [, tint]])              height, or nil and why; ".\\" is the
+//                                                      mod's own folder
+//   wxl.texture.Stats()                                a table of what the service holds
+//
 // They are let go when the mod is disabled or its state closes.
 
 #ifndef WXL_LUA_SHIMS_HPP

@@ -2608,6 +2608,62 @@ end)
         if (g_failures) sink.Dump();
     }
 
+    Section("textures in Lua");
+    {
+        using wxltest::FakeView;
+        const fs::path mods = MakeTree(scratch, "texture", binary, fs::path());
+        WriteFile(mods / "tex-a" / "mod.json", LuaManifest("wxl.tex-a"));
+        WriteFile(mods / "tex-a" / "init.lua", R"(
+local path, right, bottom, tw, th = wxl.texture.Make(".\\assets\\reticle.svg", 34, 21,
+    { fill = "ff4040ff", outline = { color = "#000000cc", width = 2 }, glow = false, ring = 0x80FFFFFF }, "ffffff80")
+print("made " .. path .. " " .. right .. " " .. bottom .. " " .. tw .. " " .. th)
+print("missing " .. tostring(select(2, wxl.texture.Make("Interface\\AddOns\\X\\missing.png", 16, 16))))
+print("bad colour " .. tostring(select(2, pcall(function() return wxl.texture.Make("a.svg", 8, 8, { fill = "red" }) end))))
+print("bad field " .. tostring(select(2, pcall(function() return wxl.texture.Make("a.svg", 8, 8, { fill = { colour = "ff0000" } }) end))))
+print("bad size " .. tostring(select(2, pcall(function() return wxl.texture.Make("a.svg", -1, 8) end))))
+local stats = wxl.texture.Stats()
+print("stats " .. stats.textures .. " " .. stats.resident .. " " .. stats.byte_limit)
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_TEXTURE_SERVICE, WXL_TEXTURE_SERVICE_VERSION, FakeView::TextureTable()});
+        FakeView::TextureCalls().clear();
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            Check(sink.Has("[wxl.tex-a] made Interface\\WXL\\fake\\made_34x21.blp 0.53125 0.65625 64 32"),
+                  "Make answers the path, the picture's texture coordinates and the texture's size");
+            const auto& calls = FakeView::TextureCalls();
+            bool groupsWhole = calls.size() == 2 && calls[0].groups.size() == 4;
+            for (const auto& g : groupsWhole ? calls[0].groups : std::vector<FakeView::TextureGroupCall>{})
+            {
+                if (g.id == "fill") groupsWhole = groupsWhole && g.set == WXL_TEXTURE_SET_COLOR && g.color == 0xFFFF4040u;
+                else if (g.id == "outline")
+                    groupsWhole = groupsWhole && g.set == (WXL_TEXTURE_SET_COLOR | WXL_TEXTURE_SET_WIDTH) &&
+                                  g.color == 0xCC000000u && g.width == 2.0f;
+                else if (g.id == "glow") groupsWhole = groupsWhole && g.set == WXL_TEXTURE_SET_VISIBLE && !g.visible;
+                else if (g.id == "ring") groupsWhole = groupsWhole && g.set == WXL_TEXTURE_SET_COLOR && g.color == 0x80FFFFFFu;
+                else groupsWhole = false;
+            }
+            Check(groupsWhole && calls[0].source == "Mods\\tex-a\\assets\\reticle.svg" && calls[0].width == 34 &&
+                      calls[0].height == 21 && calls[0].tint == 0x80FFFFFFu,
+                  "\".\\\\\" names the mod's folder, colours are read as rrggbbaa or 0xAARRGGBB, false hides, a table sets "
+                  "colour and width");
+            Check(sink.Has("[wxl.tex-a] missing no file Interface\\AddOns\\X\\missing.png"), "a failure answers nil and the reason");
+            Check(sink.Has("[wxl.tex-a] bad colour") && sink.Has("group 'fill' \"red\" is not a colour"),
+                  "a colour that is not one is an error naming the group");
+            Check(sink.Has("[wxl.tex-a] bad field") && sink.Has("group 'fill' has a field 'colour'; it takes color, width and visible"),
+                  "a group's unknown field is an error naming what it takes");
+            Check(sink.Has("[wxl.tex-a] bad size") && sink.Has("'width' (argument 2) must be a whole number of pixels"),
+                  "a size that is not one is an error naming it");
+            Check(sink.Has("[wxl.tex-a] stats 3 2 67108864"), "Stats answers a table");
+            host.Shutdown();
+        }
+        if (g_failures) sink.Dump();
+    }
+
     Section("what a mod's abi lets it use");
     {
         const wxl::reflect::Version since = wxl::reflect::SinceOf(WXL_EV_ChatMessage);

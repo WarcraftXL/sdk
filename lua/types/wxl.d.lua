@@ -3519,6 +3519,41 @@ function selectioncircle.Drawn() end
 ---@return string|nil reason
 function selectioncircle.Hidden() end
 
+---wxl.texture. Textures made from an SVG (drawn at the size asked, its groups recoloured, outlined or hidden) or a PNG, under a path the client loads like its own files.
+---Came with abi 0.1.30: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.texture
+local texture = {}
+
+---Makes a texture of an SVG or a PNG, which the client loads by the path answered, like its
+---own files (Texture:SetTexture in an add-on, a model's texture). An SVG is drawn at `width` x
+---`height` pixels, sharp, its proportions kept; a PNG is resampled to that size (nil: the
+---source's own). The texture's edges are powers of two, the picture at its top-left corner: show
+---it with SetTexCoord(0, right, 0, bottom) on a region of the picture's size. The same source,
+---size, groups and tint answer the same path, made once; a change to the file makes a new one.
+---`source`: ".\\assets\\x.svg" in this mod's folder, "Mods\\<folder>\\..." in another mod's,
+---or a name the client has ("Interface\\AddOns\\<add-on>\\x.svg").
+---`groups` (SVG): by the id of a shape or of its nearest group with one, a colour ("rrggbbaa",
+---"rrggbb" or 0xAARRGGBB: every paint, its alpha their opacity), false to hide it, or a table
+---{color, width = the strokes' width times the SVG's own (2: twice, 0: none), visible}.
+---`tint`: a colour every pixel is multiplied by.
+---@param source string
+---@param width? integer
+---@param height? integer
+---@param groups? table<string, string|integer|boolean|{color: string|integer?, width: number?, visible: boolean?}>
+---@param tint? string|integer
+---@return string|nil path
+---@return number|string right the picture's right texture coordinate, or why there is none
+---@return number bottom
+---@return integer texture_width
+---@return integer texture_height
+function texture.Make(source, width, height, groups, tint) end
+
+---What the service holds: textures (names known), resident (in memory), texture_limit, bytes,
+---byte_limit, made, reused, released.
+---@return {textures: integer, resident: integer, texture_limit: integer, bytes: integer, byte_limit: integer, made: integer, reused: integer, released: integer}|nil stats
+---@return string|nil reason
+function texture.Stats() end
+
 ---@class wxl.ModInfo
 ---@field id string
 ---@field name string
@@ -3599,6 +3634,7 @@ function object.Unwatch(type, name) end
 ---@field pose wxl.pose
 ---@field highlight wxl.highlight
 ---@field selectioncircle wxl.selectioncircle
+---@field texture wxl.texture
 ---@field events table<wxl.Family, string[]> every family's events, as On<Event>
 wxl = {}
 

@@ -31,6 +31,7 @@
 #include "wxl/services/pose.h"
 #include "wxl/services/highlight.h"
 #include "wxl/services/selectioncircle.h"
+#include "wxl/services/texture.h"
 #include "wxl/services/relay.h"
 #include "wxl/services/storage.h"
 
@@ -2075,6 +2076,203 @@ namespace wxl::lua::shims
                 g_heads.erase(g_heads.begin() + static_cast<std::ptrdiff_t>(i));
             }
         }
+
+        // --- wxl.texture: a table of groups and colours as Lua writes them ---------------------
+
+        const wxl_texture_api* Textures() { return wxl::api::Table<wxl_texture_api>(); }
+
+        int HexDigit(char c)
+        {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
+        }
+
+        /// A colour as a Lua mod writes it: "rrggbbaa" or "rrggbb" (an optional '#' first, the
+        /// order CSS writes), or a whole number 0xAARRGGBB. Answers it as 0xAARRGGBB.
+        uint32_t CheckTextureColor(lua_State* L, int index, const std::string& what)
+        {
+            if (lua_type(L, index) == LUA_TNUMBER)
+            {
+                const double value = lua_tonumber(L, index);
+                if (!(value >= 0.0 && value <= 4294967295.0) || value != static_cast<double>(static_cast<uint32_t>(value)))
+                    luaL_error(L, "wxl.texture.Make: %s must be a whole number from 0 to 0xFFFFFFFF (0xAARRGGBB)", what.c_str());
+                return static_cast<uint32_t>(value);
+            }
+            if (lua_type(L, index) == LUA_TSTRING)
+            {
+                size_t      size = 0;
+                const char* text = lua_tolstring(L, index, &size);
+                if (size && text[0] == '#')
+                {
+                    ++text;
+                    --size;
+                }
+                uint32_t rgba = 0;
+                bool     ok   = size == 6 || size == 8;
+                for (size_t i = 0; ok && i < size; ++i)
+                {
+                    const int digit = HexDigit(text[i]);
+                    ok              = digit >= 0;
+                    rgba            = (rgba << 4) | static_cast<uint32_t>(digit < 0 ? 0 : digit);
+                }
+                if (ok) return size == 6 ? (0xFF000000u | rgba) : ((rgba & 0xFFu) << 24) | (rgba >> 8);
+                luaL_error(L, "wxl.texture.Make: %s \"%s\" is not a colour: write \"rrggbb\" or \"rrggbbaa\" in hex",
+                           what.c_str(), lua_tostring(L, index));
+            }
+            luaL_error(L, "wxl.texture.Make: %s must be a colour, \"rrggbbaa\" or 0xAARRGGBB", what.c_str());
+            return 0;
+        }
+
+        /// The groups table: {id = colour}, {id = false} (hidden), or {id = {color, width, visible}}.
+        std::vector<wxl_texture_group> CheckTextureGroups(lua_State* L, int index, std::deque<std::string>& ids)
+        {
+            std::vector<wxl_texture_group> groups;
+            if (lua_isnoneornil(L, index)) return groups;
+            if (!lua_istable(L, index))
+                luaL_error(L, "wxl.texture.Make: 'groups' (argument %d) takes a table {id = colour or {color, width, visible}}",
+                           index);
+            lua_pushnil(L);
+            while (lua_next(L, index) != 0)
+            {
+                if (lua_type(L, -2) != LUA_TSTRING)
+                    luaL_error(L, "wxl.texture.Make: the groups are named by the SVG's ids, strings; one key is a %s",
+                               luaL_typename(L, -2));
+                ids.emplace_back(lua_tostring(L, -2));
+                const std::string& id = ids.back();
+                wxl_texture_group  group{};
+                group.struct_size = sizeof group;
+                group.id          = Str(id);
+                const int value   = lua_gettop(L);
+                switch (lua_type(L, value))
+                {
+                case LUA_TSTRING:
+                case LUA_TNUMBER:
+                    group.set |= WXL_TEXTURE_SET_COLOR;
+                    group.color = CheckTextureColor(L, value, "group '" + id + "'");
+                    break;
+                case LUA_TBOOLEAN:
+                    group.set |= WXL_TEXTURE_SET_VISIBLE;
+                    group.visible = lua_toboolean(L, value) ? WXL_TRUE : WXL_FALSE;
+                    break;
+                case LUA_TTABLE:
+                    lua_pushnil(L);
+                    while (lua_next(L, value) != 0)
+                    {
+                        const char* field = lua_type(L, -2) == LUA_TSTRING ? lua_tostring(L, -2) : "";
+                        if (std::strcmp(field, "color") == 0)
+                        {
+                            group.set |= WXL_TEXTURE_SET_COLOR;
+                            group.color = CheckTextureColor(L, lua_gettop(L), "group '" + id + "' color");
+                        }
+                        else if (std::strcmp(field, "width") == 0)
+                        {
+                            if (lua_type(L, -1) != LUA_TNUMBER || !(lua_tonumber(L, -1) >= 0.0))
+                                luaL_error(L, "wxl.texture.Make: group '%s' width must be a number, 0 or more", id.c_str());
+                            group.set |= WXL_TEXTURE_SET_WIDTH;
+                            group.width = static_cast<float>(lua_tonumber(L, -1));
+                        }
+                        else if (std::strcmp(field, "visible") == 0)
+                        {
+                            if (lua_type(L, -1) != LUA_TBOOLEAN)
+                                luaL_error(L, "wxl.texture.Make: group '%s' visible must be true or false", id.c_str());
+                            group.set |= WXL_TEXTURE_SET_VISIBLE;
+                            group.visible = lua_toboolean(L, -1) ? WXL_TRUE : WXL_FALSE;
+                        }
+                        else
+                            luaL_error(L, "wxl.texture.Make: group '%s' has a field '%s'; it takes color, width and visible",
+                                       id.c_str(), field);
+                        lua_pop(L, 1);
+                    }
+                    break;
+                default:
+                    luaL_error(L, "wxl.texture.Make: group '%s' takes a colour, false, or a table {color, width, visible}",
+                               id.c_str());
+                }
+                groups.push_back(group);
+                lua_pop(L, 1);
+            }
+            return groups;
+        }
+
+        uint32_t CheckTextureEdge(lua_State* L, int index, const char* what)
+        {
+            if (lua_isnoneornil(L, index)) return 0;
+            const double edge = lua_type(L, index) == LUA_TNUMBER ? lua_tonumber(L, index) : -1.0;
+            if (!(edge >= 0.0 && edge <= 4294967295.0) || edge != static_cast<double>(static_cast<uint32_t>(edge)))
+                luaL_error(L, "wxl.texture.Make: '%s' (argument %d) must be a whole number of pixels, or nil for the source's own",
+                           what, index);
+            return static_cast<uint32_t>(edge);
+        }
+
+        /// Make(source, width, height [, groups [, tint]]): path, right, bottom, texture width and
+        /// height, or nil and why. ".\\" names this Lua mod's own folder.
+        int L_TextureMake(lua_State* L)
+        {
+            ScriptMod&  mod  = Self(L);
+            size_t      size = 0;
+            const char* text = luaL_checklstring(L, 1, &size);
+            std::string source(text, size);
+            if (source.size() >= 2 && source[0] == '.' && (source[1] == '\\' || source[1] == '/'))
+                source = "Mods\\" + mod.Directory().filename().string() + "\\" + source.substr(2);
+            const uint32_t                       width  = CheckTextureEdge(L, 2, "width");
+            const uint32_t                       height = CheckTextureEdge(L, 3, "height");
+            std::deque<std::string>              ids;
+            const std::vector<wxl_texture_group> groups = CheckTextureGroups(L, 4, ids);
+            const uint32_t tint = lua_isnoneornil(L, 5) ? 0u : CheckTextureColor(L, 5, "'tint' (argument 5)");
+
+            const wxl_texture_api* api = Textures();
+            if (!api || !wxl::detail::Carries(api, &wxl_texture_api::make)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_texture_request request{};
+            request.struct_size = sizeof request;
+            request.source      = Str(source);
+            request.width       = width;
+            request.height      = height;
+            request.groups      = groups.empty() ? nullptr : groups.data();
+            request.group_count = static_cast<uint32_t>(groups.size());
+            request.tint        = tint;
+            wxl_texture made{};
+            made.struct_size        = sizeof made;
+            const wxl_result result = api->make(&request, &made);
+            if (result != WXL_OK)
+            {
+                if (!made.reason[0]) return PushResultFailure(L, result);
+                lua_pushnil(L);
+                lua_pushstring(L, made.reason);
+                return 2;
+            }
+            lua_pushstring(L, made.path);
+            lua_pushnumber(L, made.right);
+            lua_pushnumber(L, made.bottom);
+            lua_pushnumber(L, made.texture_width);
+            lua_pushnumber(L, made.texture_height);
+            return 5;
+        }
+
+        int L_TextureStats(lua_State* L)
+        {
+            const wxl_texture_api* api = Textures();
+            if (!api || !wxl::detail::Carries(api, &wxl_texture_api::stats)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_texture_stats stats{};
+            stats.struct_size       = sizeof stats;
+            const wxl_result result = api->stats(&stats);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_createtable(L, 0, 8);
+            const auto field = [&](const char* name, double value) {
+                lua_pushnumber(L, value);
+                lua_setfield(L, -2, name);
+            };
+            field("textures", stats.textures);
+            field("resident", stats.resident);
+            field("texture_limit", stats.texture_limit);
+            field("bytes", static_cast<double>(stats.bytes));
+            field("byte_limit", static_cast<double>(stats.byte_limit));
+            field("made", static_cast<double>(stats.made));
+            field("reused", static_cast<double>(stats.reused));
+            field("released", static_cast<double>(stats.released));
+            return 1;
+        }
     } // namespace
 
     lua_CFunction Find(std::string_view service, std::string_view name)
@@ -2119,6 +2317,8 @@ namespace wxl::lua::shims
         if (service == "selectioncircle" && name == "SetObjectStyle") return &L_CircleSetObjectStyle;
         if (service == "selectioncircle" && name == "ResetObject") return &L_CircleResetObject;
         if (service == "selectioncircle" && name == "ResetAll") return &L_CircleResetAll;
+        if (service == "texture" && name == "Make") return &L_TextureMake;
+        if (service == "texture" && name == "Stats") return &L_TextureStats;
         if (service == "profile" && name == "Begin") return &profile::L_Begin;
         if (service == "profile" && name == "End") return &profile::L_End;
         if (service == "profile" && name == "Text") return &profile::L_Text;

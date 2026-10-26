@@ -1054,6 +1054,7 @@ int main()
         host.Table()->publish_service(WXL_HIGHLIGHT_SERVICE, WXL_HIGHLIGHT_SERVICE_VERSION, wxltest::FakeView::HighlightTable());
         host.Table()->publish_service(WXL_SELECTIONCIRCLE_SERVICE, WXL_SELECTIONCIRCLE_SERVICE_VERSION,
                                       wxltest::FakeView::SelectionCircleTable());
+        host.Table()->publish_service(WXL_TEXTURE_SERVICE, WXL_TEXTURE_SERVICE_VERSION, wxltest::FakeView::TextureTable());
     }
 
     Section("reads that can fail");
@@ -1602,6 +1603,38 @@ int main()
                   calls[2].target == FakeObjects::kBoar && calls[3].name == "set_object_style" && calls[3].scale == 0.5f &&
                   calls[4].name == "reset_object" && calls[5].name == "reset" && calls[6].name == "reset_all",
               "with the masks, the texture, the colour, the scale and the object");
+    }
+
+    Section("textures made from an SVG or a PNG");
+    {
+        using wxltest::FakeView;
+        FakeView::TextureCalls().clear();
+        const wxl::TextureService textures;
+        std::string               why;
+        const auto made = textures.Make(wxl::TextureRequest(".\\assets\\reticle.svg")
+                                            .Size(34, 21)
+                                            .Color("fill", 0xFFFF4040u)
+                                            .Color("outline", 0xCC000000u)
+                                            .Width("outline", 2.0f)
+                                            .Hide("glow")
+                                            .Tint(0x80FFFFFFu),
+                                        &why);
+        Check(made && made->path == "Interface\\WXL\\fake\\made_34x21.blp" && made->texture_width == 64 &&
+                  made->texture_height == 32 && made->right == 34.0f / 64.0f && made->bottom == 21.0f / 32.0f && !made->reused,
+              "Make answers the path, the texture's size and the picture's texture coordinates");
+        const auto& calls = FakeView::TextureCalls();
+        Check(calls.size() == 1 && calls[0].source == ".\\assets\\reticle.svg" && calls[0].width == 34 &&
+                  calls[0].height == 21 && calls[0].tint == 0x80FFFFFFu && calls[0].groups.size() == 3 &&
+                  calls[0].groups[0].id == "fill" && calls[0].groups[0].set == WXL_TEXTURE_SET_COLOR &&
+                  calls[0].groups[0].color == 0xFFFF4040u && calls[0].groups[1].id == "outline" &&
+                  calls[0].groups[1].set == (WXL_TEXTURE_SET_COLOR | WXL_TEXTURE_SET_WIDTH) && calls[0].groups[1].width == 2.0f &&
+                  calls[0].groups[2].id == "glow" && calls[0].groups[2].set == WXL_TEXTURE_SET_VISIBLE && !calls[0].groups[2].visible,
+              "the request reaches the service whole: one group per id, each with what was set of it");
+        const auto missing = textures.Make(wxl::TextureRequest("Mods\\x\\missing.svg"), &why);
+        Check(!missing && missing.Error() == WXL_E_NOT_FOUND && why == "no file Mods\\x\\missing.svg",
+              "a failure answers its result and the service's reason");
+        const auto stats = textures.Stats();
+        Check(stats && stats->textures == 3 && stats->byte_limit == (64u << 20) && stats->released == 1, "Stats reads");
     }
 
     Section("objects in handlers, and data kept per object");

@@ -526,6 +526,31 @@ namespace
         if (std::strcmp(row.service, "highlight") == 0 && name == "ClearAll")
             return "---Takes off every highlight of this mod.\n"
                    "function " + owner + ".ClearAll() end\n\n";
+        if (std::strcmp(row.service, "texture") == 0 && name == "Make")
+            return "---Makes a texture of an SVG or a PNG, which the client loads by the path answered, like its\n"
+                   "---own files (Texture:SetTexture in an add-on, a model's texture). An SVG is drawn at `width` x\n"
+                   "---`height` pixels, sharp, its proportions kept; a PNG is resampled to that size (nil: the\n"
+                   "---source's own). The texture's edges are powers of two, the picture at its top-left corner: show\n"
+                   "---it with SetTexCoord(0, right, 0, bottom) on a region of the picture's size. The same source,\n"
+                   "---size, groups and tint answer the same path, made once; a change to the file makes a new one.\n"
+                   "---`source`: \".\\\\assets\\\\x.svg\" in this mod's folder, \"Mods\\\\<folder>\\\\...\" in another mod's,\n"
+                   "---or a name the client has (\"Interface\\\\AddOns\\\\<add-on>\\\\x.svg\").\n"
+                   "---`groups` (SVG): by the id of a shape or of its nearest group with one, a colour (\"rrggbbaa\",\n"
+                   "---\"rrggbb\" or 0xAARRGGBB: every paint, its alpha their opacity), false to hide it, or a table\n"
+                   "---{color, width = the strokes' width times the SVG's own (2: twice, 0: none), visible}.\n"
+                   "---`tint`: a colour every pixel is multiplied by.\n"
+                   "---@param source string\n---@param width? integer\n---@param height? integer\n"
+                   "---@param groups? table<string, string|integer|boolean|{color: string|integer?, width: number?, visible: boolean?}>\n"
+                   "---@param tint? string|integer\n"
+                   "---@return string|nil path\n---@return number|string right the picture's right texture coordinate, or why there is none\n"
+                   "---@return number bottom\n---@return integer texture_width\n---@return integer texture_height\n"
+                   "function " + owner + ".Make(source, width, height, groups, tint) end\n\n";
+        if (std::strcmp(row.service, "texture") == 0 && name == "Stats")
+            return "---What the service holds: textures (names known), resident (in memory), texture_limit, bytes,\n"
+                   "---byte_limit, made, reused, released.\n"
+                   "---@return {textures: integer, resident: integer, texture_limit: integer, bytes: integer, byte_limit: integer, made: integer, reused: integer, released: integer}|nil stats\n"
+                   "---@return string|nil reason\n"
+                   "function " + owner + ".Stats() end\n\n";
         if (std::strcmp(row.service, "selectioncircle") == 0)
         {
             const std::string masks =

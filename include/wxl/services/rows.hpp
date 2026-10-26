@@ -62,6 +62,8 @@
 //       {position = {x, y, z}, yaw, pitch, roll, scale}, C++ a wxl_m2_placement
 //   i16_out int16_t*  vec3_out wxl_vec3*  bones_filter_fn wxl_m2_bones_filter_fn
 //   bones_fn wxl_m2_bones_fn: what wxl.m2's bone watchers take; no script reaches them
+//   texture_request const wxl_texture_request*: what wxl.texture makes a texture of; a script
+//       passes the source, the size, a table of groups and a tint, C++ a wxl::TextureRequest
 //   provider const wxl_asset_provider*  transform const wxl_asset_transform*: what a native
 //       mod hands wxl.storage; no script reaches a row taking one
 //   hash_fn wxl_file_hash_fn  relay_endpoint const wxl_relay_endpoint*
@@ -78,7 +80,8 @@
 //   enumeration<E> uint32_t holding a value of E, an enumeration of enums.def
 //   out<K> wxl_result, K*            found<K> wxl_bool, K*: K a value kind (u64 u32 i32 f64 str
 //       boolean vec3) or a struct kind (m2_item_display: wxl_m2_item_display, file_hash:
-//       wxl_file_hash, asset_reload: wxl_asset_reload, written no longer
+//       wxl_file_hash, asset_reload: wxl_asset_reload, texture: wxl_texture, texture_stats:
+//       wxl_texture_stats, written no longer
 //       than its struct_size)
 //   whole_bytes wxl_result, (void* buffer, uint64_t capacity, uint64_t* out_read): a buffer
 //       too small is WXL_E_INVALID with out_read set to what it needs
@@ -115,6 +118,7 @@
 #include "wxl/services/imgui.h"
 #include "wxl/services/highlight.h"
 #include "wxl/services/selectioncircle.h"
+#include "wxl/services/texture.h"
 #include "wxl/services/m2.h"
 #include "wxl/services/m2file.h"
 #include "wxl/services/relay.h"
@@ -168,6 +172,9 @@ namespace wxl::api
         struct placement {};
         struct bones_filter_fn {};
         struct bones_fn {};
+        struct texture_request {};
+        struct texture {};
+        struct texture_stats {};
         template <class K>
         struct opt {};
 
@@ -236,6 +243,8 @@ namespace wxl::api
     template <> struct Value<kind::file_hash> { using type = wxl_file_hash; };
     template <> struct Value<kind::asset_reload> { using type = wxl_asset_reload; };
     template <> struct Value<kind::f32> { using type = float; };
+    template <> struct Value<kind::texture> { using type = wxl_texture; };
+    template <> struct Value<kind::texture_stats> { using type = wxl_texture_stats; };
 
     /// The C parameters a parameter kind stands for.
     template <class K, class = void>
@@ -272,6 +281,7 @@ namespace wxl::api
     template <> struct Param<kind::placement> { using C = List<const wxl_m2_placement*>; };
     template <> struct Param<kind::bones_filter_fn> { using C = List<wxl_m2_bones_filter_fn>; };
     template <> struct Param<kind::bones_fn> { using C = List<wxl_m2_bones_fn>; };
+    template <> struct Param<kind::texture_request> { using C = List<const wxl_texture_request*>; };
     template <class R>
     struct Param<R, std::enable_if_t<IsResource<R>::value>>
     {
