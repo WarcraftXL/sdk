@@ -117,6 +117,14 @@ everything in view (their counts are in the line), and `CanAttack` agrees with t
 `UnitCanAttack` for the nearest unit, which is targeted for the question; the target the player had
 comes back after. Stand near a creature or an NPC for the last check, or it is a SKIP.
 
+Phase 18 checks a highlight (abi 0.1.27). On the stock client, `wxl.highlight.Set` outlines the
+player in red with a glow for two seconds (watch it: the outline and the glow around the character,
+hidden where a wall or a tree stands in front, nothing over the character itself), then
+`Drawn` must count the player's batches drawn again (0, a FAIL, in first person, where the player
+is not drawn) and `Clear` takes it off. On the recompiled client, which draws no highlight until
+its Vulkan renderer's render points exist, `Supported` must be false with a reason and `Set` must
+answer `unsupported`.
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the

@@ -3,7 +3,7 @@
   "id": "wxl.selftest",
   "name": "Self test",
   "version": "1.0.0",
-  "abi": "0.1.26",
+  "abi": "0.1.27",
   "description": "A Lua test tool: on entering the world it calls every function the test mods give the client's Lua and checks each answer, sends chat and addon messages, makes mods reload, break and repair a manifest, provokes casts and an item use, reloads the interface and logs back in, reads served files, hangs and places models, checks the asset bricks, the camera and bone watchers; every result is a PASS, FAIL, SKIP or NOTE line in the log.",
   "lua": "init.lua",
   "requires": [

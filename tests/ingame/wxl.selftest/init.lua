@@ -44,6 +44,9 @@
 --  17. reticle targeting's bricks: the runtime raises WorldClickRequest; CanAttack agrees with the
 --      client's UnitCanAttack for the nearest unit (targeted for the question, then the target is
 --      given back); CanInteract and a game object's CanUse answer for everything in view.
+--  18. a highlight: wxl.highlight outlines the player for two seconds where the runtime draws
+--      highlights (the stock client), and the batches drawn again are counted; elsewhere it must
+--      say why it draws none, and refuse as unsupported.
 --
 -- Each check is one line in the log: PASS, FAIL, SKIP (what it needs is not there: a class
 -- without a cast-time spell, say) or NOTE (an event the server may not send). The chat box shows
@@ -1667,6 +1670,39 @@ step(function()
     else
         wxl.action.ClearTarget()
     end
+end)
+
+-- 18. A highlight -------------------------------------------------------------------------------
+
+step(function()
+    print("phase 18: an object highlighted, where it is seen")
+    local hl = wxl.highlight
+    if not (hl and hl.Supported) then
+        result("wxl.highlight", false, "this runtime is older than abi 0.1.27")
+        return
+    end
+    local me = wxl.object.LocalPlayer()
+    if not hl.Supported() then
+        local why = hl.UnsupportedReason()
+        local ok, err = hl.Set(me, 0xFF3030, 3, 12, 0.6)
+        result("wxl.highlight draws none here, says why and refuses as unsupported", type(why) == "string" and #why > 0 and
+               ok == nil and err == "unsupported", tostring(why))
+        return
+    end
+    result("wxl.highlight.Set on the player (look: a red outline and a glow around the character for two seconds, " ..
+           "hidden where a wall is in front)", hl.Set(me, 0xFF3030, 3, 12, 0.6) == true)
+    wait(2)
+end)
+
+step(function()
+    local hl = wxl.highlight
+    if not (hl and hl.Supported and hl.Supported()) then return end
+    local me    = wxl.object.LocalPlayer()
+    local drawn = hl.Drawn()
+    result("the player's batches were drawn again (" .. tostring(drawn) .. " in the last frame; 0 in first person)",
+           (drawn or 0) > 0)
+    result("Clear takes the highlight off", hl.Clear(me) == true)
+    result("a second Clear finds none", select(2, hl.Clear(me)) == "not_found")
 end)
 
 -- The end ----------------------------------------------------------------------------------------
