@@ -1162,6 +1162,43 @@ help]])`, flags a number or names apart by spaces (`"saved latched"`). 3.3.5's o
 `RegisterCVar(name[, default])` exists in the game's interface only, and its variables are never
 saved.
 
+### A changed interface: signatures
+
+The client loads its interface only when it is signed: the login screens' `GlueXML.toc`, the game's
+`FrameXML.toc` with `Bindings.xml`, and each add-on's `.toc` carry a `.sig` beside them, and a file
+changed in a patch archive no longer matches it. A changed GlueXML leaves the login screens empty, a
+changed FrameXML closes the client as the world loads, and a Blizzard add-on changed is refused as
+corrupt. `LuaScript::OnInterfaceSignature(file, extra, verdict, accepted)` (abi `0.1.32`) is raised
+for every check, before the client acts on it: the `.toc`, the file hashed with it (empty for
+GlueXML), and the client's verdict, `WXL_INTERFACE_SIGNATURE_MISSING` (no `.sig`), `_CORRUPT` (a
+`.sig` the key does not verify), `_MODIFIED` (the files differ from what it signed) or `_SIGNED`.
+Answering `accepted` has the file taken as signed: the client loads it as its own, and an add-on
+runs as secure code, untainted.
+
+```cpp
+void OnInterfaceSignature(std::string_view file, std::string_view, wxl_interface_signature verdict,
+                          wxl::Answer accepted) override
+{
+    // The game's own interface, changed by our patch archive; add-ons stay as the client judges them.
+    if (file == "Interface\\FrameXML\\FrameXML.toc" && verdict != WXL_INTERFACE_SIGNATURE_SIGNED)
+        accepted.Set();
+}
+```
+
+Accept only what you ship: an add-on taken as signed can call the functions the client keeps from
+add-ons (`CastSpellByName` in combat, `TargetUnit`...). An observer that answers nothing sees the
+verdict of every interface, which is how to tell why one did not load.
+
+When the login screens start, the client also moves loose interface folders aside on disk, so that
+only the archives' copies load: `Interface\GlueXML`, `Interface\FrameXML`, and each
+`Interface\AddOns\Blizzard*` folder holding its `.toc`, renamed to `<name>.old`. It raises
+`LuaScript::OnInterfaceCleanupRequest(refused)` first; answering `refused` leaves them where they
+are, and they load over the archives.
+
+Core ships the mod that does both for every file the client would refuse: `wxl.glue-unlock`, on
+both clients. Installed, a changed GlueXML, FrameXML or Blizzard add-on loads; removed, the client
+checks as it always has.
+
 ### Models: what characters wear, models of your own, model files
 
 Three things about models reach a mod, from the simplest to the most technical. This part of the

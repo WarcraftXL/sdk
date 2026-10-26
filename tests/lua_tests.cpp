@@ -2427,6 +2427,11 @@ Override("WorldScript", "OnWorldClickRequest", function(button, hit, object, gui
     print("click " .. button .. " " .. hit .. " " .. tostring(targeting) .. " " .. point.z)
     return hit == "object"
 end)
+Override("LuaScript", "OnInterfaceSignature", function(file, extra, verdict)
+    print("signature " .. file .. " [" .. extra .. "] " .. verdict)
+    return verdict == "modified"
+end)
+Override("LuaScript", "OnInterfaceCleanupRequest", function() print("cleanup") return true end)
 )");
         WriteFile(mods / "aim-b" / "mod.json", LuaManifest("wxl.aim-b", "\"loadAfter\": [ \"wxl.aim-a\" ]"));
         WriteFile(mods / "aim-b" / "init.lua", R"(
@@ -2514,6 +2519,23 @@ end)
             Check(modelRefused && refused == WXL_FALSE && sink.Has("[wxl.aim-a] click left object false 5") &&
                       sink.Has("[wxl.aim-a] click right ground true 6"),
                   "a click before the game acts reaches Lua with its button and hit by name; an Override refuses it");
+
+            wxl_bool accepted = WXL_FALSE;
+            const wxl_interface_signature_args frameXml{wxl_str{"FrameXML.toc", 12}, wxl_str{"Bindings.xml", 12},
+                                                        WXL_INTERFACE_SIGNATURE_MODIFIED, &accepted};
+            host.Raise(WXL_EV_InterfaceSignature, &frameXml);
+            const bool modifiedAccepted = accepted == WXL_TRUE;
+            accepted = WXL_FALSE;
+            const wxl_interface_signature_args addOn{wxl_str{"Bag.toc", 7}, wxl_str{"", 0},
+                                                     WXL_INTERFACE_SIGNATURE_MISSING, &accepted};
+            host.Raise(WXL_EV_InterfaceSignature, &addOn);
+            wxl_bool foldersKept = WXL_FALSE;
+            const wxl_interface_cleanup_args cleanup{&foldersKept};
+            host.Raise(WXL_EV_InterfaceCleanupRequest, &cleanup);
+            Check(modifiedAccepted && accepted == WXL_FALSE && foldersKept == WXL_TRUE &&
+                      sink.Has("[wxl.aim-a] signature FrameXML.toc [Bindings.xml] modified") &&
+                      sink.Has("[wxl.aim-a] signature Bag.toc [] missing") && sink.Has("[wxl.aim-a] cleanup"),
+                  "an interface's signature reaches Lua with its verdict by name; an Override takes it as signed or keeps the folders");
 
             // b, the later, holds the view applied; giving it back brings a's back.
             FakeView::Calls().clear();

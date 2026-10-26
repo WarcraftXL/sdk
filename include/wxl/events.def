@@ -557,6 +557,23 @@ WXL_EVENTS_SINCE(0, 1, 26, 145)
     nothing. WorldClick follows when the click goes on and met the ground or a model. */
 WXL_EVENT(World, WorldClickRequest, 145, wxl_world_click_request_args)
 
+// --- Lua, continued: the interface's signatures ----------------------------------------------
+
+WXL_EVENTS_SINCE(0, 1, 32, 146)
+
+/** The client judged the signature of an interface: the login screens' GlueXML.toc, the game's
+    FrameXML.toc, or an add-on's .toc, each with the file hashed beside it. Raised before the
+    client acts on the verdict, for every check while a mod listens. A handler may have the file
+    taken as signed: the client then treats it as its own, so a changed GlueXML loads instead of
+    leaving the login screens empty, a changed FrameXML instead of closing the client, and an
+    add-on loads as secure code, neither tainted nor refused as modified. */
+WXL_EVENT(Lua, InterfaceSignature,      146, wxl_interface_signature_args)
+/** The login screens are starting, and the client is about to move interface folders aside on
+    disk, so that only the archives' copies load: a loose Interface\GlueXML and
+    Interface\FrameXML, and every loose Interface\AddOns\Blizzard* folder holding its .toc, each
+    renamed to <name>.old. A handler may refuse it, and the folders stay where they are. */
+WXL_EVENT(Lua, InterfaceCleanupRequest, 147, wxl_interface_cleanup_args)
+
 // Give back whatever was defaulted above, so the file can be included again right after with a
 // different selector. What the consumer defined itself is left alone: undefining it here would
 // break the consumer that includes the table twice on purpose.

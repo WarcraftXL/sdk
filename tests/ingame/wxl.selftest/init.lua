@@ -65,6 +65,11 @@
 --      one refuses SetCVar; the interface's WxlRegisterCVar registers one of its own. The value
 --      the last launch saved (in Config.wtf, and the character's) must come back: a NOTE, since
 --      the first launch with this phase has none, and a launch that did not end cleanly saved none.
+--  23. the interface's signatures: every InterfaceSignature since the mod loaded; FrameXML.toc
+--      must have been judged (with Bindings.xml), and its verdict is printed, as GlueXML.toc's and
+--      each add-on's; a verdict short of signed with the world up means a mod took it as signed
+--      (wxl.glue-unlock with a changed FrameXML), a NOTE. The clearing of loose folders was asked
+--      once, at the login screens.
 --
 -- Each check is one line in the log: PASS, FAIL, SKIP (what it needs is not there: a class
 -- without a cast-time spell, say) or NOTE (an event the server may not send). The chat box shows
@@ -1991,6 +1996,55 @@ step(function()
     local client = select(2, cvar.Register("farclip", "1"))
     result("and the client's own", client == "invalid", tostring(client))
     result("Flags tells the client's own variables", hasFlag(cvar.Flags("farclip"), 256))
+end)
+
+-- 23. The interface's signatures --------------------------------------------------------------
+
+-- The interface's signatures, observed from the start: the login screens' GlueXML.toc and its
+-- clearing of loose folders come before the first phase, FrameXML.toc with every entry into the
+-- world and every /reload.
+local signatures, cleanups = {}, 0
+if wxl.runtime.Raises and wxl.runtime.Raises("LuaScript", "OnInterfaceSignature") then
+    Observe("LuaScript", "OnInterfaceSignature", function(file, extra, verdict)
+        local name = file:match("([^\\/]+)$") or file
+        local seen = signatures[name] or { count = 0 }
+        seen.count, seen.verdict, seen.extra = seen.count + 1, verdict, extra
+        signatures[name] = seen
+    end)
+    Observe("LuaScript", "OnInterfaceCleanupRequest", function() cleanups = cleanups + 1 end)
+end
+
+step(function()
+    print("phase 23: the interface's signatures")
+    if not (wxl.runtime.Raises and wxl.runtime.Raises("LuaScript", "OnInterfaceSignature")) then
+        result("InterfaceSignature", false, "this runtime is older than abi 0.1.32")
+        return
+    end
+    local frame = signatures["FrameXML.toc"]
+    result("the gate answered for FrameXML.toc", frame ~= nil and frame.count > 0,
+           "no check of FrameXML.toc was seen since the mod loaded")
+    if frame then
+        print("FrameXML.toc: the client's verdict is " .. tostring(frame.verdict) .. ", " .. frame.count ..
+              " check(s), hashed with " .. tostring(frame.extra))
+        result("FrameXML.toc is hashed with Bindings.xml", tostring(frame.extra):lower():find("bindings.xml", 1, true) ~= nil,
+               tostring(frame.extra))
+        -- The world is up, so the client took FrameXML: a verdict short of signed was answered.
+        note("FrameXML.toc is the client's own (signed)", frame.verdict == "signed",
+             "verdict " .. tostring(frame.verdict) .. ": a changed FrameXML, loaded because a mod took it as signed (wxl.glue-unlock)")
+    end
+    local glue = signatures["GlueXML.toc"]
+    note("GlueXML.toc was judged at the login screens", glue ~= nil,
+         "not seen: the mod loads after the login screens started, or the client skipped them")
+    if glue then print("GlueXML.toc: the client's verdict is " .. tostring(glue.verdict)) end
+    note("the clearing of loose interface folders was asked once", cleanups == 1, tostring(cleanups) .. " time(s)")
+    local addOns = 0
+    for name, seen in pairs(signatures) do
+        if name ~= "FrameXML.toc" and name ~= "GlueXML.toc" then
+            addOns = addOns + 1
+            print("add-on " .. name .. ": " .. tostring(seen.verdict))
+        end
+    end
+    print(addOns .. " add-on(s) judged")
 end)
 
 -- The end ----------------------------------------------------------------------------------------

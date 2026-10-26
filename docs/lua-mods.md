@@ -490,6 +490,8 @@ The events that can be answered, as the SDK stands:
 | `GroupScript:OnGroupInvite` | `accept`, `decline` | `return true` joins the group, `return nil, true` turns it down, as the dialog's buttons do; the dialog never shows (abi `0.1.17`) |
 | `SocialScript:OnDuelRequested` | `accept`, `decline` | the same for a duel challenge (abi `0.1.17`) |
 | `SocialScript:OnResurrectRequest` | `accept`, `decline` | the same for an offer to resurrect you (abi `0.1.17`) |
+| `LuaScript:OnInterfaceSignature` | `accepted` | the client takes the interface as signed: a changed GlueXML, FrameXML or Blizzard add-on loads; see [A changed interface](#a-changed-interface-signatures) (abi `0.1.32`) |
+| `LuaScript:OnInterfaceCleanupRequest` | `refused` | loose interface folders stay on disk instead of being renamed to `.old` (abi `0.1.32`) |
 
 ### Loading and updates
 
@@ -1321,6 +1323,39 @@ variable stays, with its value. The game's interface registers its own with
 `WxlRegisterCVar(name, default[, flags[, help]])` (flags: a number or names apart by spaces,
 `"saved latched"`); 3.3.5's `RegisterCVar(name[, default])` exists in the game's interface only,
 and its variables are never saved.
+
+### A changed interface: signatures
+
+The client loads its interface only when it is signed: the login screens' `GlueXML.toc`, the game's
+`FrameXML.toc` and each add-on's `.toc` carry a `.sig` beside them, and a file a patch archive
+changed no longer matches it. A changed GlueXML leaves the login screens empty, a changed FrameXML
+closes the client as the world loads, a changed Blizzard add-on is refused as corrupt.
+
+`LuaScript`'s `OnInterfaceSignature(file, extra, verdict, accepted)` (abi `0.1.32`) is raised for
+every check, before the client acts on it, with the `.toc`, the file hashed with it (`""` for
+GlueXML) and the client's verdict: `"missing"` (no `.sig`), `"corrupt"` (a `.sig` the key does not
+verify), `"modified"` (the files differ from what it signed) or `"signed"`. An `Override` that
+returns `true` has the file taken as signed: the client loads it as its own, and an add-on runs as
+secure code.
+
+```lua
+-- Our patch archive changes the game's interface: let the client load it.
+Override("LuaScript", "OnInterfaceSignature", function(file, extra, verdict)
+    return file == "Interface\\FrameXML\\FrameXML.toc" and verdict ~= "signed"
+end)
+
+-- Why did an interface not load? Print every verdict.
+Observe("LuaScript", "OnInterfaceSignature", function(file, extra, verdict)
+    print(file .. ": " .. verdict)
+end)
+```
+
+Take as signed only what you ship: a secure add-on can call what the client keeps from add-ons.
+When the login screens start, the client also renames loose `Interface\GlueXML`,
+`Interface\FrameXML` and `Interface\AddOns\Blizzard*` folders on disk to `<name>.old`, so that
+only the archives' copies load; an `Override` of `OnInterfaceCleanupRequest(refused)` that returns
+`true` keeps them. The runtime ships `wxl.glue-unlock`, a mod that does both for every file the
+client would refuse; remove it and the client checks as it always has.
 
 ### Models: `wxl.m2`
 
@@ -2324,6 +2359,8 @@ A few to start from:
 | `RenderScript` | `OnCameraUpdate` | `index`, `delta` | the client placed the world camera for the frame: set a view with `wxl.camera.SetView` here (abi `0.1.24`) |
 | `RenderScript` | `OnImGuiFrame` | `index`, `delta` | a frame of the runtime's Dear ImGui is open, for a C++ mod's windows (abi `0.1.25`) |
 | `WorldScript` | `OnWorldClickRequest` | `button`, `hit`, `object`, `object_guid`, `point`, `targeting`, `refused` | a click in the world the game is about to act on (`hit`: `"none"`, `"ground"`, `"object"`, `"world_object"`, `"name_plate"`; `targeting` while a spell waits for its target), which an `Override` refuses (abi `0.1.26`) |
+| `LuaScript` | `OnInterfaceSignature` | `file`, `extra`, `verdict`, `accepted` | the client judged an interface's signature (`verdict`: `"missing"`, `"corrupt"`, `"modified"`, `"signed"`), which an `Override` has taken as signed (abi `0.1.32`) |
+| | `OnInterfaceCleanupRequest` | `refused` | the login screens start and the client is about to move loose interface folders aside, which an `Override` refuses (abi `0.1.32`) |
 
 The families `PlayerScript`, `GlueScript` and `ChatScript`, and `WorldScript`'s `OnZoneChanged`,
 `OnMouseoverChanged` and `OnCVarChanged`, came with `0.1.6`: a mod that uses one asks for
@@ -2361,6 +2398,7 @@ the `wxl.camera`, `wxl.input` and `wxl.world` modules, `wxl.action.Face` and `Is
 module came with `0.1.27`, the `wxl.selectioncircle` module with `0.1.28`.
 `wxl.camera.SetViewRolled` and `Roll`, `wxl.input.CaptureCursorAt` and `CapturePoint` came with
 `0.1.29`, the `wxl.texture` module with `0.1.30`, the `wxl.cvar` module with `0.1.31`.
+`LuaScript`'s `OnInterfaceSignature` and `OnInterfaceCleanupRequest` came with `0.1.32`.
 
 ### Gameplay events
 

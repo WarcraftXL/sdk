@@ -160,6 +160,14 @@ before the file is read) and to one saved for the character: after a clean exit,
 must read both back (two NOTEs that read PASS from the second launch on; the character's needs the
 same character, and a server that keeps account data or the local cache).
 
+Phase 23 checks the interface's signatures (abi 0.1.32), on both clients. The selftest observes
+`InterfaceSignature` from the moment it loads: FrameXML.toc must have been judged when the world
+loaded, hashed with Bindings.xml, and the phase prints the client's verdict for it, for
+GlueXML.toc and for each add-on. With the game's own interface the verdict is `signed`; with a
+changed FrameXML (Dawnlight's in Patch-5.MPQ) it is `modified`, and since the world is up a mod
+took it as signed: `wxl.glue-unlock`, whose log says so (a NOTE, not a failure).
+`InterfaceCleanupRequest` must have been asked once, at the login screens.
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the

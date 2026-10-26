@@ -1298,6 +1298,10 @@
 ---arrives as its number.
 ---@alias wxl.WorldHit "none"|"ground"|"object"|"world_object"|"name_plate"
 
+---A wxl_interface_signature value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.InterfaceSignature "missing"|"corrupt"|"modified"|"signed"
+
 -- The script families. A function defined on one of these tables as On<Event> is
 -- subscribed when the entry file has run and called with the event's parameters;
 -- on an event that can be answered its return values are taken, as Override
@@ -1397,6 +1401,8 @@ NetScript = {}
 ---@field OnScriptVmClosing fun(self: LuaScript, context: wxl.ScriptContext|integer, native_state: lightuserdata|nil)
 ---@field OnUiEvent fun(self: LuaScript, index: integer, name: string, format: string, values: wxl.Bytes, value_count: integer)
 ---@field OnScriptError fun(self: LuaScript, context: wxl.ScriptContext|integer, message: string)
+---@field OnInterfaceSignature fun(self: LuaScript, file: string, extra: string, verdict: wxl.InterfaceSignature|integer, accepted: boolean|nil): boolean|nil answers through accepted
+---@field OnInterfaceCleanupRequest fun(self: LuaScript, refused: boolean|nil): boolean|nil answers through refused
 LuaScript = {}
 
 ---@class CombatScript
@@ -1644,6 +1650,8 @@ SocialScript = {}
 ---@overload fun(family: "RenderScript", method: "OnCameraUpdate", handler: fun(index: integer, delta: number)): integer
 ---@overload fun(family: "RenderScript", method: "OnImGuiFrame", handler: fun(index: integer, delta: number)): integer
 ---@overload fun(family: "WorldScript", method: "OnWorldClickRequest", handler: fun(button: wxl.MouseButton|integer, hit: wxl.WorldHit|integer, object: wxl.Object|nil, object_guid: wxl.Guid, point: wxl.Vec3, targeting: boolean, refused: boolean|nil)): integer
+---@overload fun(family: "LuaScript", method: "OnInterfaceSignature", handler: fun(file: string, extra: string, verdict: wxl.InterfaceSignature|integer, accepted: boolean|nil)): integer
+---@overload fun(family: "LuaScript", method: "OnInterfaceCleanupRequest", handler: fun(refused: boolean|nil)): integer
 ---@param family wxl.Family
 ---@param method string
 ---@param handler function
@@ -1666,6 +1674,8 @@ function Observe(family, method, handler) end
 ---@overload fun(family: "SocialScript", method: "OnResurrectRequest", handler: fun(offerer: wxl.Object|nil, offerer_guid: wxl.Guid, name: string, sickness: boolean, accept: boolean|nil, decline: boolean|nil): boolean|nil, boolean|nil): integer
 ---@overload fun(family: "WorldScript", method: "OnMouseWheel", handler: fun(delta: number, handled: boolean|nil): boolean|nil): integer
 ---@overload fun(family: "WorldScript", method: "OnWorldClickRequest", handler: fun(button: wxl.MouseButton|integer, hit: wxl.WorldHit|integer, object: wxl.Object|nil, object_guid: wxl.Guid, point: wxl.Vec3, targeting: boolean, refused: boolean|nil): boolean|nil): integer
+---@overload fun(family: "LuaScript", method: "OnInterfaceSignature", handler: fun(file: string, extra: string, verdict: wxl.InterfaceSignature|integer, accepted: boolean|nil): boolean|nil): integer
+---@overload fun(family: "LuaScript", method: "OnInterfaceCleanupRequest", handler: fun(refused: boolean|nil): boolean|nil): integer
 ---@param family wxl.Family
 ---@param method string
 ---@param handler function

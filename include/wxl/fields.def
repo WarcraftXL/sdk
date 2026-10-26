@@ -1390,6 +1390,19 @@ WXL_ARGS_FIELD(wxl_world_click_request_args, targeting, bool)    ///< WXL_TRUE w
 WXL_ARGS_ANSWER(wxl_world_click_request_args, refused)           ///< write WXL_TRUE to keep the game from acting on the click
 WXL_ARGS_END(wxl_world_click_request_args)
 
+/// An interface's signature as the client judged it, and the answer that has it taken as signed.
+WXL_ARGS(wxl_interface_signature_args)
+WXL_ARGS_FIELD(wxl_interface_signature_args, file, str)                    ///< the .toc judged, as the client names it: "Interface\FrameXML\FrameXML.toc"
+WXL_ARGS_FIELD(wxl_interface_signature_args, extra, str)                   ///< the file hashed with it, "Interface\FrameXML\Bindings.xml" or an add-on's; empty for none (GlueXML)
+WXL_ARGS_ENUM(wxl_interface_signature_args, verdict, wxl_interface_signature) ///< the client's own verdict
+WXL_ARGS_ANSWER(wxl_interface_signature_args, accepted)                    ///< write WXL_TRUE to have the client take the file as signed
+WXL_ARGS_END(wxl_interface_signature_args)
+
+/// The client is about to move its loose interface folders aside: the answer that keeps them.
+WXL_ARGS(wxl_interface_cleanup_args)
+WXL_ARGS_ANSWER(wxl_interface_cleanup_args, refused) ///< write WXL_TRUE to leave the folders where they are
+WXL_ARGS_END(wxl_interface_cleanup_args)
+
 #ifdef WXL_ARGS_ENUM_DEFAULTED
     #undef WXL_ARGS_ENUM
     #undef WXL_ARGS_ENUM_DEFAULTED

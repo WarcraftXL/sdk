@@ -561,6 +561,11 @@ int main()
         Check(std::is_same_v<wxl::HandlerOf<WXL_EV_WorldClickRequest>,
                              void(wxl_mouse_button, wxl_world_hit, wxl::Object, wxl_guid, wxl_vec3, bool, wxl::Answer)>,
               "a click before the game acts: its button, what it met, the object, its guid, the point, whether a spell aims, and the answer");
+        Check(std::is_same_v<wxl::HandlerOf<WXL_EV_InterfaceSignature>,
+                             void(std::string_view, std::string_view, wxl_interface_signature, wxl::Answer)>,
+              "an interface's signature: the .toc, the file hashed with it, the client's verdict, and the answer");
+        Check(std::is_same_v<wxl::HandlerOf<WXL_EV_InterfaceCleanupRequest>, void(wxl::Answer)>,
+              "the clearing of loose interface folders: the answer alone");
         Check(std::is_same_v<wxl::HandlerOf<WXL_EV_ModelLoad>,
                              void(std::string_view, wxl::Bytes, const void**, uint32_t*)>,
               "a ptr member keeps its C type");
