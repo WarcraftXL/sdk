@@ -1696,9 +1696,10 @@ and lights it with a soft glow, where it is seen and never through a wall: `colo
 `wxl.highlight.Clear(target)`, `ClearAll()`, the object leaving view, or the mod reloading, being
 disabled or unloading. To keep a far object's outline from swallowing it, scale the widths by its
 distance yourself. The stock client draws
-them; where a runtime does not (the recompiled client, until its Vulkan renderer has its render
-points), `wxl.highlight.Supported()` is `false`, `UnsupportedReason()` says why and `Set` answers
-`nil, "unsupported"`: say so once and leave the feature off.
+them, and so does the recompiled client on its Vulkan renderer (`[gx] api = vulkan`); where a
+runtime does not (the recompiled client on Direct3D 9), `wxl.highlight.Supported()` is `false`,
+`UnsupportedReason()` says why and `Set` answers `nil, "unsupported"`: say so once and leave the
+feature off.
 
 ```lua
 local hostile, red = nil, 0xE03030
@@ -1736,6 +1737,69 @@ rings, the marker's pulse) still playing over it; the scale is the size against 
 `wxl.selectioncircle.Reset(kinds, reactions)`, `ResetObject(target)` and `ResetAll()` give back
 what this mod changed, and it all goes when the mod reloads, is disabled or unloads. `Drawn()` and
 `Hidden()` count the circles the last world frame drew and left out.
+
+### Drawing into the frame: `wxl.render`
+
+On the Vulkan renderer (the recompiled client with `[gx] api = vulkan`), `wxl.render` (abi
+`0.1.33`) lets a mod draw into the game's frame with images, buffers and pipelines of its own.
+`wxl.gx.Api()` names the device the client runs on (`"d3d9"`, `"vulkan"`, ...); on Direct3D 9
+`wxl.render.Supported()` is `false` and `UnsupportedReason()` says why.
+
+A mod draws in `RenderScript`'s `OnRenderPoint(point, frame, width, height, samples)`, raised at four
+points of each frame while it listens: `"after_opaque_world"`, `"after_liquids"`, `"after_world"` (the
+world drawn, not the interface) and `"after_ui"`. There it opens a pass with `wxl.render.Begin`,
+draws, and closes it with `wxl.render.End()`; the frame goes on after it.
+
+Its programs are SPIR-V, compiled from GLSL with the Vulkan SDK's `glslangValidator -V --target-env
+vulkan1.3 -I<sdk>/include` against the SDK's `include/wxl/render/render.glsl` (and `batch.glsl`
+for a batch program), and shipped in the mod's folder as `.spv` files. `CreatePipeline` takes a
+table:
+
+```lua
+-- shaders/tint.frag, compiled to shaders/tint.spv:
+--   #version 460
+--   #extension GL_GOOGLE_include_directive : require
+--   #include "wxl/render/render.glsl"
+--   layout(push_constant) uniform Push { vec4 color; } pc;
+--   layout(location = 0) in vec2 uv;
+--   layout(location = 0) out vec4 outColor;
+--   void main() { outColor = pc.color; }
+local tint = wxl.render.CreatePipeline({
+    kind = "fullscreen", name = "tint", fragment = "shaders/tint.spv",
+    colors = { "bgra8" }, blend = "alpha",
+})
+
+Observe("RenderScript", "OnRenderPoint", function(point)
+    if point ~= "after_world" or not tint then return end
+    if wxl.render.Begin({ colors = { "scene_color" } }) then
+        wxl.render.Fullscreen(tint, { 1.0, 0.6, 0.2, 0.15 }) -- the push constants, as 32-bit floats
+        wxl.render.End()
+    end
+end)
+```
+
+The table's keys: `kind` (`"graphics"`, `"fullscreen"`, `"batch"`), `vertex` and `fragment` (a
+`.spv` file of the mod's folder, or the bytes themselves), `colors` (formats: `"bgra8"` is the
+frame's own, `"rgba8"`, `"r8"`, `"rg8"`, `"r16f"`, `"rg16f"`, `"rgba16f"`, `"r32f"`, `"rgba32f"`),
+`depth` (`"depth32f"`), `samples` (0 for the frame's), `blend` (`"none"`, `"alpha"`, `"add"`,
+`"premultiplied"`, `"multiply"`, one or one per colour), `depth_test` (`"off"`, `"less"`,
+`"less_equal"`, ... `"always"`), `depth_write`, `cull` and `topology`. A pass's table names its
+`colors` (an image, `"scene_color"`, or `{ image, clear = { r, g, b, a } }`) and its `depth` (an
+image, `"scene_depth"`, or `{ image, clear = 1 }`). Push constants are a table of numbers or a
+string of bytes, up to 128 bytes.
+
+`CreateImage(width, height, format, samples)` and `CreateScreenImage(divisor, format, samples)` make
+images (formats by number: 1 rgba8, 2 bgra8, ... 10 depth32f); `image:ImageSlot()`,
+`wxl.render.SceneColorSlot()` and `wxl.render.Sampler(flags)` give the indices a program samples by.
+`OnModelBatchDrawn`'s last argument, `batch`, is the batch the game just drew: `wxl.render.KeepBatch`
+keeps it until the frame ends, `wxl.render.DrawBatch(batch, pipeline, constants)` draws it again
+with a batch program. A Lua handler for every batch costs time: keep the batches of the objects
+you want, not all of them. `wxl.render.ReplaceShader(name, stage, spirv)` gives the game's shaders
+of that name a program of the mod's until `RestoreShader`, or until the mod goes.
+`wxl.profile.GpuZoneBegin(name)` and `GpuZoneEnd()` time a mod's passes on the GPU.
+
+The raw device (`wxl.vk`) is a C++ mod's: see "Drawing into the frame" in
+[Building a mod](building-a-mod.md).
 
 ### Where the memory goes: `wxl.footprint`
 
@@ -2119,6 +2183,15 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.cvar.SetRange(name, min, max)` | `true`: the numbers a variable of this mod accepts, from everywhere (abi `0.1.31`) |
 | `wxl.cvar.Exists(name)`, `.Get(name)`, `.GetNumber(name)`, `.GetBool(name)`, `.GetDefault(name)`, `.Flags(name)` | whether a variable is registered; its value as text, a number or a switch; its default; what it is (abi `0.1.31`) |
 | `wxl.cvar.Set(name, value)`, `.SetNumber(name, value)`, `.SetBool(name, value)`, `.Reset(name)` | `true`: a variable given a value, or its default (abi `0.1.31`) |
+| `wxl.gx.Api()` | the device the client draws with: `"none"`, `"d3d9"`, `"d3d9ex"`, `"opengl"`, `"vulkan"` (abi `0.1.33`) |
+| `wxl.render.Supported()`, `.UnsupportedReason()` | whether the render service drives the client's device, and why not (abi `0.1.33`) |
+| `wxl.render.CreateImage(width, height, format, samples)`, `.CreateScreenImage(divisor, format, samples)`, `.CreateBuffer(size)` | an image or a buffer of the mod's: `image:ImageSlot()`, `:ImageWidth()`, `:ImageHeight()`, `buffer:WriteBuffer(offset, bytes)`, `:BufferAddress()`; see [Drawing into the frame](#drawing-into-the-frame-wxlrender) (abi `0.1.33`) |
+| `wxl.render.CreatePipeline(desc)`, `.Sampler(flags)` | a pipeline of the mod's SPIR-V (`pipeline:PipelineReady()`); a sampler's index (abi `0.1.33`) |
+| `wxl.render.Begin(pass)`, `.End()`, `.Draw(pipeline, vertex_count, instance_count, push)`, `.DrawIndexed(...)`, `.Fullscreen(pipeline, push)` | a pass inside `OnRenderPoint`, and the mod's draws into it (abi `0.1.33`) |
+| `wxl.render.KeepBatch(batch)`, `.DrawBatch(batch, pipeline, constants)` | a model batch of the game kept until the frame ends, drawn again with a batch program (abi `0.1.33`) |
+| `wxl.render.SceneColorSlot()`, `.SceneDepthSlot()` | the frame as drawn so far, copied into textures: their indices (abi `0.1.33`) |
+| `wxl.render.ReplaceShader(name, stage, spirv)`, `.RestoreShader(name, stage)` | `true`: the game's shaders of that name drawn with the mod's program, or given theirs back (abi `0.1.33`) |
+| `wxl.profile.GpuZoneBegin(name)`, `.GpuZoneEnd()` | a zone of the GPU's time around the mod's passes (abi `0.1.33`) |
 
 ### Object methods
 
@@ -2354,10 +2427,11 @@ A few to start from:
 | `ObjectScript` | `OnAppearanceChanged` | `change`, `wearer`, `model`, `race_id`, `sex_id`, `item_slot`, `display_id`, `npc` | a character's appearance put an item on, is taking one off (`"worn"`, `"removed"`), or goes away (`"freed"`) (abi `0.1.20`) |
 | `AssetScript` | `OnModelParsed`, `OnSkinProfileParsed`, `OnModelSequenceLoad` | `path`, `file`, then the header, the skin or the sequence | the model loader's stages; see [Models](#models-wxlm2) (abi `0.1.20`) |
 | `AssetScript` | `OnFileMissing` | `path`, `kind`, `open`, `pending`, `loader` | the client looked for a file no layer has; see [Assets on demand](#assets-on-demand-missing-names-hashes-paths-of-your-own-overrides-reloads) (abi `0.1.23`) |
-| `RenderScript` | `OnModelBatchDrawn` | `model`, `root_model`, then the numbers of the draw | the device drew one batch of a model (abi `0.1.20`) |
+| `RenderScript` | `OnModelBatchDrawn` | `model`, `root_model`, then the numbers of the draw, then `batch` (abi `0.1.33`) | the device drew one batch of a model (abi `0.1.20`); `batch` is what `wxl.render` draws again |
 | `WorldScript` | `OnMouseMotion`, `OnMouseWheel` | `dx`, `dy`; `delta`, `handled` | the mouse moved, in its own counts; the wheel turned, in notches, which an `Override` keeps from the game (abi `0.1.24`) |
 | `RenderScript` | `OnCameraUpdate` | `index`, `delta` | the client placed the world camera for the frame: set a view with `wxl.camera.SetView` here (abi `0.1.24`) |
 | `RenderScript` | `OnImGuiFrame` | `index`, `delta` | a frame of the runtime's Dear ImGui is open, for a C++ mod's windows (abi `0.1.25`) |
+| `RenderScript` | `OnRenderPoint` | `point` (`"after_opaque_world"`, `"after_liquids"`, `"after_world"`, `"after_ui"`), `frame`, `width`, `height`, `samples` | a point of the frame where a mod draws, through `wxl.render` (abi `0.1.33`) |
 | `WorldScript` | `OnWorldClickRequest` | `button`, `hit`, `object`, `object_guid`, `point`, `targeting`, `refused` | a click in the world the game is about to act on (`hit`: `"none"`, `"ground"`, `"object"`, `"world_object"`, `"name_plate"`; `targeting` while a spell waits for its target), which an `Override` refuses (abi `0.1.26`) |
 | `LuaScript` | `OnInterfaceSignature` | `file`, `extra`, `verdict`, `accepted` | the client judged an interface's signature (`verdict`: `"missing"`, `"corrupt"`, `"modified"`, `"signed"`), which an `Override` has taken as signed (abi `0.1.32`) |
 | | `OnInterfaceCleanupRequest` | `refused` | the login screens start and the client is about to move loose interface folders aside, which an `Override` refuses (abi `0.1.32`) |
@@ -2399,6 +2473,9 @@ module came with `0.1.27`, the `wxl.selectioncircle` module with `0.1.28`.
 `wxl.camera.SetViewRolled` and `Roll`, `wxl.input.CaptureCursorAt` and `CapturePoint` came with
 `0.1.29`, the `wxl.texture` module with `0.1.30`, the `wxl.cvar` module with `0.1.31`.
 `LuaScript`'s `OnInterfaceSignature` and `OnInterfaceCleanupRequest` came with `0.1.32`.
+
+`RenderScript`'s `OnRenderPoint`, the `wxl.render` module, `wxl.gx.Api`, `wxl.profile.GpuZoneBegin`
+and `GpuZoneEnd`, and `OnModelBatchDrawn`'s `batch` came with `0.1.33`.
 
 ### Gameplay events
 

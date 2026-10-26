@@ -1804,9 +1804,10 @@ proportion at any resolution. Called again, `Set` changes the style; `Clear(targ
 `ClearAll()` take the mod's highlights off, and they go when the mod goes or the object leaves
 view. Scale the widths by the object's distance so that a far silhouette is not swallowed.
 
-Not every runtime draws them: the stock client does (Direct3D 9, shader model 3), the recompiled
-client will through its Vulkan renderer's render points. Ask first, and turn the feature off with
-the reason in the log:
+Not every runtime draws them: the stock client does (Direct3D 9, shader model 3), and so does the
+recompiled client on its Vulkan renderer (`[gx] api = vulkan` in `WarcraftXL.ini`), with the same
+look; the recompiled client on Direct3D 9 does not. Ask first, and turn the feature off with the
+reason in the log:
 
 ```cpp
 if (!wxl::HighlightService::Supported())
@@ -1852,6 +1853,113 @@ marker's pulse, still play over it), and a scale of `0` the game's size (up to 8
 look wins over its kind's; among mods the last set wins. `Reset(kinds, reactions)`,
 `ResetObject(target)` and `ResetAll()` give back what your mod changed, and it all goes with the
 mod. `Drawn()` and `Hidden()` count the circles the last world frame drew and left out.
+
+### Drawing into the frame: `wxl.render`
+
+On the runtime's Vulkan renderer (the recompiled client with `[gx] api = vulkan`), a mod draws
+into the game's frame with images, buffers and pipelines of its own (abi `0.1.33`):
+`wxl/services/render.hpp`. `wxl::GxService::Api()` says which device the client runs on
+(`WXL_GX_BACKEND_D3D9`, `WXL_GX_BACKEND_VULKAN`, ...), and `wxl::RenderService::Supported()`
+whether the render service drives it; on Direct3D 9 it answers false with its reason, and a mod
+draws there with `wxl::GxService::D3d9Device()` as before.
+
+**When.** `RenderScript::OnRenderPoint(point, frame, width, height, samples)` comes at four points of
+each frame while a mod listens: `WXL_RENDER_POINT_AFTER_OPAQUE_WORLD` (terrain, buildings, models and
+ground clutter drawn, no liquid, nothing blended), `..._AFTER_LIQUIDS`, `..._AFTER_WORLD` (the whole
+world and its full-screen effects, not the interface) and `..._AFTER_UI` (the frame as it will be
+shown, the mods' Dear ImGui windows aside). There a mod opens a pass, draws, and closes it; the
+frame's own drawing stops for it and goes on after, so what the mod draws lies over what the frame
+drew before the point and under what comes after. The points are raised on Direct3D 9 too, for a
+mod drawing with its device.
+
+**Programs.** A pipeline is SPIR-V you build from GLSL with the Vulkan SDK's compiler, against the
+include files of `include/wxl/render/`:
+
+    glslangValidator -V --target-env vulkan1.3 -I<sdk>/include tint.frag -o tint.frag.spv
+    glslangValidator -V --target-env vulkan1.3 -I<sdk>/include --vn kTintFrag tint.frag -o tint_frag.h
+
+(the second writes a header to compile into your mod). A program that includes them starts with
+`#version 460` and `#extension GL_GOOGLE_include_directive : require`. Every program sees the bindless table,
+`uImages[]` and `uSamplers[]` (`wxl/render/render.glsl`); `ImageSlot(image)`, `SceneColorSlot()`
+and `Sampler(flags)` give the indices to sample with, which you pass in the push constants (128
+bytes, your own). Three kinds: `RenderPipelineDesc::Graphics(vertex, fragment)` (no vertex input:
+your vertex program reads its vertices from buffers, by `BufferAddress`), `::Fullscreen(fragment)`
+(one triangle over the pass, `uv` at location 0) and `::Batch(fragment)` (behind a client model
+batch's own vertex program, below). The rest of the description says what the pipeline draws
+into: colour formats (up to four, `WXL_RENDER_FORMAT_BGRA8` for the frame itself), a depth format,
+samples (0 for the frame's own), blending per colour, the depth test, culling. `CreatePipeline`
+compiles it there and then; it answers 0, and logs why, for one the device refuses.
+
+```cpp
+#include "wxl/services/render.hpp"
+#include "tint_frag.h" // const uint32_t kTintFrag[]: glslangValidator --vn kTintFrag
+
+class Tint : public wxl::RenderScript
+{
+public:
+    Tint()
+    {
+        wxl::RenderPipelineDesc desc = wxl::RenderPipelineDesc::Fullscreen(kTintFrag, sizeof kTintFrag);
+        desc.Named("tint").Blend(0, WXL_RENDER_BLEND_ALPHA); // onto the frame's own colour
+        pipeline_ = wxl::RenderService::CreatePipeline(desc);
+    }
+    ~Tint() override { wxl::RenderService::DestroyPipeline(pipeline_); }
+
+    void OnRenderPoint(wxl_render_point point, uint64_t, uint32_t, uint32_t, uint32_t) override
+    {
+        if (point != WXL_RENDER_POINT_AFTER_WORLD || !pipeline_) return;
+        wxl::RenderPass pass;
+        pass.Color(WXL_RENDER_SCENE_COLOR);
+        if (wxl::RenderService::Begin(pass) != WXL_OK) return;
+        const float color[4] = {1.0f, 0.6f, 0.2f, 0.15f};
+        wxl::RenderService::Fullscreen(pipeline_, color, sizeof color);
+        wxl::RenderService::End();
+    }
+
+private:
+    wxl_handle pipeline_ = WXL_HANDLE_NONE;
+};
+```
+
+**Images and buffers.** `CreateImage(width, height, format, samples)` makes a render target that is
+also a texture; `CreateScreenImage(divisor, format, samples)` one the frame's size divided (1 the
+full size, 2 half), made again, cleared, when the window changes size. An image multisampled like
+the frame (samples 0) can share a pass with the frame's depth, `WXL_RENDER_SCENE_DEPTH`, to be
+tested against what the world drew; it is resolved when the pass ends, and what a program samples
+is the resolved image. `CreateBuffer(size)` and `WriteBuffer` hold what your programs read by
+address, or the 32-bit indices of `DrawIndexed`; a write reaches the GPU before the frame's first
+draw. `SceneColorSlot()` and `SceneDepthSlot()` copy the frame as drawn so far into textures, at most
+once per point. Give everything back with `DestroyImage`, `DestroyBuffer`, `DestroyPipeline`, or
+let the mod's unload do it; the runtime waits until the GPU is done with them.
+
+**The game's models again.** `ModelBatchDrawn` hands each model batch the game draws, with `batch`
+(the last parameter). `DrawBatch(batch, pipeline, constants, size)` draws it again with a
+`Batch` pipeline into the open pass: the same vertices, skinned and placed as the game drew them,
+with your fragment program. Its interface is in `wxl/render/batch.glsl`: the batch's varyings
+(`wxlTexcoord0`, `wxlColor0`, ...), its textures (`WxlStageSample(0, uv)`), its alpha test
+(`WxlAlphaRejected(alpha)`), and your constants, up to 4096 bytes, as rows of `vec4`
+(`WxlConstant(i)`). A batch is valid during the event; `KeepBatch(batch)` copies it until the end of
+the frame, to draw it at a later point -- a silhouette, an outline, a glow, drawn after the world
+from the batches seen during it. The example mod `wxl.outline` outlines the target that way, on nothing but
+this service.
+
+**The game's shaders.** `ReplaceShader(name, stage, spirv, size)` gives the game's shaders named
+`name` (or starting with it) your SPIR-V for a stage, 0 vertex or 1 pixel, written against the same
+interface as a batch program, the game's registers at `pc.vertexRegs` and `pc.pixelRegs`;
+`RestoreShader` or your mod's unload gives them their own back.
+
+**Raw Vulkan.** `wxl/services/vk.hpp` (`wxl.vk`, a raw service: declare it in `mod.json`) hands the
+device itself to a mod that records its own commands: `Instance()`, `Device()`, `Queue()`,
+`GetInstanceProcAddr()`, and inside `OnRenderPoint` the frame's `CommandBuffer()`, no rendering
+open. Its rules, in `include/wxl/services/vk.h`: never submit or wait; leave the images in the
+layouts you found them in; call `wxl::GxService::InvalidateState()` when you are done, so that the
+renderer binds its own state again; destroy what you made once `FramesCompleted()` has passed the
+frame that last used it. `Image(handle)` and `Buffer(handle)` reach `wxl.render`'s resources.
+`[gx] validation = 1` in `WarcraftXL.ini` turns on the validation layer, whose findings go to the
+log.
+
+**Timing it.** `wxl::ProfileService::GpuZoneBegin("my pass")` and `GpuZoneEnd()` (abi `0.1.33`) around
+your passes put them on the profiler's GPU timeline, beside the frame's own zones.
 
 ### Windows of your own: Dear ImGui
 
