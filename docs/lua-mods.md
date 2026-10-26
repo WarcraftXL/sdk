@@ -1171,6 +1171,110 @@ answered (`false, "not_found"`), a caller that goes has its requests cancelled -
 optional `cancelled(request)` function is told -- and nothing is handed to a mod that went.
 `wxl.relay.Cancel(request)` takes one back by hand. The module came with abi `0.1.23`.
 
+### Textures from SVG and PNG: `wxl.texture`
+
+The game's interface reads BLP and TGA files only. `wxl.texture` (abi `0.1.30`) makes a texture of
+an SVG or a PNG and hands back a path the client loads like any of its files: give it to
+`Texture:SetTexture` in an add-on, to a model, to `wxl.selectioncircle`. An SVG is drawn at the
+size you ask, so a reticle or an icon stays sharp at any size, and its groups can be recoloured,
+outlined more or less, or hidden.
+
+```lua
+-- The reticle of this mod's assets folder, 32 pixels wide: its fill red, its outline a darker
+-- black and twice as wide as the SVG draws it.
+local path, right, bottom = wxl.texture.Make(".\\assets\\reticle.svg", 32, nil, {
+    fill    = "ff4040ff",
+    outline = { color = "000000cc", width = 2 },
+})
+if not path then print("no reticle: " .. right) return end
+-- path: "Interface\\WXL\\my-mod\\reticle_32x20_<hash>.blp"
+```
+
+**The source.** `".\\assets\\reticle.svg"` is a file of your mod's own folder;
+`"Mods\\<folder>\\..."` one of another mod's; any other name is a file the client has, found as
+it finds its own: `"Interface\\AddOns\\<add-on>\\reticle.svg"` for an add-on's, a file in an
+archive, one a mod serves. The kind is read from the bytes, not the name.
+
+**The size.** In pixels, up to 2048. `nil` for both is the source's own size; `nil` for one keeps
+the proportions. An SVG keeps its proportions in any case: it is fitted and centred, as a browser
+draws it. A PNG is resampled, with a filter that averages what it shrinks.
+
+**What comes back.** The path, then `right` and `bottom`, then the texture's width and height. The
+client's device takes only textures whose edges are powers of two (8 to 2048), so the picture sits
+at the top-left corner of the smallest one that holds it, the rest transparent: a 32 x 20 picture
+is in a 32 x 32 texture, `right` 1 and `bottom` 0.625. Show the picture alone with
+`SetTexCoord(0, right, 0, bottom)` on a region of the picture's size in pixels, and it is drawn
+pixel for pixel. On a failure `Make` answers `nil` and why: `"make: no file 'Mods\\my-mod\\assets\\reticle.svg'"`.
+
+**Groups (SVG).** A key of the table is the `id` of an element of the SVG: a shape, or a group
+(`<g id="outline">`) whose shapes it then reaches all of. Its value is a colour, `false` to hide
+the shapes, or a table of any of `color`, `width` and `visible`:
+
+- a colour is `"rrggbbaa"` or `"rrggbb"` (the order CSS writes, an optional `#`), or a number
+  `0xAARRGGBB`. It paints every fill and stroke of the shapes, gradients too, and its alpha takes
+  the place of their opacities;
+- `width` multiplies the strokes' width the SVG gives each shape: `1` as drawn, `2` twice as wide,
+  `0` takes them off. Each shape keeps its proportion to the others; a shape with no stroke gets
+  none;
+- `visible = false` leaves the shapes out.
+
+A reticle drawn for this is two groups: `<g id="outline">`, the shapes filled and stroked dark,
+under `<g id="fill">`, the same shapes filled light.
+
+**The tint.** A fifth argument, a colour, multiplies every pixel once the picture is drawn: the
+way to colour a PNG, which has no groups (a group on a PNG is refused).
+
+**Made once.** The path is named after everything the texture is made of: the source file's
+bytes, the size, the groups, the tint. The same request answers the same path at once, without
+drawing again; a change to any of them, an edited file included, gives a new path, and the old
+one keeps answering what it was. The textures are kept in memory up to a budget, past which the
+least used are let go and drawn again if the client asks for them. `wxl.texture.Stats()` says how
+many there are and how much they hold.
+
+**In an add-on.** The game's interface has the same call, `WxlTexture`, in both its script
+contexts (the login screens and the game). It takes the same arguments, but an add-on has no
+folder of its own to name with `".\\"`: it names its files under `Interface\\AddOns\\`. An add-on
+written for clients without WarcraftXL tests that `WxlTexture` exists.
+
+A reticle at the screen's pixel size, drawn again when the window or the interface's scale
+changes. The client of 3.3.5a signals `DISPLAY_SIZE_CHANGED` when its window changes size, and
+has no event for the interface's scale: a change of scale resizes `UIParent`, which a script on
+its size sees.
+
+```lua
+-- Interface\AddOns\MyReticle\MyReticle.lua, with reticle.svg beside it.
+local frame = CreateFrame("Frame", nil, UIParent)
+frame:SetPoint("CENTER")
+local texture = frame:CreateTexture(nil, "OVERLAY")
+texture:SetAllPoints(frame)
+
+-- Screen pixels per unit of the frame's own coordinates.
+local function PixelsPerUnit()
+    local _, height = GetCVar("gxResolution"):match("(%d+)x(%d+)")
+    return tonumber(height) / 768 * frame:GetEffectiveScale()
+end
+
+local function Draw()
+    if not WxlTexture then return end -- not running on WarcraftXL
+    local perUnit = PixelsPerUnit()
+    local pixels  = math.floor(24 * perUnit + 0.5) -- 24 units wide, as many pixels as that covers
+    local path, right, bottom, width, height = WxlTexture("Interface\\AddOns\\MyReticle\\reticle.svg", pixels, nil,
+        { fill = "ff4040ff", outline = { color = "000000cc", width = 1.5 } })
+    if not path then print("MyReticle: " .. right) return end
+    texture:SetTexture(path)
+    texture:SetTexCoord(0, right, 0, bottom)
+    frame:SetSize(width * right / perUnit, height * bottom / perUnit)
+end
+
+frame:RegisterEvent("PLAYER_LOGIN")
+frame:RegisterEvent("DISPLAY_SIZE_CHANGED")
+frame:SetScript("OnEvent", Draw)
+UIParent:HookScript("OnSizeChanged", Draw)
+```
+
+A Lua mod draws its own reticle the same way, with `wxl.texture.Make` and a frame it makes through
+`wxl.script.Run`, or hands the path to an add-on of its own.
+
 ### Models: `wxl.m2`
 
 What a character wears comes as an event, and a model of your own can be hung on any model the
@@ -1927,6 +2031,8 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.selectioncircle.Hide(kinds, reactions)`, `.SetStyle(kinds, reactions, style)`, `.Reset(kinds, reactions)` | `true`: the game's circles of those kinds and reactions hidden, drawn in another look, or given back (abi `0.1.28`) |
 | `wxl.selectioncircle.HideObject(target)`, `.SetObjectStyle(target, style)`, `.ResetObject(target)`, `.ResetAll()` | `true`: every circle of one object hidden, restyled or given back; everything this mod changed given back (abi `0.1.28`) |
 | `wxl.selectioncircle.Drawn()`, `.Hidden()` | the circles the last world frame drew, and left out (abi `0.1.28`) |
+| `wxl.texture.Make(source, width, height, groups, tint)` | the path of a texture made of an SVG or a PNG, then `right`, `bottom` (the picture's texture coordinates) and the texture's width and height; see [Textures from SVG and PNG](#textures-from-svg-and-png-wxltexture) (abi `0.1.30`) |
+| `wxl.texture.Stats()` | `{ textures, resident, texture_limit, bytes, byte_limit, made, reused, released }`: what the service holds (abi `0.1.30`) |
 
 ### Object methods
 
@@ -2203,7 +2309,7 @@ the `wxl.camera`, `wxl.input` and `wxl.world` modules, `wxl.action.Face` and `Is
 `CanAttack`, `CanInteract` and `CanUse` came with `0.1.26`. The `wxl.highlight`
 module came with `0.1.27`, the `wxl.selectioncircle` module with `0.1.28`.
 `wxl.camera.SetViewRolled` and `Roll`, `wxl.input.CaptureCursorAt` and `CapturePoint` came with
-`0.1.29`.
+`0.1.29`, the `wxl.texture` module with `0.1.30`.
 
 ### Gameplay events
 

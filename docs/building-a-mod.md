@@ -744,7 +744,7 @@ Each service has a typed facade with its name and version sealed in: `wxl::Objec
 `wxl::ScriptService`, `wxl::StorageService`, `wxl::DataService`, `wxl::NetService`,
 `wxl::UiService`, `wxl::HookService`, `wxl::RawHookService`, `wxl::PatchService`, `wxl::PointService`,
 `wxl::ActionService`, `wxl::M2Service`, `wxl::M2FileService`, `wxl::GxService`,
-`wxl::CameraService`, `wxl::InputService`, `wxl::WorldService`, `wxl::PoseService`,
+`wxl::CameraService`, `wxl::InputService`, `wxl::WorldService`, `wxl::PoseService`, `wxl::TextureService`,
 `wxl::ImGuiService` (`include/wxl/services/imgui.hpp`, which compiles Dear ImGui in: not in
 `services.hpp`)
 (`include/wxl/services/*.hpp`, or all of them through `include/wxl/services.hpp`). A facade is stateless -- construct one
@@ -1054,6 +1054,59 @@ may go with requests in flight: a service that goes fails what it had not answer
 (`WXL_E_NOT_FOUND`), a caller that goes has its requests cancelled (the service's `cancelled`
 function is told), and nothing is ever handed to a mod that went. All of this came with abi
 `0.1.23`.
+
+### Textures from SVG and PNG
+
+The game's interface reads BLP and TGA files only. `wxl::TextureService` (abi `0.1.30`) makes a
+texture of an SVG or a PNG and hands back a path the client loads like any of its files, on every
+thread and on both clients: `Texture:SetTexture(path)` in an add-on, a model's texture, a path
+you give `wxl::SelectionCircleService`. An SVG is drawn at the size you ask, so it stays sharp at
+any size, and its groups can be recoloured, outlined more or less, or hidden.
+
+```cpp
+const wxl::TextureService textures;
+std::string               why;
+// The reticle of this mod's assets folder, 32 pixels wide (the height in proportion): its fill
+// red, its outline black at 0.8 and twice as wide as the SVG draws it.
+const auto reticle = textures.Make(wxl::TextureRequest(".\\assets\\reticle.svg")
+                                       .Size(32, 0)
+                                       .Color("fill", 0xFFFF4040u)
+                                       .Color("outline", 0xCC000000u)
+                                       .Width("outline", 2.0f),
+                                   &why);
+if (!reticle)
+    wxl::Log(WXL_LOG_WARN, "reticle", "none: {}", why);
+else
+    // reticle->path is "Interface\\WXL\\my-mod\\reticle_32x20_<hash>.blp"; show the picture with
+    // SetTexCoord(0, reticle->right, 0, reticle->bottom) on a region of 32 x 20 pixels.
+    wxl::Log(WXL_LOG_INFO, "reticle", "{} at {} x {}", reticle->path, reticle->width, reticle->height);
+```
+
+`".\\assets\\..."` is a file of the calling mod's folder, `"Mods\\<folder>\\..."` one of another
+mod's, any other name a file the client has (`"Interface\\AddOns\\<add-on>\\..."`, an archive's, a
+served one). A size of 0 is the source's own, or in proportion to the other edge; up to 2048. An
+SVG is fitted and centred; a PNG resampled with a filter that averages what it shrinks.
+
+The client's device makes only textures with power-of-two edges (8 to 2048), so the picture sits
+at the top-left corner of the smallest that holds it, the rest transparent: `texture_width`,
+`texture_height`, and `right`, `bottom`, the picture's far texture coordinates. Shown with those
+coordinates on a region of the picture's size in pixels, it is drawn pixel for pixel. The texture
+is an uncompressed BLP2 with every mip, straight (not premultiplied) alpha as the client's blend
+takes it, transparent pixels coloured from their neighbours so no dark fringe shows.
+
+A group restyles the shapes whose `id`, or whose nearest enclosing element's `id`, is its name
+(`<g id="outline">` reaches every shape inside): `Color` (`0xAARRGGBB`) paints every fill and
+stroke, its alpha in place of their opacities; `Width` multiplies each shape's stroke width (1 as
+drawn, 0 none), so shapes keep their proportions; `Hide` leaves them out. `Tint(0xAARRGGBB)`
+multiplies every pixel, SVG or PNG; a PNG has no groups.
+
+The path is named after the source file's bytes, the size, the groups and the tint: the same
+request answers the same path at once (`reused`), a change to any of them, an edited file
+included, a new one. Textures are kept up to a memory budget, the least used let go past it and
+drawn again when the client asks; `Stats()` says what is held. On a failure `Make` answers the
+result and, through its second argument, the reason. The game's interface has the same call,
+`WxlTexture(source, width, height, groups, tint)`; the Lua guide shows a reticle add-on that draws
+itself again when the window or the interface's scale changes.
 
 ### Models: what characters wear, models of your own, model files
 
