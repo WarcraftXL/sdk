@@ -125,6 +125,13 @@ is not drawn) and `Clear` takes it off. On the recompiled client, which draws no
 its Vulkan renderer's render points exist, `Supported` must be false with a reason and `Set` must
 answer `unsupported`.
 
+Phase 19 checks the game's selection circles (abi 0.1.28), on both clients. The nearest unit is
+targeted (stand near a creature or an NPC, or it is a SKIP) and its circle must be counted drawn
+(the `ObjectSelectionCircle` CVar must be 1); `wxl.selectioncircle.Hide("target")` takes it away
+(watch: no circle under the target), then `SetStyle` draws it a little larger in blue for two
+seconds (watch it), and `ResetAll` gives the game's back. The target the player had comes back
+after.
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the
