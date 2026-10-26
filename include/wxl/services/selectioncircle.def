@@ -1,0 +1,38 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.selectioncircle as data: one row per member of wxl_selectioncircle_api, in member order. The
+// shapes and their columns are described in wxl/services/rows.hpp.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including selectioncircle.def"
+#endif
+
+WXL_API_SERVICE(selectioncircle, WXL_SELECTIONCIRCLE_SERVICE, WXL_SELECTIONCIRCLE_SERVICE_VERSION, (0, 1, 28), open,
+                "The circles the game draws on the ground under its target, its pet's target and the move marker, hidden or drawn in another texture, colour or size. Main thread only.")
+
+WXL_API(selectioncircle, hide, Hide, result, (u32 kinds, u32 reactions), shim, generated,
+        "Hides the circles of these kinds (nil or \"all\", a kind's name, a list of names, or a mask) drawn for units of these reactions (nil for all, a reaction's name or \"none\", a list, or a mask).")
+WXL_API(selectioncircle, set_style, SetStyle, result, (u32 kinds, u32 reactions, str texture, u32 color, f32 scale), shim, generated,
+        "Draws the circles of these kinds and reactions in another look: a table {texture = path, color = 0xAARRGGBB, scale = number}, each left out keeping the game's.")
+WXL_API(selectioncircle, reset, Reset, result, (u32 kinds, u32 reactions), shim, generated,
+        "Gives the circles of these kinds and reactions back the game's look, as far as this mod changed it.")
+WXL_API(selectioncircle, hide_object, HideObject, result, (object target), shim, generated,
+        "Hides every circle drawn for an object.")
+WXL_API(selectioncircle, set_object_style, SetObjectStyle, result, (object target, str texture, u32 color, f32 scale), shim, generated,
+        "Draws every circle drawn for an object in another look: a table {texture, color, scale} as SetStyle takes.")
+WXL_API(selectioncircle, reset_object, ResetObject, result, (object target), shim, generated,
+        "Gives an object's circles back the look of their kind.")
+WXL_API(selectioncircle, reset_all, ResetAll, none, (), shim, generated,
+        "Gives back everything this mod changed.")
+WXL_API(selectioncircle, drawn, Drawn, u32, (), generated, generated,
+        "How many circles the last world frame drew.")
+WXL_API(selectioncircle, hidden, Hidden, u32, (), generated, generated,
+        "How many circles the last world frame left out because a mod hid them.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

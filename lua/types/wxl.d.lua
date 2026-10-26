@@ -3402,6 +3402,88 @@ function highlight.ClearAll() end
 ---@return string|nil reason
 function highlight.Drawn() end
 
+---wxl.selectioncircle. The circles the game draws on the ground under its target, its pet's target and the move marker, hidden or drawn in another texture, colour or size. Main thread only.
+---Came with abi 0.1.28: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.selectioncircle
+local selectioncircle = {}
+
+---Hides the game's circles of these kinds drawn for units of these reactions.
+---`kinds`: nil or "all", "target", "pet_target", "move_marker", a list of them, or a mask (1, 2, 4).
+---`reactions`, of the unit the circle is drawn for: nil for all, "hated" to "exalted", "none" (no
+---unit, or no reaction read), a list of them, or a mask (bit 0 hated ... bit 7 exalted, bit 8 none).
+---Kept until reset, or until the mod is disabled, reloads or unloads; an object's own look before
+---its kind's, the last set winning among mods.
+---@param kinds? string|string[]|integer
+---@param reactions? string|string[]|integer
+---@return true|nil ok
+---@return string|nil reason
+function selectioncircle.Hide(kinds, reactions) end
+
+---Draws the game's circles of these kinds, for units of these reactions, in another look.
+---`kinds`: nil or "all", "target", "pet_target", "move_marker", a list of them, or a mask (1, 2, 4).
+---`reactions`, of the unit the circle is drawn for: nil for all, "hated" to "exalted", "none" (no
+---unit, or no reaction read), a list of them, or a mask (bit 0 hated ... bit 7 exalted, bit 8 none).
+---`style`: a table {texture = path of a BLP added onto the ground like the game's (black is nothing),
+---color = 0xAARRGGBB, scale = size against the game's (up to 8)}; each left out keeps the game's.
+---Kept until reset, or until the mod is disabled, reloads or unloads; an object's own look before
+---its kind's, the last set winning among mods.
+---@param kinds? string|string[]|integer
+---@param reactions? string|string[]|integer
+---@param style {texture: string?, color: integer?, scale: number?}
+---@return true|nil ok
+---@return string|nil reason
+function selectioncircle.SetStyle(kinds, reactions, style) end
+
+---Gives the circles of these kinds and reactions back the game's look, as far as this mod changed it.
+---`kinds`: nil or "all", "target", "pet_target", "move_marker", a list of them, or a mask (1, 2, 4).
+---`reactions`, of the unit the circle is drawn for: nil for all, "hated" to "exalted", "none" (no
+---unit, or no reaction read), a list of them, or a mask (bit 0 hated ... bit 7 exalted, bit 8 none).
+---@param kinds? string|string[]|integer
+---@param reactions? string|string[]|integer
+---@return true|nil ok
+---@return string|nil reason
+function selectioncircle.Reset(kinds, reactions) end
+
+---Hides every circle the game draws for an object: as the target, as the pet's target, or the
+---move marker of the unit moving.
+---Kept until reset, or until the mod is disabled, reloads or unloads; an object's own look before
+---its kind's, the last set winning among mods.
+---@param target wxl.Object
+---@return true|nil ok
+---@return string|nil reason
+function selectioncircle.HideObject(target) end
+
+---Draws every circle the game draws for an object in another look.
+---`style`: a table {texture = path of a BLP added onto the ground like the game's (black is nothing),
+---color = 0xAARRGGBB, scale = size against the game's (up to 8)}; each left out keeps the game's.
+---Kept until reset, or until the mod is disabled, reloads or unloads; an object's own look before
+---its kind's, the last set winning among mods.
+---@param target wxl.Object
+---@param style {texture: string?, color: integer?, scale: number?}
+---@return true|nil ok
+---@return string|nil reason
+function selectioncircle.SetObjectStyle(target, style) end
+
+---Gives an object's circles back the look of their kind; nil, "not_found" for one this mod did
+---not change.
+---@param target wxl.Object
+---@return true|nil ok
+---@return string|nil reason
+function selectioncircle.ResetObject(target) end
+
+---Gives back everything this mod changed on the game's circles.
+function selectioncircle.ResetAll() end
+
+---How many circles the last world frame drew.
+---@return integer|nil
+---@return string|nil reason
+function selectioncircle.Drawn() end
+
+---How many circles the last world frame left out because a mod hid them.
+---@return integer|nil
+---@return string|nil reason
+function selectioncircle.Hidden() end
+
 ---@class wxl.ModInfo
 ---@field id string
 ---@field name string
@@ -3481,6 +3563,7 @@ function object.Unwatch(type, name) end
 ---@field world wxl.world
 ---@field pose wxl.pose
 ---@field highlight wxl.highlight
+---@field selectioncircle wxl.selectioncircle
 ---@field events table<wxl.Family, string[]> every family's events, as On<Event>
 wxl = {}
 

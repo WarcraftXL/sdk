@@ -512,6 +512,49 @@ namespace
         if (std::strcmp(row.service, "highlight") == 0 && name == "ClearAll")
             return "---Takes off every highlight of this mod.\n"
                    "function " + owner + ".ClearAll() end\n\n";
+        if (std::strcmp(row.service, "selectioncircle") == 0)
+        {
+            const std::string masks =
+                "---`kinds`: nil or \"all\", \"target\", \"pet_target\", \"move_marker\", a list of them, or a mask (1, 2, 4).\n"
+                "---`reactions`, of the unit the circle is drawn for: nil for all, \"hated\" to \"exalted\", \"none\" (no\n"
+                "---unit, or no reaction read), a list of them, or a mask (bit 0 hated ... bit 7 exalted, bit 8 none).\n";
+            const std::string style =
+                "---`style`: a table {texture = path of a BLP added onto the ground like the game's (black is nothing),\n"
+                "---color = 0xAARRGGBB, scale = size against the game's (up to 8)}; each left out keeps the game's.\n";
+            const std::string kept =
+                "---Kept until reset, or until the mod is disabled, reloads or unloads; an object's own look before\n"
+                "---its kind's, the last set winning among mods.\n";
+            const std::string answers = "---@return true|nil ok\n---@return string|nil reason\n";
+            if (name == "Hide")
+                return "---Hides the game's circles of these kinds drawn for units of these reactions.\n" + masks + kept +
+                       "---@param kinds? string|string[]|integer\n---@param reactions? string|string[]|integer\n" + answers +
+                       "function " + owner + ".Hide(kinds, reactions) end\n\n";
+            if (name == "SetStyle")
+                return "---Draws the game's circles of these kinds, for units of these reactions, in another look.\n" + masks +
+                       style + kept +
+                       "---@param kinds? string|string[]|integer\n---@param reactions? string|string[]|integer\n"
+                       "---@param style {texture: string?, color: integer?, scale: number?}\n" + answers +
+                       "function " + owner + ".SetStyle(kinds, reactions, style) end\n\n";
+            if (name == "Reset")
+                return "---Gives the circles of these kinds and reactions back the game's look, as far as this mod changed it.\n" +
+                       masks + "---@param kinds? string|string[]|integer\n---@param reactions? string|string[]|integer\n" +
+                       answers + "function " + owner + ".Reset(kinds, reactions) end\n\n";
+            if (name == "HideObject")
+                return "---Hides every circle the game draws for an object: as the target, as the pet's target, or the\n"
+                       "---move marker of the unit moving.\n" + kept + "---@param target wxl.Object\n" + answers +
+                       "function " + owner + ".HideObject(target) end\n\n";
+            if (name == "SetObjectStyle")
+                return "---Draws every circle the game draws for an object in another look.\n" + style + kept +
+                       "---@param target wxl.Object\n---@param style {texture: string?, color: integer?, scale: number?}\n" +
+                       answers + "function " + owner + ".SetObjectStyle(target, style) end\n\n";
+            if (name == "ResetObject")
+                return "---Gives an object's circles back the look of their kind; nil, \"not_found\" for one this mod did\n"
+                       "---not change.\n---@param target wxl.Object\n" + answers +
+                       "function " + owner + ".ResetObject(target) end\n\n";
+            if (name == "ResetAll")
+                return "---Gives back everything this mod changed on the game's circles.\n"
+                       "function " + owner + ".ResetAll() end\n\n";
+        }
         if (name == "Begin")
             return "---Opens a zone named `name` on the profiler's timeline, inside the handler or callback running\n"
                    "---now; End closes it. Zones nest. Whatever this call left open is closed when it returns or\n"

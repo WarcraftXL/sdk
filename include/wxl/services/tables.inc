@@ -26,3 +26,4 @@
 #include "wxl/services/pose.def"
 #include "wxl/services/imgui.def"
 #include "wxl/services/highlight.def"
+#include "wxl/services/selectioncircle.def"

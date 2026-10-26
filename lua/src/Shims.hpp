@@ -67,6 +67,12 @@
 //   wxl.highlight.Set(target, color, outline, glow,    an object highlighted, the last Lua mod
 //                     glow_strength)                    to set it holding it; Clear, ClearAll take
 //   wxl.highlight.Clear(target), .ClearAll()            the mod's own off
+//   wxl.selectioncircle.Hide(kinds, reactions),         the game's circles hidden or restyled,
+//                      .SetStyle(kinds, reactions,      the last Lua mod to change a kind and
+//                                style), .Reset(...)    reaction, or an object, holding it; Reset,
+//   wxl.selectioncircle.HideObject(target),             ResetObject and ResetAll give back only
+//                      .SetObjectStyle(target, style),  what the mod holds
+//                      .ResetObject(target), .ResetAll()
 //
 // They are let go when the mod is disabled or its state closes.
 

@@ -30,6 +30,7 @@
 #include "wxl/services/input.h"
 #include "wxl/services/pose.h"
 #include "wxl/services/highlight.h"
+#include "wxl/services/selectioncircle.h"
 #include "wxl/services/relay.h"
 #include "wxl/services/storage.h"
 
@@ -1708,10 +1709,284 @@ namespace wxl::lua::shims
             return 0;
         }
 
-        /// A mod's view, its hold on the pointer, its block of the mouse look, its heads and its
-        /// highlights go with it.
+        // --- wxl.selectioncircle: the circles each Lua mod changed ---------------------------
+
+        const wxl_selectioncircle_api* Circles() { return wxl::api::Table<wxl_selectioncircle_api>(); }
+
+        constexpr uint32_t kCircleKinds     = 3;
+        constexpr uint32_t kCircleReactions = 9; ///< the eight wxl_reaction values, then none
+
+        /// The Lua mod that last changed each kind and reaction: the runtime sees them all as
+        /// wxl.lua's, so a mod's reset gives back only what it holds.
+        ScriptMod* g_circleCells[kCircleKinds][kCircleReactions] = {};
+
+        struct CircleObject
+        {
+            ScriptMod* mod;
+            wxl_handle target;
+        };
+        std::vector<CircleObject> g_circleObjects;
+
+        constexpr const char* kCircleKindNames[kCircleKinds] = {"target", "pet_target", "move_marker"};
+        constexpr const char* kCircleReactionNames[kCircleReactions] = {
+            "hated", "hostile", "unfriendly", "neutral", "friendly", "honored", "revered", "exalted", "none"};
+
+        /// One name of `names`, as its bit; 0 for a name not there.
+        uint32_t CircleBit(const char* name, const char* const* names, uint32_t count)
+        {
+            for (uint32_t i = 0; i < count; ++i)
+                if (std::strcmp(names[i], name) == 0) return 1u << i;
+            return 0;
+        }
+
+        /// A mask of kinds or reactions as a Lua mod gives it: nil (all), a whole number (the
+        /// mask), a name, or a list of names. `all` is the mask of every bit.
+        uint32_t CheckCircleMask(lua_State* L, int index, const char* call, const char* what, const char* const* names,
+                                 uint32_t count, uint32_t all)
+        {
+            if (lua_isnoneornil(L, index)) return 0;
+            if (lua_type(L, index) == LUA_TNUMBER)
+            {
+                const double mask = lua_tonumber(L, index);
+                if (!(mask >= 0.0 && mask <= static_cast<double>(all)) || mask != static_cast<double>(static_cast<uint32_t>(mask)))
+                    luaL_error(L, "wxl.selectioncircle.%s: '%s' (argument %d) must be a mask from 0 to %u", call, what, index, all);
+                return static_cast<uint32_t>(mask);
+            }
+            if (lua_type(L, index) == LUA_TSTRING)
+            {
+                const char* name = lua_tostring(L, index);
+                if (std::strcmp(name, "all") == 0) return 0;
+                if (const uint32_t bit = CircleBit(name, names, count)) return bit;
+                luaL_error(L, "wxl.selectioncircle.%s: '%s' (argument %d) has no %s named \"%s\"", call, what, index,
+                           what, name);
+            }
+            if (lua_type(L, index) == LUA_TTABLE)
+            {
+                uint32_t mask = 0;
+                for (int i = 1;; ++i)
+                {
+                    lua_rawgeti(L, index, i);
+                    if (lua_isnil(L, -1))
+                    {
+                        lua_pop(L, 1);
+                        break;
+                    }
+                    const char*    name = lua_tostring(L, -1);
+                    const uint32_t bit  = name ? CircleBit(name, names, count) : 0;
+                    lua_pop(L, 1);
+                    if (!bit)
+                        luaL_error(L, "wxl.selectioncircle.%s: '%s' (argument %d) has an entry %d that names no %s", call,
+                                   what, index, i, what);
+                    mask |= bit;
+                }
+                return mask;
+            }
+            luaL_error(L, "wxl.selectioncircle.%s: '%s' (argument %d) takes nil, a name, a list of names or a mask", call,
+                       what, index);
+            return 0;
+        }
+
+        uint32_t CheckCircleKinds(lua_State* L, int index, const char* call)
+        {
+            return CheckCircleMask(L, index, call, "kinds", kCircleKindNames, kCircleKinds, WXL_SELECTIONCIRCLE_ALL_KINDS);
+        }
+
+        uint32_t CheckCircleReactions(lua_State* L, int index, const char* call)
+        {
+            return CheckCircleMask(L, index, call, "reactions", kCircleReactionNames, kCircleReactions,
+                                   WXL_SELECTIONCIRCLE_ALL_REACTIONS);
+        }
+
+        struct CircleStyle
+        {
+            std::string texture;
+            uint32_t    color = 0;
+            float       scale = 0.0f;
+        };
+
+        /// A style table {texture, color, scale}, each left out keeping the game's.
+        CircleStyle CheckCircleStyle(lua_State* L, int index, const char* call)
+        {
+            if (!lua_istable(L, index))
+                luaL_error(L, "wxl.selectioncircle.%s: 'style' (argument %d) is missing; it takes a table {texture, color, scale}",
+                           call, index);
+            CircleStyle style;
+            lua_getfield(L, index, "texture");
+            if (!lua_isnil(L, -1))
+            {
+                if (lua_type(L, -1) != LUA_TSTRING)
+                    luaL_error(L, "wxl.selectioncircle.%s: the style's 'texture' must be a file's path", call);
+                size_t      size = 0;
+                const char* text = lua_tolstring(L, -1, &size);
+                style.texture.assign(text, size);
+            }
+            lua_pop(L, 1);
+            lua_getfield(L, index, "color");
+            if (!lua_isnil(L, -1))
+            {
+                const double color = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) : -1.0;
+                if (!(color >= 0.0 && color <= 4294967295.0) || color != static_cast<double>(static_cast<uint32_t>(color)))
+                    luaL_error(L, "wxl.selectioncircle.%s: the style's 'color' must be a whole number from 0 to 0xFFFFFFFF", call);
+                style.color = static_cast<uint32_t>(color);
+            }
+            lua_pop(L, 1);
+            lua_getfield(L, index, "scale");
+            if (!lua_isnil(L, -1))
+            {
+                if (lua_type(L, -1) != LUA_TNUMBER) luaL_error(L, "wxl.selectioncircle.%s: the style's 'scale' must be a number", call);
+                style.scale = static_cast<float>(lua_tonumber(L, -1));
+            }
+            lua_pop(L, 1);
+            return style;
+        }
+
+        /// The cells of a mask of kinds and reactions, 0 meaning all of either.
+        template <class Fn>
+        void ForCircleCells(uint32_t kinds, uint32_t reactions, Fn&& fn)
+        {
+            if (!kinds) kinds = WXL_SELECTIONCIRCLE_ALL_KINDS;
+            if (!reactions) reactions = WXL_SELECTIONCIRCLE_ALL_REACTIONS;
+            for (uint32_t k = 0; k < kCircleKinds; ++k)
+                for (uint32_t r = 0; r < kCircleReactions; ++r)
+                    if ((kinds & (1u << k)) && (reactions & (1u << r))) fn(k, r);
+        }
+
+        void HoldCircleCells(ScriptMod& mod, uint32_t kinds, uint32_t reactions)
+        {
+            ForCircleCells(kinds, reactions, [&](uint32_t k, uint32_t r) { g_circleCells[k][r] = &mod; });
+        }
+
+        void HoldCircleObject(ScriptMod& mod, wxl_handle target)
+        {
+            for (CircleObject& held : g_circleObjects)
+                if (held.target == target)
+                {
+                    held.mod = &mod; // the last Lua mod to change it holds it, as among native mods
+                    return;
+                }
+            g_circleObjects.push_back(CircleObject{&mod, target});
+        }
+
+        int PushCircleResult(lua_State* L, wxl_result result)
+        {
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_CircleHide(lua_State* L)
+        {
+            ScriptMod&     mod       = Self(L);
+            const uint32_t kinds     = CheckCircleKinds(L, 1, "Hide");
+            const uint32_t reactions = CheckCircleReactions(L, 2, "Hide");
+            const wxl_selectioncircle_api* api = Circles();
+            if (!api || !wxl::detail::Carries(api, &wxl_selectioncircle_api::hide)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->hide(kinds, reactions);
+            if (result == WXL_OK) HoldCircleCells(mod, kinds, reactions);
+            return PushCircleResult(L, result);
+        }
+
+        int L_CircleSetStyle(lua_State* L)
+        {
+            ScriptMod&        mod       = Self(L);
+            const uint32_t    kinds     = CheckCircleKinds(L, 1, "SetStyle");
+            const uint32_t    reactions = CheckCircleReactions(L, 2, "SetStyle");
+            const CircleStyle style     = CheckCircleStyle(L, 3, "SetStyle");
+            const wxl_selectioncircle_api* api = Circles();
+            if (!api || !wxl::detail::Carries(api, &wxl_selectioncircle_api::set_style))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set_style(kinds, reactions, Str(style.texture), style.color, style.scale);
+            if (result == WXL_OK) HoldCircleCells(mod, kinds, reactions);
+            return PushCircleResult(L, result);
+        }
+
+        /// Gives back the cells of a mask a Lua mod holds; the others stay as their holder left them.
+        void ResetCircleCells(ScriptMod& mod, uint32_t kinds, uint32_t reactions)
+        {
+            const wxl_selectioncircle_api* api = Circles();
+            ForCircleCells(kinds, reactions, [&](uint32_t k, uint32_t r) {
+                if (g_circleCells[k][r] != &mod) return;
+                g_circleCells[k][r] = nullptr;
+                if (api && wxl::detail::Carries(api, &wxl_selectioncircle_api::reset)) api->reset(1u << k, 1u << r);
+            });
+        }
+
+        int L_CircleReset(lua_State* L)
+        {
+            ScriptMod&     mod       = Self(L);
+            const uint32_t kinds     = CheckCircleKinds(L, 1, "Reset");
+            const uint32_t reactions = CheckCircleReactions(L, 2, "Reset");
+            const wxl_selectioncircle_api* api = Circles();
+            if (!api || !wxl::detail::Carries(api, &wxl_selectioncircle_api::reset)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            ResetCircleCells(mod, kinds, reactions);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_CircleHideObject(lua_State* L)
+        {
+            ScriptMod&       mod    = Self(L);
+            const wxl_handle target = CheckObject(L, 1);
+            const wxl_selectioncircle_api* api = Circles();
+            if (!api || !wxl::detail::Carries(api, &wxl_selectioncircle_api::hide_object))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->hide_object(target);
+            if (result == WXL_OK) HoldCircleObject(mod, target);
+            return PushCircleResult(L, result);
+        }
+
+        int L_CircleSetObjectStyle(lua_State* L)
+        {
+            ScriptMod&        mod    = Self(L);
+            const wxl_handle  target = CheckObject(L, 1);
+            const CircleStyle style  = CheckCircleStyle(L, 2, "SetObjectStyle");
+            const wxl_selectioncircle_api* api = Circles();
+            if (!api || !wxl::detail::Carries(api, &wxl_selectioncircle_api::set_object_style))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set_object_style(target, Str(style.texture), style.color, style.scale);
+            if (result == WXL_OK) HoldCircleObject(mod, target);
+            return PushCircleResult(L, result);
+        }
+
+        int L_CircleResetObject(lua_State* L)
+        {
+            ScriptMod&       mod    = Self(L);
+            const wxl_handle target = CheckObject(L, 1);
+            const auto held = std::find_if(g_circleObjects.begin(), g_circleObjects.end(),
+                                           [&](const CircleObject& o) { return o.mod == &mod && o.target == target; });
+            if (held == g_circleObjects.end()) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            g_circleObjects.erase(held);
+            const wxl_selectioncircle_api* api = Circles();
+            if (!api || !wxl::detail::Carries(api, &wxl_selectioncircle_api::reset_object))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            return PushCircleResult(L, api->reset_object(target));
+        }
+
+        /// Everything a Lua mod changed on the circles is given back.
+        void ResetCircles(ScriptMod& mod)
+        {
+            ResetCircleCells(mod, 0, 0);
+            const wxl_selectioncircle_api* api = Circles();
+            for (size_t i = g_circleObjects.size(); i-- > 0;)
+            {
+                if (g_circleObjects[i].mod != &mod) continue;
+                if (api && wxl::detail::Carries(api, &wxl_selectioncircle_api::reset_object))
+                    api->reset_object(g_circleObjects[i].target);
+                g_circleObjects.erase(g_circleObjects.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
+
+        int L_CircleResetAll(lua_State* L)
+        {
+            ResetCircles(Self(L));
+            return 0;
+        }
+
+        /// A mod's view, its hold on the pointer, its block of the mouse look, its heads, its
+        /// highlights and its circles go with it.
         void ReleaseViewAndPointer(ScriptMod& mod)
         {
+            ResetCircles(mod);
             ClearHighlights(mod);
             LetGoView(mod);
             CaptureFor(mod, false);
@@ -1759,6 +2034,13 @@ namespace wxl::lua::shims
         if (service == "highlight" && name == "Set") return &L_HighlightSet;
         if (service == "highlight" && name == "Clear") return &L_HighlightClear;
         if (service == "highlight" && name == "ClearAll") return &L_HighlightClearAll;
+        if (service == "selectioncircle" && name == "Hide") return &L_CircleHide;
+        if (service == "selectioncircle" && name == "SetStyle") return &L_CircleSetStyle;
+        if (service == "selectioncircle" && name == "Reset") return &L_CircleReset;
+        if (service == "selectioncircle" && name == "HideObject") return &L_CircleHideObject;
+        if (service == "selectioncircle" && name == "SetObjectStyle") return &L_CircleSetObjectStyle;
+        if (service == "selectioncircle" && name == "ResetObject") return &L_CircleResetObject;
+        if (service == "selectioncircle" && name == "ResetAll") return &L_CircleResetAll;
         if (service == "profile" && name == "Begin") return &profile::L_Begin;
         if (service == "profile" && name == "End") return &profile::L_End;
         if (service == "profile" && name == "Text") return &profile::L_Text;

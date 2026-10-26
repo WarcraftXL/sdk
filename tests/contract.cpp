@@ -1052,6 +1052,8 @@ int main()
         host.Table()->publish_service(WXL_POSE_SERVICE, WXL_POSE_SERVICE_VERSION, wxltest::FakeView::PoseTable());
         host.Table()->publish_service(WXL_IMGUI_SERVICE, WXL_IMGUI_SERVICE_VERSION, wxltest::FakeView::ImGuiTable());
         host.Table()->publish_service(WXL_HIGHLIGHT_SERVICE, WXL_HIGHLIGHT_SERVICE_VERSION, wxltest::FakeView::HighlightTable());
+        host.Table()->publish_service(WXL_SELECTIONCIRCLE_SERVICE, WXL_SELECTIONCIRCLE_SERVICE_VERSION,
+                                      wxltest::FakeView::SelectionCircleTable());
     }
 
     Section("reads that can fail");
@@ -1549,6 +1551,36 @@ int main()
                   FakeView::HighlightColors()[0] == 0xFFE03030u && calls[1].name == "highlight_clear" &&
                   calls[2].name == "highlight_clear_all",
               "with the object, its colour, its widths and its strength");
+    }
+
+    Section("the game's selection circles");
+    {
+        using wxltest::FakeView;
+        using wxltest::FakeObjects;
+        using wxl::SelectionCircleService;
+        FakeView::CircleCalls().clear();
+        const wxl::Unit boar(FakeObjects::kBoar);
+        Check(SelectionCircleService::Hide(WXL_SELECTIONCIRCLE_TARGET, 0) == WXL_OK &&
+                  SelectionCircleService::Hide(0x8u, 0) == WXL_E_INVALID,
+              "the target's circles are hidden; a bit that names no kind is refused");
+        Check(SelectionCircleService::SetStyle(WXL_SELECTIONCIRCLE_TARGET, WXL_SELECTIONCIRCLE_REACTION(WXL_REACTION_HOSTILE),
+                                               "Interface\\Mod\\Circle.blp", 0x80FF8000u, 1.25f) == WXL_OK &&
+                  SelectionCircleService::SetStyle(0, 0, "", 0, 9.0f) == WXL_E_INVALID,
+              "a style for hostile targets is set; a scale past the maximum refused");
+        Check(SelectionCircleService::HideObject(boar) == WXL_OK &&
+                  SelectionCircleService::SetObjectStyle(wxl::Unit(FakeObjects::kStale), "", 0xFFFFFFFFu, 1.0f) == WXL_E_NOT_FOUND &&
+                  SelectionCircleService::SetObjectStyle(boar, "", 0xFF00FF00u, 0.5f) == WXL_OK &&
+                  SelectionCircleService::ResetObject(boar) == WXL_OK && SelectionCircleService::Reset(0, 0) == WXL_OK,
+              "an object's circles are hidden, restyled and given back; one gone is not found");
+        SelectionCircleService::ResetAll();
+        Check(*SelectionCircleService::Drawn() == 2u && *SelectionCircleService::Hidden() == 1u, "the counts of the last frame read");
+        const auto& calls = FakeView::CircleCalls();
+        Check(calls.size() == 7 && calls[0].name == "hide" && calls[0].kinds == WXL_SELECTIONCIRCLE_TARGET &&
+                  calls[1].name == "set_style" && calls[1].reactions == 0x2u && calls[1].texture == "Interface\\Mod\\Circle.blp" &&
+                  calls[1].color == 0x80FF8000u && calls[1].scale == 1.25f && calls[2].name == "hide_object" &&
+                  calls[2].target == FakeObjects::kBoar && calls[3].name == "set_object_style" && calls[3].scale == 0.5f &&
+                  calls[4].name == "reset_object" && calls[5].name == "reset" && calls[6].name == "reset_all",
+              "with the masks, the texture, the colour, the scale and the object");
     }
 
     Section("objects in handlers, and data kept per object");

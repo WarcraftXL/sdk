@@ -2414,6 +2414,12 @@ print("missing " .. tostring(select(2, pcall(function() return wxl.camera.SetVie
 print("lit " .. tostring(wxl.highlight.Set(wxl.object.LocalPlayer(), 0xFFE03030, 3, 12, 0.5)) .. " " ..
       tostring(wxl.highlight.Supported()) .. " " .. wxl.highlight.Drawn() .. " [" .. wxl.highlight.UnsupportedReason() .. "]")
 print("lit colour " .. tostring(select(2, pcall(function() return wxl.highlight.Set(wxl.object.LocalPlayer(), -1, 1, 1, 1) end))))
+print("circle " .. tostring(wxl.selectioncircle.Hide("target")) .. " " ..
+      tostring(wxl.selectioncircle.SetStyle({ "target", "pet_target" }, "hostile",
+                                            { texture = "Interface\\Mod\\C.blp", color = 0x80FF8000, scale = 1.5 })) .. " " ..
+      tostring(wxl.selectioncircle.HideObject(wxl.object.LocalPlayer())) .. " " ..
+      wxl.selectioncircle.Drawn() .. " " .. wxl.selectioncircle.Hidden())
+print("circle kind " .. tostring(select(2, pcall(function() return wxl.selectioncircle.Hide("nope") end))))
 Observe("WorldScript", "OnMouseMotion", function(dx, dy) print("motion " .. dx .. " " .. dy) end)
 Override("WorldScript", "OnMouseWheel", function(delta) print("wheel " .. delta) return true end)
 Observe("RenderScript", "OnCameraUpdate", function(index, delta) print("camera " .. index) end)
@@ -2427,6 +2433,8 @@ end)
 print("b set " .. tostring(wxl.camera.SetView({ x = 9, y = 9, z = 9 }, { x = 0, y = 1, z = 0 }, 1.2)))
 print("b capture " .. tostring(wxl.input.CaptureCursor(true)))
 print("b unlit " .. tostring(select(2, wxl.highlight.Clear(wxl.object.LocalPlayer()))))
+print("b circle " .. tostring(select(2, wxl.selectioncircle.ResetObject(wxl.object.LocalPlayer()))) .. " " ..
+      tostring(wxl.selectioncircle.Reset("target")))
 Observe("WorldScript", "OnMouseMotion", function(dx)
     if dx ~= 99 then return end
     print("b release " .. tostring(wxl.camera.ReleaseView()) .. " " .. tostring(wxl.input.CaptureCursor(false)))
@@ -2441,8 +2449,11 @@ end)
         config.services.push_back(PublishedService{WXL_WORLD_SERVICE, WXL_WORLD_SERVICE_VERSION, FakeView::WorldTable()});
         config.services.push_back(PublishedService{WXL_POSE_SERVICE, WXL_POSE_SERVICE_VERSION, FakeView::PoseTable()});
         config.services.push_back(PublishedService{WXL_HIGHLIGHT_SERVICE, WXL_HIGHLIGHT_SERVICE_VERSION, FakeView::HighlightTable()});
+        config.services.push_back(
+            PublishedService{WXL_SELECTIONCIRCLE_SERVICE, WXL_SELECTIONCIRCLE_SERVICE_VERSION, FakeView::SelectionCircleTable()});
         FakeView::Calls().clear();
         FakeView::HighlightColors().clear();
+        FakeView::CircleCalls().clear();
         wxltest::FakeActions::Calls().clear();
         {
             ModHost host(std::move(config));
@@ -2465,6 +2476,17 @@ end)
             Check(sink.Has("[wxl.aim-a] lit colour") && sink.Has("'color' (argument 2) must be a whole number") &&
                       sink.Has("[wxl.aim-b] b unlit not_found"),
                   "a colour out of range is an error naming it; clearing what the mod did not set is not found");
+            {
+                const auto& circles = FakeView::CircleCalls();
+                Check(sink.Has("[wxl.aim-a] circle true true true 2 1") && circles.size() >= 3 && circles[0].name == "hide" &&
+                          circles[0].kinds == 1u && circles[0].reactions == 0u && circles[1].name == "set_style" &&
+                          circles[1].kinds == 3u && circles[1].reactions == 2u && circles[1].texture == "Interface\\Mod\\C.blp" &&
+                          circles[1].color == 0x80FF8000u && circles[1].scale == 1.5f && circles[2].name == "hide_object",
+                      "Hide, SetStyle and HideObject reach wxl.selectioncircle with names turned into masks and the style whole");
+                Check(sink.Has("[wxl.aim-a] circle kind") && sink.Has("has no kinds named \"nope\"") &&
+                          sink.Has("[wxl.aim-b] b circle not_found true") && circles.size() == 3,
+                      "a kind that does not exist is an error; another mod's reset leaves what it does not hold");
+            }
             const auto& actions = wxltest::FakeActions::Calls();
             Check(!actions.empty() && actions.back().name == "face" && actions.back().point.x == 2.5f,
                   "Face reaches wxl.action");
@@ -2515,10 +2537,17 @@ end)
             if (call.name == "release_head") headReleased = true;
             if (call.name == "highlight_clear") unlit = true;
         }
+        bool circlesReset = false, circleObjectReset = false;
+        for (const auto& call : FakeView::CircleCalls())
+        {
+            if (call.name == "reset" && call.kinds == 1u && call.reactions == 2u) circlesReset = true;
+            if (call.name == "reset_object") circleObjectReset = true;
+        }
         Check(released && freed && FakeView::Captures() == 0,
               "the last mod's view and capture go when it unloads");
         Check(unblocked && headReleased && FakeView::Blocks() == 0, "and so do its block of the mouse look and its heads");
         Check(unlit, "and its highlights");
+        Check(circlesReset && circleObjectReset, "and what it changed on the selection circles");
         if (g_failures) sink.Dump();
     }
 

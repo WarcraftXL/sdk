@@ -14,6 +14,7 @@
 #include "wxl/services/engine.hpp"
 #include "wxl/services/footprint.hpp"
 #include "wxl/services/highlight.hpp"
+#include "wxl/services/selectioncircle.hpp"
 #include "wxl/services/gx.hpp"
 #include "wxl/services/hook.hpp"
 #include "wxl/services/input.hpp"

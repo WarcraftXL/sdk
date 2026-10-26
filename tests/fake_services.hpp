@@ -31,6 +31,7 @@
 #include "wxl/services/world.h"
 #include "wxl/services/pose.h"
 #include "wxl/services/highlight.h"
+#include "wxl/services/selectioncircle.h"
 #include "wxl/services/imgui.h"
 #include "wxl/services/data.h"
 #include "wxl/services/hook.h"
@@ -646,6 +647,65 @@ namespace wxltest
         }
         static void WXL_CALL HighlightClearAll() { Calls().push_back(Call{"highlight_clear_all", {}, {}, 0.0}); }
         static uint32_t WXL_CALL HighlightDrawn() { return 7; }
+        // wxl.selectioncircle: every call kept whole, with its masks, texture and colour.
+        struct CircleCall
+        {
+            std::string name;
+            uint32_t    kinds = 0, reactions = 0;
+            std::string texture;
+            uint32_t    color = 0;
+            float       scale = 0.0f;
+            wxl_handle  target = WXL_HANDLE_NONE;
+        };
+        static std::vector<CircleCall>& CircleCalls()
+        {
+            static std::vector<CircleCall> calls;
+            return calls;
+        }
+        static bool CircleMasks(uint32_t kinds, uint32_t reactions)
+        {
+            return !(kinds & ~WXL_SELECTIONCIRCLE_ALL_KINDS) && !(reactions & ~WXL_SELECTIONCIRCLE_ALL_REACTIONS);
+        }
+        static bool CircleScale(float scale) { return scale >= 0.0f && scale <= WXL_SELECTIONCIRCLE_MAX_SCALE; }
+        static wxl_result WXL_CALL CircleHide(uint32_t kinds, uint32_t reactions)
+        {
+            if (!CircleMasks(kinds, reactions)) return WXL_E_INVALID;
+            CircleCalls().push_back(CircleCall{"hide", kinds, reactions, {}, 0, 0.0f, WXL_HANDLE_NONE});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CircleSetStyle(uint32_t kinds, uint32_t reactions, wxl_str texture, uint32_t color, float scale)
+        {
+            if (!CircleMasks(kinds, reactions) || !CircleScale(scale)) return WXL_E_INVALID;
+            CircleCalls().push_back(CircleCall{"set_style", kinds, reactions, std::string(texture.data ? texture.data : "", texture.size), color, scale, WXL_HANDLE_NONE});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CircleReset(uint32_t kinds, uint32_t reactions)
+        {
+            if (!CircleMasks(kinds, reactions)) return WXL_E_INVALID;
+            CircleCalls().push_back(CircleCall{"reset", kinds, reactions, {}, 0, 0.0f, WXL_HANDLE_NONE});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CircleHideObject(wxl_handle target)
+        {
+            if (!FakeObjects::Live(target)) return WXL_E_NOT_FOUND;
+            CircleCalls().push_back(CircleCall{"hide_object", 0, 0, {}, 0, 0.0f, target});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CircleSetObjectStyle(wxl_handle target, wxl_str texture, uint32_t color, float scale)
+        {
+            if (!FakeObjects::Live(target)) return WXL_E_NOT_FOUND;
+            if (!CircleScale(scale)) return WXL_E_INVALID;
+            CircleCalls().push_back(CircleCall{"set_object_style", 0, 0, std::string(texture.data ? texture.data : "", texture.size), color, scale, target});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CircleResetObject(wxl_handle target)
+        {
+            CircleCalls().push_back(CircleCall{"reset_object", 0, 0, {}, 0, 0.0f, target});
+            return WXL_OK;
+        }
+        static void WXL_CALL CircleResetAll() { CircleCalls().push_back(CircleCall{"reset_all", 0, 0, {}, 0, 0.0f, WXL_HANDLE_NONE}); }
+        static uint32_t WXL_CALL CircleDrawn() { return 2; }
+        static uint32_t WXL_CALL CircleHidden() { return 1; }
         static wxl_str WXL_CALL ImGuiVersion() { return wxl_str{"1.0;0.1", 7}; }
         static void* WXL_CALL ImGuiContext() { return reinterpret_cast<void*>(0x1000); }
         static void* WXL_CALL PlotContext() { return reinterpret_cast<void*>(0x2000); }
@@ -720,6 +780,25 @@ namespace wxltest
                 t.clear              = &HighlightClear;
                 t.clear_all          = &HighlightClearAll;
                 t.drawn              = &HighlightDrawn;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_selectioncircle_api* SelectionCircleTable()
+        {
+            static const wxl_selectioncircle_api api = [] {
+                wxl_selectioncircle_api t{};
+                t.struct_size      = sizeof t;
+                t.hide             = &CircleHide;
+                t.set_style        = &CircleSetStyle;
+                t.reset            = &CircleReset;
+                t.hide_object      = &CircleHideObject;
+                t.set_object_style = &CircleSetObjectStyle;
+                t.reset_object     = &CircleResetObject;
+                t.reset_all        = &CircleResetAll;
+                t.drawn            = &CircleDrawn;
+                t.hidden           = &CircleHidden;
                 return t;
             }();
             return &api;
