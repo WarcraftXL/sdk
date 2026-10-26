@@ -340,6 +340,15 @@ WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_FONT,      11, font)       ///< .ttf
 WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_MOVIE,     12, movie)      ///< .avi
 WXL_ENUM_END(wxl_asset_kind)
 
+/// What the click in the world met, as the world frame resolved it for its default action.
+WXL_ENUM(wxl_world_hit)
+WXL_ENUM_VALUE(wxl_world_hit, WXL_WORLD_HIT_NONE,         0, none)         ///< nothing: the sky, or no player to act
+WXL_ENUM_VALUE(wxl_world_hit, WXL_WORLD_HIT_GROUND,       1, ground)       ///< the terrain
+WXL_ENUM_VALUE(wxl_world_hit, WXL_WORLD_HIT_OBJECT,       2, object)       ///< an object's model: a unit, a player, a game object, a corpse
+WXL_ENUM_VALUE(wxl_world_hit, WXL_WORLD_HIT_WORLD_OBJECT, 3, world_object) ///< a building or a doodad of the map, or a transport
+WXL_ENUM_VALUE(wxl_world_hit, WXL_WORLD_HIT_NAME_PLATE,   4, name_plate)   ///< a unit's name plate over the world
+WXL_ENUM_END(wxl_world_hit)
+
 #ifdef WXL_ENUM_DEFAULTED
     #undef WXL_ENUM
     #undef WXL_ENUM_DEFAULTED

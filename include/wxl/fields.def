@@ -1379,6 +1379,17 @@ WXL_ARGS_FIELD(wxl_mouse_wheel_args, delta, f32) ///< in notches: away from the 
 WXL_ARGS_ANSWER(wxl_mouse_wheel_args, handled)   ///< write WXL_TRUE to keep the game from seeing the turn
 WXL_ARGS_END(wxl_mouse_wheel_args)
 
+/// A click in the world, before the game acts on it: what it met, and the answer that stops it.
+WXL_ARGS(wxl_world_click_request_args)
+WXL_ARGS_ENUM(wxl_world_click_request_args, button, wxl_mouse_button)
+WXL_ARGS_ENUM(wxl_world_click_request_args, hit, wxl_world_hit)
+WXL_ARGS_FIELD(wxl_world_click_request_args, object, handle)     ///< the unit, game object or corpse it met, or the name plate's unit; WXL_HANDLE_NONE for none or one not in view
+WXL_ARGS_FIELD(wxl_world_click_request_args, object_guid, guid)  ///< its guid, also for a building or a transport the world met; 0 for none
+WXL_ARGS_FIELD(wxl_world_click_request_args, point, vec3)        ///< where the ray met it; the origin for a name plate, or a click that met nothing
+WXL_ARGS_FIELD(wxl_world_click_request_args, targeting, bool)    ///< WXL_TRUE while a spell waits for its target: the click aims or places it
+WXL_ARGS_ANSWER(wxl_world_click_request_args, refused)           ///< write WXL_TRUE to keep the game from acting on the click
+WXL_ARGS_END(wxl_world_click_request_args)
+
 #ifdef WXL_ARGS_ENUM_DEFAULTED
     #undef WXL_ARGS_ENUM
     #undef WXL_ARGS_ENUM_DEFAULTED

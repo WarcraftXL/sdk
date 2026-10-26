@@ -547,6 +547,16 @@ WXL_EVENTS_SINCE(0, 1, 25, 144)
     wxl.imgui. Raised once a frame while a mod listens, before the frame is shown. */
 WXL_EVENT(Render, ImGuiFrame,      144, wxl_frame_args)
 
+// --- Clicks in the world ---------------------------------------------------------------------
+
+WXL_EVENTS_SINCE(0, 1, 26, 145)
+
+/** A click in the world, before the game acts on it: select or attack (left), talk, loot, use
+    (right), aim a spell waiting for its target, walk with click-to-move. Raised for every click
+    the game would act on, a name plate's included; a handler may refuse it, and the game does
+    nothing. WorldClick follows when the click goes on and met the ground or a model. */
+WXL_EVENT(World, WorldClickRequest, 145, wxl_world_click_request_args)
+
 // Give back whatever was defaulted above, so the file can be included again right after with a
 // different selector. What the consumer defined itself is left alone: undefining it here would
 // break the consumer that includes the table twice on purpose.

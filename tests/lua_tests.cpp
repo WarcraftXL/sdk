@@ -2414,6 +2414,10 @@ print("missing " .. tostring(select(2, pcall(function() return wxl.camera.SetVie
 Observe("WorldScript", "OnMouseMotion", function(dx, dy) print("motion " .. dx .. " " .. dy) end)
 Override("WorldScript", "OnMouseWheel", function(delta) print("wheel " .. delta) return true end)
 Observe("RenderScript", "OnCameraUpdate", function(index, delta) print("camera " .. index) end)
+Override("WorldScript", "OnWorldClickRequest", function(button, hit, object, guid, point, targeting)
+    print("click " .. button .. " " .. hit .. " " .. tostring(targeting) .. " " .. point.z)
+    return hit == "object"
+end)
 )");
         WriteFile(mods / "aim-b" / "mod.json", LuaManifest("wxl.aim-b", "\"loadAfter\": [ \"wxl.aim-a\" ]"));
         WriteFile(mods / "aim-b" / "init.lua", R"(
@@ -2463,6 +2467,19 @@ end)
             Check(sink.Has("[wxl.aim-a] motion 3 -4") && sink.Has("[wxl.aim-a] wheel -1") && kept == WXL_TRUE &&
                       sink.Has("[wxl.aim-a] camera 7"),
                   "the mouse's events and the camera's update reach Lua; an Override keeps the wheel");
+
+            wxl_bool refused = WXL_FALSE;
+            const wxl_world_click_request_args onModel{WXL_MOUSE_LEFT, WXL_WORLD_HIT_OBJECT, WXL_HANDLE_NONE, 0,
+                                                       wxl_vec3{0, 0, 5}, WXL_FALSE, &refused};
+            host.Raise(WXL_EV_WorldClickRequest, &onModel);
+            const bool modelRefused = refused == WXL_TRUE;
+            refused = WXL_FALSE;
+            const wxl_world_click_request_args onGround{WXL_MOUSE_RIGHT, WXL_WORLD_HIT_GROUND, WXL_HANDLE_NONE, 0,
+                                                        wxl_vec3{0, 0, 6}, WXL_TRUE, &refused};
+            host.Raise(WXL_EV_WorldClickRequest, &onGround);
+            Check(modelRefused && refused == WXL_FALSE && sink.Has("[wxl.aim-a] click left object false 5") &&
+                      sink.Has("[wxl.aim-a] click right ground true 6"),
+                  "a click before the game acts reaches Lua with its button and hit by name; an Override refuses it");
 
             // b, the later, holds the view applied; giving it back brings a's back.
             FakeView::Calls().clear();

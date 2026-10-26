@@ -1294,6 +1294,10 @@
 ---arrives as its number.
 ---@alias wxl.AssetKind "other"|"model"|"skin"|"animation"|"texture"|"terrain"|"map_object"|"sound"|"database"|"interface"|"shader"|"font"|"movie"
 
+---A wxl_world_hit value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.WorldHit "none"|"ground"|"object"|"world_object"|"name_plate"
+
 -- The script families. A function defined on one of these tables as On<Event> is
 -- subscribed when the entry file has run and called with the event's parameters;
 -- on an event that can be answered its return values are taken, as Override
@@ -1312,6 +1316,7 @@
 ---@field OnMemoryPressure fun(self: WorldScript, largest_free: integer, free: integer, committed: integer, threshold: integer)
 ---@field OnMouseMotion fun(self: WorldScript, dx: integer, dy: integer)
 ---@field OnMouseWheel fun(self: WorldScript, delta: number, handled: boolean|nil): boolean|nil answers through handled
+---@field OnWorldClickRequest fun(self: WorldScript, button: wxl.MouseButton|integer, hit: wxl.WorldHit|integer, object: wxl.Object|nil, object_guid: wxl.Guid, point: wxl.Vec3, targeting: boolean, refused: boolean|nil): boolean|nil answers through refused
 WorldScript = {}
 
 ---@class RenderScript
@@ -1638,6 +1643,7 @@ SocialScript = {}
 ---@overload fun(family: "WorldScript", method: "OnMouseWheel", handler: fun(delta: number, handled: boolean|nil)): integer
 ---@overload fun(family: "RenderScript", method: "OnCameraUpdate", handler: fun(index: integer, delta: number)): integer
 ---@overload fun(family: "RenderScript", method: "OnImGuiFrame", handler: fun(index: integer, delta: number)): integer
+---@overload fun(family: "WorldScript", method: "OnWorldClickRequest", handler: fun(button: wxl.MouseButton|integer, hit: wxl.WorldHit|integer, object: wxl.Object|nil, object_guid: wxl.Guid, point: wxl.Vec3, targeting: boolean, refused: boolean|nil)): integer
 ---@param family wxl.Family
 ---@param method string
 ---@param handler function
@@ -1659,6 +1665,7 @@ function Observe(family, method, handler) end
 ---@overload fun(family: "SocialScript", method: "OnDuelRequested", handler: fun(challenger: wxl.Object|nil, challenger_guid: wxl.Guid, arbiter_guid: wxl.Guid, accept: boolean|nil, decline: boolean|nil): boolean|nil, boolean|nil): integer
 ---@overload fun(family: "SocialScript", method: "OnResurrectRequest", handler: fun(offerer: wxl.Object|nil, offerer_guid: wxl.Guid, name: string, sickness: boolean, accept: boolean|nil, decline: boolean|nil): boolean|nil, boolean|nil): integer
 ---@overload fun(family: "WorldScript", method: "OnMouseWheel", handler: fun(delta: number, handled: boolean|nil): boolean|nil): integer
+---@overload fun(family: "WorldScript", method: "OnWorldClickRequest", handler: fun(button: wxl.MouseButton|integer, hit: wxl.WorldHit|integer, object: wxl.Object|nil, object_guid: wxl.Guid, point: wxl.Vec3, targeting: boolean, refused: boolean|nil): boolean|nil): integer
 ---@param family wxl.Family
 ---@param method string
 ---@param handler function
@@ -2407,6 +2414,24 @@ function Object:SlotItem(index) end
 ---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
 ---@return boolean|nil value, string|nil reason
 function Object:IsOutdoors() end
+
+---Whether the active player may attack it, by the client's own reckoning (faction, duel, PvP, sanctuary): what turns the cursor into a sword.
+---For Unit, Player (unit_can_attack).
+---Came with abi 0.1.26: a mod whose mod.json asks for an older abi cannot use it.
+---@return boolean|nil value, string|nil reason
+function Object:CanAttack() end
+
+---Whether the active player can interact with it now: an NPC offering something (gossip, quests, trade, training, a flight), alive, out of combat, of a reaction that lets it; out of reach counts.
+---For Unit, Player (unit_can_interact).
+---Came with abi 0.1.26: a mod whose mod.json asks for an older abi cannot use it.
+---@return boolean|nil value, string|nil reason
+function Object:CanInteract() end
+
+---Whether the active player can use it now, as the client decides the cursor over it: its kind lets it be used, its quest is in the log, its lock opens; out of reach counts.
+---For GameObject (gameobject_can_use).
+---Came with abi 0.1.26: a mod whose mod.json asks for an older abi cannot use it.
+---@return boolean|nil value, string|nil reason
+function Object:CanUse() end
 
 ---Every aura on a unit, in slot order, as Aura(slot) answers each. Came with abi 0.1.18.
 ---@return wxl.Aura[]|nil auras, string|nil reason

@@ -238,3 +238,11 @@
         /// Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused.
         /// Came with abi 0.1.24: WXL_E_UNSUPPORTED on an older runtime.
         Expected<bool> IsOutdoors() const { return ReadAs<bool>(&wxl_object_api::unit_is_outdoors); }
+
+        /// Whether the active player may attack it, by the client's own reckoning (faction, duel, PvP, sanctuary): what turns the cursor into a sword.
+        /// Came with abi 0.1.26: WXL_E_UNSUPPORTED on an older runtime.
+        Expected<bool> CanAttack() const { return ReadAs<bool>(&wxl_object_api::unit_can_attack); }
+
+        /// Whether the active player can interact with it now: an NPC offering something (gossip, quests, trade, training, a flight), alive, out of combat, of a reaction that lets it; out of reach counts.
+        /// Came with abi 0.1.26: WXL_E_UNSUPPORTED on an older runtime.
+        Expected<bool> CanInteract() const { return ReadAs<bool>(&wxl_object_api::unit_can_interact); }

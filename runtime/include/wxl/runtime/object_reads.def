@@ -367,6 +367,16 @@ WXL_OBJECT_SINCE(0, 1, 24)
 WXL_OBJECT_READ(Units, unit_is_outdoors, UnitIsOutdoors, wxl_bool, client, IsOutdoors, bool,
                 "Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused.")
 
+WXL_OBJECT_SINCE(0, 1, 26)
+
+// Units and game objects: what the active player can do with them.
+WXL_OBJECT_READ(Units, unit_can_attack, UnitCanAttack, wxl_bool, client, CanAttack, bool,
+                "Whether the active player may attack it, by the client's own reckoning (faction, duel, PvP, sanctuary): what turns the cursor into a sword.")
+WXL_OBJECT_READ(Units, unit_can_interact, UnitCanInteract, wxl_bool, client, CanInteract, bool,
+                "Whether the active player can interact with it now: an NPC offering something (gossip, quests, trade, training, a flight), alive, out of combat, of a reaction that lets it; out of reach counts.")
+WXL_OBJECT_READ(GameObjects, gameobject_can_use, GameObjectCanUse, wxl_bool, client, CanUse, bool,
+                "Whether the active player can use it now, as the client decides the cursor over it: its kind lets it be used, its quest is in the log, its lock opens; out of reach counts.")
+
 #ifdef WXL_OBJECT_SINCE_DEFAULTED
     #undef WXL_OBJECT_SINCE
     #undef WXL_OBJECT_SINCE_DEFAULTED
