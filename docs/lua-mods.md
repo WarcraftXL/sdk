@@ -1491,6 +1491,34 @@ Observe("ObjectScript", "OnTargetChanged", function()
 end)
 ```
 
+`wxl.selectioncircle` (abi `0.1.28`) hides the circles the game draws on the ground, or draws them
+in a texture, colour or size of your own. A circle has a kind: `"target"` (under the player's
+target, a unit or a corpse, with the ring that closes on it when the player starts attacking it),
+`"pet_target"` (the ring closing on the pet's new target) or `"move_marker"` (where click-to-move
+goes); and the reaction of the unit it is under: `"hated"` to `"exalted"`, or `"none"` for a
+corpse or the move marker. Each takes a name, a list of names, or nil for all of them.
+
+```lua
+-- No circle under the target: the mod shows it its own way.
+wxl.selectioncircle.Hide("target")
+
+-- Or hostile and unfriendly targets in a texture of the mod, orange and a quarter larger.
+wxl.selectioncircle.SetStyle("target", { "hostile", "unfriendly" },
+    { texture = "Interface\\MyMod\\Circle.blp", color = 0xFFFF8000, scale = 1.25 })
+
+-- One unit of its own, whatever its kind.
+wxl.selectioncircle.HideObject(boss)
+```
+
+A style table may leave out any of its three keys, which then keep the game's. The texture is a
+BLP added onto the ground as the game adds its own: black is nothing, white the colour at full.
+The colour is `0xAARRGGBB`, its alpha scaling the brightness, the game's own fades (the closing
+rings, the marker's pulse) still playing over it; the scale is the size against the game's, up to
+8. An object's own look wins over its kind's; among mods the last set wins.
+`wxl.selectioncircle.Reset(kinds, reactions)`, `ResetObject(target)` and `ResetAll()` give back
+what this mod changed, and it all goes when the mod reloads, is disabled or unloads. `Drawn()` and
+`Hidden()` count the circles the last world frame drew and left out.
+
 ### Where the memory goes: `wxl.footprint`
 
 The original client is a 32-bit program: it has 4 GB of addresses, and it fails when it cannot
@@ -1862,6 +1890,9 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.pose.Head(unit, yaw, pitch, smoothing)`, `.ReleaseHead(unit)` | `true`: a unit's head turned from where its body faces and held, or given back (abi `0.1.25`) |
 | `wxl.highlight.Set(target, color, outline, glow, glow_strength)`, `.Clear(target)`, `.ClearAll()` | `true`: an object outlined and lit by a glow where it is seen, or taken off; see [The camera, the mouse and the world](#the-camera-the-mouse-and-the-world-wxlcamera-wxlinput-wxlworld) (abi `0.1.27`) |
 | `wxl.highlight.Supported()`, `.UnsupportedReason()`, `.Drawn()` | whether this runtime draws highlights, why not, and the batches the last highlighted frame drew again (abi `0.1.27`) |
+| `wxl.selectioncircle.Hide(kinds, reactions)`, `.SetStyle(kinds, reactions, style)`, `.Reset(kinds, reactions)` | `true`: the game's circles of those kinds and reactions hidden, drawn in another look, or given back (abi `0.1.28`) |
+| `wxl.selectioncircle.HideObject(target)`, `.SetObjectStyle(target, style)`, `.ResetObject(target)`, `.ResetAll()` | `true`: every circle of one object hidden, restyled or given back; everything this mod changed given back (abi `0.1.28`) |
+| `wxl.selectioncircle.Drawn()`, `.Hidden()` | the circles the last world frame drew, and left out (abi `0.1.28`) |
 
 ### Object methods
 
@@ -2136,7 +2167,7 @@ the `wxl.camera`, `wxl.input` and `wxl.world` modules, `wxl.action.Face` and `Is
 `0.1.24`. `wxl.input.BlockMouseLook` and `MouseLookBlocked`, the `wxl.pose` module and
 `RenderScript`'s `OnImGuiFrame` came with `0.1.25`. `WorldScript`'s `OnWorldClickRequest` and
 `CanAttack`, `CanInteract` and `CanUse` came with `0.1.26`. The `wxl.highlight`
-module came with `0.1.27`.
+module came with `0.1.27`, the `wxl.selectioncircle` module with `0.1.28`.
 
 ### Gameplay events
 

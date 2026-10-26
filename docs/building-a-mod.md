@@ -1643,6 +1643,39 @@ wxl::HighlightService::Set(target, 0xE03030u, 2.0f, 10.0f, 0.5f); // red, a 2-pi
 `Drawn()` answers how many batches the last highlighted frame drew again: 0 when the object was
 not in view.
 
+**The game's selection circles.** `wxl::SelectionCircleService` (abi `0.1.28`) hides the circles
+the game draws on the ground, or draws them in a texture, colour or size of your own. There are
+three kinds, as masks: `WXL_SELECTIONCIRCLE_TARGET` (the circle under the player's target, a unit
+or a corpse, with the ring that closes on it when the player starts attacking it),
+`WXL_SELECTIONCIRCLE_PET_TARGET` (the ring that closes on the pet's new target) and
+`WXL_SELECTIONCIRCLE_MOVE_MARKER` (where click-to-move goes). A second mask picks the units by how
+they stand towards the player: `WXL_SELECTIONCIRCLE_REACTION(WXL_REACTION_HOSTILE)` and the like,
+and `WXL_SELECTIONCIRCLE_NO_REACTION` for a circle under no unit (a corpse, the move marker). 0 in
+either mask means all of it.
+
+```cpp
+using wxl::SelectionCircleService;
+
+// Your mod shows the target its own way: no circle under it.
+SelectionCircleService::Hide(WXL_SELECTIONCIRCLE_TARGET, 0);
+
+// Or keep the circles, but hostile targets in a texture of the mod, orange and a quarter larger.
+SelectionCircleService::SetStyle(WXL_SELECTIONCIRCLE_TARGET, WXL_SELECTIONCIRCLE_REACTION(WXL_REACTION_HOSTILE),
+                                 "Interface\\MyMod\\Circle.blp", 0xFFFF8000u, 1.25f);
+
+// One unit of its own: hidden, or styled, whatever its kind and reaction.
+SelectionCircleService::HideObject(boss);
+```
+
+A style's texture is a BLP the client finds (an archive, or a folder of your mod's search path),
+added onto the ground as the game adds its own: black is nothing, white is the colour at full, so
+draw a white ring on black with black edges. `""` keeps the game's texture, `0` the game's colour
+(`0xAARRGGBB`, the alpha scaling the brightness; the game's own fades, the closing rings and the
+marker's pulse, still play over it), and a scale of `0` the game's size (up to 8). An object's own
+look wins over its kind's; among mods the last set wins. `Reset(kinds, reactions)`,
+`ResetObject(target)` and `ResetAll()` give back what your mod changed, and it all goes with the
+mod. `Drawn()` and `Hidden()` count the circles the last world frame drew and left out.
+
 ### Windows of your own: Dear ImGui
 
 The runtime carries [Dear ImGui](https://github.com/ocornut/imgui) and
