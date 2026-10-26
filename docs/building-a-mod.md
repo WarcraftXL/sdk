@@ -1614,6 +1614,33 @@ const float yaw = AngleBetween(playerFacing, cameraYaw);
 wxl::PoseService::Head(wxl::Player::Local(), std::clamp(yaw, -1.22f, 1.22f), pitch, 0.08);
 ```
 
+**Highlighting an object.** `wxl::HighlightService::Set(target, color, outline, glow, glow_strength)`
+(abi `0.1.27`) outlines an object and lights it with a soft glow, drawn by the runtime after the
+world and before the interface: a sharp edge `outline` pixels wide (up to 16) and a glow fading
+over `glow` pixels (up to 64), `glow_strength` (0 to 1) bright, both in `color` (`0xRRGGBB`); 0 for
+either leaves it out. What is drawn is the object's model and what hangs on it (weapons, a rider,
+a mount), and only where it is seen: the runtime draws it again against the scene's depth, so a
+wall, a tree or another unit in front hides the highlight as it hides the object. Translucent parts
+are not outlined. Called again, `Set` changes the style; `Clear(target)` and `ClearAll()` take the
+mod's highlights off, and they go when the mod goes or the object leaves view. Widths are pixels of
+the screen: scale them by the object's distance so that a far silhouette is not swallowed.
+
+Not every runtime draws them: the stock client does (Direct3D 9, shader model 3), the recompiled
+client will through its Vulkan renderer's render points. Ask first, and turn the feature off with
+the reason in the log:
+
+```cpp
+if (!wxl::HighlightService::Supported())
+{
+    wxl::Log(WXL_LOG_INFO, "my-mod", "no outline: {}", wxl::HighlightService::UnsupportedReason());
+    return;
+}
+wxl::HighlightService::Set(target, 0xE03030u, 2.0f, 10.0f, 0.5f); // red, a 2-pixel edge, a 10-pixel glow
+```
+
+`Drawn()` answers how many batches the last highlighted frame drew again: 0 when the object was
+not in view.
+
 ### Windows of your own: Dear ImGui
 
 The runtime carries [Dear ImGui](https://github.com/ocornut/imgui) and

@@ -1469,6 +1469,26 @@ runtime holds the angles to 100 degrees of yaw and 80 of pitch. Both are let go 
 reloads, is disabled or unloads. Dear ImGui windows (`wxl.imgui`, `OnImGuiFrame`) are a C++ mod's:
 see "Windows of your own" in [Building a mod](building-a-mod.md).
 
+`wxl.highlight.Set(target, color, outline, glow, glow_strength)` (abi `0.1.27`) outlines an object
+and lights it with a soft glow, where it is seen and never through a wall: `color` is `0xRRGGBB`,
+`outline` the sharp edge's width in pixels (up to 16), `glow` how far the glow fades out (up to
+64), `glow_strength` how bright it is (0 to 1); 0 leaves either out. Called again it changes the
+style; it holds until `wxl.highlight.Clear(target)`, `ClearAll()`, the object leaving view, or the
+mod reloading, being disabled or unloading. Widths are pixels of the screen: to keep a far
+object's outline from swallowing it, scale them by its distance yourself. The stock client draws
+them; where a runtime does not (the recompiled client, until its Vulkan renderer has its render
+points), `wxl.highlight.Supported()` is `false`, `UnsupportedReason()` says why and `Set` answers
+`nil, "unsupported"`: say so once and leave the feature off.
+
+```lua
+local hostile, red = nil, 0xE03030
+Observe("ObjectScript", "OnTargetChanged", function()
+    if hostile then wxl.highlight.Clear(hostile) end
+    hostile = wxl.object.LocalPlayer():Target()
+    if hostile then wxl.highlight.Set(hostile, red, 2, 10, 0.5) end
+end)
+```
+
 ### Where the memory goes: `wxl.footprint`
 
 The original client is a 32-bit program: it has 4 GB of addresses, and it fails when it cannot
@@ -1838,6 +1858,8 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.action.Face(radians)` | `true`: your player turns that way and the server is told, as mouse look does (abi `0.1.24`) |
 | `wxl.input.BlockMouseLook(blocked)`, `.MouseLookBlocked()` | `true`: the game kept out of its own mouse look, clicks still act; whether some mod keeps it out (abi `0.1.25`) |
 | `wxl.pose.Head(unit, yaw, pitch, smoothing)`, `.ReleaseHead(unit)` | `true`: a unit's head turned from where its body faces and held, or given back (abi `0.1.25`) |
+| `wxl.highlight.Set(target, color, outline, glow, glow_strength)`, `.Clear(target)`, `.ClearAll()` | `true`: an object outlined and lit by a glow where it is seen, or taken off; see [The camera, the mouse and the world](#the-camera-the-mouse-and-the-world-wxlcamera-wxlinput-wxlworld) (abi `0.1.27`) |
+| `wxl.highlight.Supported()`, `.UnsupportedReason()`, `.Drawn()` | whether this runtime draws highlights, why not, and the batches the last highlighted frame drew again (abi `0.1.27`) |
 
 ### Object methods
 
@@ -2111,7 +2133,8 @@ points (`has_source`, `source`, `has_dest`, `dest` and their transports) came wi
 the `wxl.camera`, `wxl.input` and `wxl.world` modules, `wxl.action.Face` and `IsOutdoors` came with
 `0.1.24`. `wxl.input.BlockMouseLook` and `MouseLookBlocked`, the `wxl.pose` module and
 `RenderScript`'s `OnImGuiFrame` came with `0.1.25`. `WorldScript`'s `OnWorldClickRequest` and
-`CanAttack`, `CanInteract` and `CanUse` came with `0.1.26`.
+`CanAttack`, `CanInteract` and `CanUse` came with `0.1.26`. The `wxl.highlight`
+module came with `0.1.27`.
 
 ### Gameplay events
 
