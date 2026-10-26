@@ -1551,6 +1551,39 @@ not in front, and held again when it comes back; a mod's hold goes when it is di
 With the character's facing (`wxl::ActionService::Face`) and the camera above, that is all a
 third-person camera needs.
 
+**Leaning the camera, and a reticle off the centre** (abi `0.1.29`).
+`wxl::CameraService::SetViewRolled(position, forward, fov, roll)` places the camera as `SetView`
+does, turned around the direction it looks by `roll` radians, positive to the camera's right: the
+top of the screen leans right, as an aircraft banking right, and the world turns the other way. A
+roll of 0 is `SetView`'s picture exactly. The roll goes where the client keeps its camera's up,
+which its view matrix is built from, so the world, the picking under the pointer, the name plates
+and the sound's listener all turn together; the interface is drawn with its own projection and
+stays level. `Roll()` reads the roll the camera draws with, from -pi to pi.
+
+`wxl::InputService::CaptureCursorAt(x, y)` holds the pointer at another point of the window than
+its centre: `x` from the left edge and `y` from the top, as fractions of the window from 0 to 1,
+`(0.5, 0.5)` being where `CaptureCursor(true)` holds it. The game picks and clicks at that point,
+so a reticle drawn there is the mouseover, and the object of a click and of `OnWorldClickRequest`.
+A mod already holding the pointer moves its hold; of several mods, the last to capture or move it
+has its point, and the one before gets its point back when it lets go. `CapturePoint()` answers
+where the pointer is held.
+
+```cpp
+void OnCameraUpdate(uint64_t, float delta) override
+{
+    // A light lean into the turn, eased in, and the pointer held a tenth of the screen above the
+    // centre, where the mod draws its reticle.
+    lean_ += (turnRate_ * 0.05f - lean_) * std::min(1.0f, delta * 4.0f);
+    wxl::CameraService::SetViewRolled(eye_, forward_, 0.0, lean_);
+    wxl::InputService::CaptureCursorAt(0.5, 0.4);
+}
+```
+
+The line through a point off the centre is not the camera's forward: to make it meet a point
+`aim`, turn the camera so that the ray through the reticle's point of the screen passes through
+`aim`. The client's projection takes `0.6 x Fov()` as its vertical angle and the window's width over
+its height as its aspect.
+
 **The world's geometry.** `wxl::WorldService::Trace(start, end[, flags])` answers the first point of
 the world between two points, the way the client's own camera and the spells' line of sight test
 it: the ground, buildings and the collision of placed objects, never a unit or a player. It answers

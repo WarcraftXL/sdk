@@ -36,9 +36,12 @@ namespace wxl
      *   PointerOverWorld()    whether the pointer is over the world, not the interface
      *   BlockMouseLook(bool)  keeps the game out of its own mouse look; clicks still act (0.1.25)
      *   MouseLookBlocked()    whether some mod does
+     *   CaptureCursorAt(x, y) holds it at a point of the window instead, fractions from the
+     *                         top-left corner, (0.5, 0.5) the centre (0.1.29)
+     *   CapturePoint()        where it is held (Expected<wxl_vec3>: x, y, z 0) (0.1.29)
      *
-     * A held pointer is where the game picks and clicks: the object at the centre of the screen
-     * is the mouseover, and a click lands on it. The motion arrives as WorldScript's
+     * A held pointer is where the game picks and clicks: the object under it (at the centre of
+     * the screen, or the point given) is the mouseover, and a click lands on it. The motion arrives as WorldScript's
      * OnMouseMotion, the wheel as OnMouseWheel. CaptureCursor answers WXL_E_UNSUPPORTED on a
      * runtime older than abi 0.1.24.
      */

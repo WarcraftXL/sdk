@@ -3285,6 +3285,24 @@ function camera.SetView(position, forward, fov) end
 ---@return string|nil reason
 function camera.ReleaseView() end
 
+---Came with abi 0.1.29: a mod whose mod.json asks for an older abi cannot use it.
+---Places the world camera as SetView does, turned around the direction it looks by `roll`
+---radians, positive to the camera's right (the top of the screen leans right); 0 is SetView's
+---picture. The game's picking under the pointer turns with it; the interface does not.
+---@param position wxl.Vec3
+---@param forward wxl.Vec3
+---@param fov number
+---@param roll number
+---@return true|nil ok
+---@return string|nil reason
+function camera.SetViewRolled(position, forward, fov, roll) end
+
+---Came with abi 0.1.29: a mod whose mod.json asks for an older abi cannot use it.
+---The roll the world camera draws with this frame, in radians from -pi to pi, positive to its right.
+---@return number|nil
+---@return string|nil reason
+function camera.Roll() end
+
 ---wxl.input. The pointer, for a mod that steers with the mouse: captured at the centre of the window, or free. Main thread only.
 ---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
 ---@class wxl.input
@@ -3322,6 +3340,23 @@ function input.BlockMouseLook(blocked) end
 ---@return boolean|nil
 ---@return string|nil reason
 function input.MouseLookBlocked() end
+
+---Came with abi 0.1.29: a mod whose mod.json asks for an older abi cannot use it.
+---Hides the pointer and holds it at a point of the window, where the game picks and clicks:
+---x from 0 (left edge) to 1 (right edge), y from 0 (top edge) to 1 (bottom edge), (0.5, 0.5)
+---the centre. A mod holding it already moves its hold there; of several mods, the last to
+---capture or move it has its point. Let go as CaptureCursor(false) does.
+---@param x number
+---@param y number
+---@return true|nil ok
+---@return string|nil reason
+function input.CaptureCursorAt(x, y) end
+
+---Came with abi 0.1.29: a mod whose mod.json asks for an older abi cannot use it.
+---Where the captured pointer is held: x from the left, y from the top, 0 to 1, z 0; not_found when no mod holds it.
+---@return wxl.Vec3|nil
+---@return string|nil reason
+function input.CapturePoint() end
 
 ---wxl.world. Questions about the world's geometry. Main thread only.
 ---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.

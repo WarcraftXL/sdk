@@ -22,6 +22,11 @@ WXL_API(input, block_mouse_look, BlockMouseLook, result, (boolean blocked), shim
         "Keeps the game out of its own mouse look (true): a held mouse button turns nothing and hides nothing, a click still selects or acts; false gives the mod's block back.")
 WXL_API(input, mouse_look_blocked, MouseLookBlocked, boolean, (), generated, generated,
         "Whether some mod keeps the game out of its mouse look.")
+WXL_API_SINCE(input, capture_cursor_at, (0, 1, 29))
+WXL_API(input, capture_cursor_at, CaptureCursorAt, result, (f64 x, f64 y), shim, generated,
+        "Hides the pointer and holds it at a point of the window, x from the left and y from the top, 0 to 1 ((0.5, 0.5) is the centre); the game picks and clicks there.")
+WXL_API(input, capture_point, CapturePoint, out<vec3>, (), generated, generated,
+        "Where the captured pointer is held: x from the left, y from the top, 0 to 1, z 0; not_found when no mod holds it.")
 
 // MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
 // guarded by X, and skips it when it is included again with X defined: this table is read

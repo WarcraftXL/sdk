@@ -559,7 +559,8 @@ namespace wxltest
             std::string name;
             wxl_vec3    position{};
             wxl_vec3    forward{};
-            double      fov = 0.0;
+            double      fov  = 0.0;
+            double      roll = 0.0;
         };
 
         static std::vector<Call>& Calls()
@@ -591,11 +592,39 @@ namespace wxltest
             Calls().push_back(Call{"release_view"});
             return WXL_OK;
         }
+        static wxl_result WXL_CALL SetViewRolled(wxl_vec3 position, wxl_vec3 forward, double fov, double roll)
+        {
+            if (fov < 0.0) return WXL_E_INVALID;
+            Calls().push_back(Call{"set_view_rolled", position, forward, fov, roll});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL Roll(double* out) { *out = 0.25; return WXL_OK; }
+        /// Where the fake holds the pointer, x and y; z is 1 while captured.
+        static wxl_vec3& Point()
+        {
+            static wxl_vec3 point{};
+            return point;
+        }
+        static wxl_result WXL_CALL CaptureCursorAt(double x, double y)
+        {
+            if (!(x >= 0.0 && x <= 1.0 && y >= 0.0 && y <= 1.0)) return WXL_E_INVALID;
+            Calls().push_back(Call{"capture_at", {static_cast<float>(x), static_cast<float>(y), 0.0f}});
+            Captures() = 1;
+            Point()    = wxl_vec3{static_cast<float>(x), static_cast<float>(y), 0.0f};
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CapturePoint(wxl_vec3* out)
+        {
+            if (!Captures()) return WXL_E_NOT_FOUND;
+            *out = Point();
+            return WXL_OK;
+        }
 
         static wxl_result WXL_CALL CaptureCursor(wxl_bool captured)
         {
             Calls().push_back(Call{captured ? "capture" : "free"});
             Captures() = captured ? 1 : 0;
+            Point()    = wxl_vec3{0.5f, 0.5f, 0.0f};
             return WXL_OK;
         }
         static wxl_bool WXL_CALL CursorCaptured() { return Captures() ? WXL_TRUE : WXL_FALSE; }
@@ -736,7 +765,9 @@ namespace wxltest
                 t.pivot        = &Pivot;
                 t.cinematic    = &Cinematic;
                 t.set_view     = &SetView;
-                t.release_view = &ReleaseView;
+                t.release_view    = &ReleaseView;
+                t.set_view_rolled = &SetViewRolled;
+                t.roll            = &Roll;
                 return t;
             }();
             return &api;
@@ -752,6 +783,8 @@ namespace wxltest
                 t.pointer_over_world = &PointerOverWorld;
                 t.block_mouse_look   = &BlockMouseLook;
                 t.mouse_look_blocked = &MouseLookBlocked;
+                t.capture_cursor_at  = &CaptureCursorAt;
+                t.capture_point      = &CapturePoint;
                 return t;
             }();
             return &api;

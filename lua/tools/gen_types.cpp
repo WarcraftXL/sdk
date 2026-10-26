@@ -467,6 +467,13 @@ namespace
                    "---@param position wxl.Vec3\n---@param forward wxl.Vec3\n---@param fov number\n"
                    "---@return true|nil ok\n---@return string|nil reason\n"
                    "function " + owner + ".SetView(position, forward, fov) end\n\n";
+        if (name == "SetViewRolled")
+            return "---Places the world camera as SetView does, turned around the direction it looks by `roll`\n"
+                   "---radians, positive to the camera's right (the top of the screen leans right); 0 is SetView's\n"
+                   "---picture. The game's picking under the pointer turns with it; the interface does not.\n"
+                   "---@param position wxl.Vec3\n---@param forward wxl.Vec3\n---@param fov number\n---@param roll number\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".SetViewRolled(position, forward, fov, roll) end\n\n";
         if (name == "ReleaseView")
             return "---Gives the world camera this mod placed back to the client; nil, \"not_found\" when it holds none.\n"
                    "---@return true|nil ok\n---@return string|nil reason\n"
@@ -477,6 +484,13 @@ namespace
                    "---the mod is disabled, reloads or unloads. The motion arrives as OnMouseMotion.\n"
                    "---@param captured boolean\n---@return true|nil ok\n---@return string|nil reason\n"
                    "function " + owner + ".CaptureCursor(captured) end\n\n";
+        if (name == "CaptureCursorAt")
+            return "---Hides the pointer and holds it at a point of the window, where the game picks and clicks:\n"
+                   "---x from 0 (left edge) to 1 (right edge), y from 0 (top edge) to 1 (bottom edge), (0.5, 0.5)\n"
+                   "---the centre. A mod holding it already moves its hold there; of several mods, the last to\n"
+                   "---capture or move it has its point. Let go as CaptureCursor(false) does.\n"
+                   "---@param x number\n---@param y number\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".CaptureCursorAt(x, y) end\n\n";
         if (name == "BlockMouseLook")
             return "---Keeps the game out of its own mouse look (true): a held mouse button turns nothing and hides\n"
                    "---nothing, a click still selects or acts; false gives this mod's block back. Kept while any mod\n"

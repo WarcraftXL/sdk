@@ -1423,6 +1423,7 @@ namespace wxl::lua::shims
             wxl_vec3   position;
             wxl_vec3   forward;
             double     fov;
+            double     roll; ///< 0 for a view set by SetView
         };
 
         /// The Lua mods holding a view, the last set first: the runtime sees them all as
@@ -1430,8 +1431,22 @@ namespace wxl::lua::shims
         std::vector<View> g_viewers;
 
         bool HoldsView(const View& view, const ScriptMod& mod) { return view.mod == &mod; }
-        /// The Lua mods holding the pointer: wxl.lua holds it while one does.
-        std::vector<ScriptMod*> g_capturers;
+
+        /// A Lua mod holding the pointer, and the point of the window it holds it at.
+        struct Capture
+        {
+            ScriptMod* mod;
+            double     x;
+            double     y;
+        };
+
+        /// The Lua mods holding the pointer, the last to capture or move it last: wxl.lua holds it
+        /// while one does, at the last one's point.
+        std::vector<Capture> g_capturers;
+
+        /// The point wxl.lua holds the pointer at in the runtime, while it holds it.
+        double g_heldX = 0.5;
+        double g_heldY = 0.5;
 
         /// A point argument: a table with numbers x, y and z.
         wxl_vec3 CheckPoint(lua_State* L, int index, const char* function, const char* name)
@@ -1451,28 +1466,58 @@ namespace wxl::lua::shims
             return point;
         }
 
-        int L_SetView(lua_State* L)
+        /// A number argument the function cannot do without.
+        lua_Number CheckNumber(lua_State* L, int index, const char* function, const char* name, const char* takes)
+        {
+            if (lua_isnoneornil(L, index))
+                luaL_error(L, "%s: '%s' (argument %d) is missing; it takes %s", function, name, index, takes);
+            return luaL_checknumber(L, index);
+        }
+
+        /// Sets a view in the runtime: through set_view_rolled when it is rolled, so that an
+        /// unrolled one reaches a runtime older than the roll too.
+        wxl_result Place(const wxl_camera_api* api, const View& view)
+        {
+            if (view.roll != 0.0)
+            {
+                if (!wxl::detail::Carries(api, &wxl_camera_api::set_view_rolled)) return WXL_E_UNSUPPORTED;
+                return api->set_view_rolled(view.position, view.forward, view.fov, view.roll);
+            }
+            if (!wxl::detail::Carries(api, &wxl_camera_api::set_view)) return WXL_E_UNSUPPORTED;
+            return api->set_view(view.position, view.forward, view.fov);
+        }
+
+        /// SetView and SetViewRolled: the view is the mod's, the last set applied.
+        int SetViewFor(lua_State* L, const char* function, bool rolled)
         {
             ScriptMod&     mod      = Self(L);
-            const wxl_vec3 position = CheckPoint(L, 1, "SetView", "position");
-            const wxl_vec3 forward  = CheckPoint(L, 2, "SetView", "forward");
-            if (lua_isnoneornil(L, 3))
-                return luaL_error(L, "wxl.camera.SetView: 'fov' (argument 3) is missing; it takes a number of radians, "
-                                     "0 to keep the client's");
-            const lua_Number fov = luaL_checknumber(L, 3);
+            const char*    name     = rolled ? "SetViewRolled" : "SetView";
+            const wxl_vec3 position = CheckPoint(L, 1, name, "position");
+            const wxl_vec3 forward  = CheckPoint(L, 2, name, "forward");
+            const lua_Number fov    = CheckNumber(L, 3, function, "fov", "a number of radians, 0 to keep the client's");
+            const lua_Number roll   = rolled ? CheckNumber(L, 4, function, "roll",
+                                                           "a number of radians, positive to the camera's right")
+                                             : 0.0;
 
             const wxl_camera_api* api = Camera();
-            if (!api || !wxl::detail::Carries(api, &wxl_camera_api::set_view))
-                return PushResultFailure(L, WXL_E_UNSUPPORTED);
-            const wxl_result result = api->set_view(position, forward, static_cast<double>(fov));
+            if (!api) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const View       view{&mod, position, forward, static_cast<double>(fov), static_cast<double>(roll)};
+            const wxl_result result =
+                rolled ? (wxl::detail::Carries(api, &wxl_camera_api::set_view_rolled)
+                              ? api->set_view_rolled(position, forward, view.fov, view.roll)
+                              : WXL_E_UNSUPPORTED)
+                       : Place(api, view);
             if (result != WXL_OK) return PushResultFailure(L, result);
             g_viewers.erase(std::remove_if(g_viewers.begin(), g_viewers.end(),
-                                           [&](const View& view) { return HoldsView(view, mod); }),
+                                           [&](const View& held) { return HoldsView(held, mod); }),
                             g_viewers.end());
-            g_viewers.insert(g_viewers.begin(), View{&mod, position, forward, static_cast<double>(fov)});
+            g_viewers.insert(g_viewers.begin(), view);
             lua_pushboolean(L, 1);
             return 1;
         }
+
+        int L_SetView(lua_State* L) { return SetViewFor(L, "wxl.camera.SetView", false); }
+        int L_SetViewRolled(lua_State* L) { return SetViewFor(L, "wxl.camera.SetViewRolled", true); }
 
         /// A mod lets its view go: the view set before it, by a Lua mod still holding one,
         /// becomes the runtime's again; with none left, the runtime's goes.
@@ -1486,11 +1531,7 @@ namespace wxl::lua::shims
             if (!applied) return WXL_OK;
             const wxl_camera_api* api = Camera();
             if (!api) return WXL_E_UNSUPPORTED;
-            if (!g_viewers.empty() && wxl::detail::Carries(api, &wxl_camera_api::set_view))
-            {
-                const View& next = g_viewers.front();
-                return api->set_view(next.position, next.forward, next.fov);
-            }
+            if (!g_viewers.empty()) return Place(api, g_viewers.front());
             if (!wxl::detail::Carries(api, &wxl_camera_api::release_view)) return WXL_E_UNSUPPORTED;
             return api->release_view();
         }
@@ -1503,26 +1544,49 @@ namespace wxl::lua::shims
             return 1;
         }
 
-        /// The runtime holds the pointer for wxl.lua while one Lua mod does.
-        wxl_result CaptureFor(ScriptMod& mod, bool captured)
+        /// Holds the pointer in the runtime at a point, for wxl.lua: at the centre through
+        /// capture_cursor, so that a runtime older than the point serves it too.
+        wxl_result HoldAt(const wxl_input_api* api, double x, double y)
+        {
+            if (x == 0.5 && y == 0.5)
+            {
+                if (!wxl::detail::Carries(api, &wxl_input_api::capture_cursor)) return WXL_E_UNSUPPORTED;
+                return api->capture_cursor(WXL_TRUE);
+            }
+            if (!wxl::detail::Carries(api, &wxl_input_api::capture_cursor_at)) return WXL_E_UNSUPPORTED;
+            return api->capture_cursor_at(x, y);
+        }
+
+        /// The runtime holds the pointer for wxl.lua while one Lua mod does, at the point of the
+        /// last to capture or move it.
+        wxl_result CaptureFor(ScriptMod& mod, bool captured, double x = 0.5, double y = 0.5)
         {
             const wxl_input_api* api = Input();
             if (!api || !wxl::detail::Carries(api, &wxl_input_api::capture_cursor)) return WXL_E_UNSUPPORTED;
-            const auto held = std::find(g_capturers.begin(), g_capturers.end(), &mod);
+            const auto held = std::find_if(g_capturers.begin(), g_capturers.end(),
+                                           [&](const Capture& capture) { return capture.mod == &mod; });
             if (captured)
             {
-                if (held != g_capturers.end()) return WXL_OK;
-                if (g_capturers.empty())
+                const bool moves = g_capturers.empty() || x != g_heldX || y != g_heldY;
+                if (moves)
                 {
-                    const wxl_result result = api->capture_cursor(WXL_TRUE);
+                    const wxl_result result = HoldAt(api, x, y);
                     if (result != WXL_OK) return result;
+                    g_heldX = x;
+                    g_heldY = y;
                 }
-                g_capturers.push_back(&mod);
+                if (held != g_capturers.end()) g_capturers.erase(held);
+                g_capturers.push_back(Capture{&mod, x, y});
                 return WXL_OK;
             }
             if (held == g_capturers.end()) return WXL_OK;
             g_capturers.erase(held);
-            return g_capturers.empty() ? api->capture_cursor(WXL_FALSE) : WXL_OK;
+            if (g_capturers.empty()) return api->capture_cursor(WXL_FALSE);
+            const Capture& last = g_capturers.back();
+            if (last.x == g_heldX && last.y == g_heldY) return WXL_OK;
+            g_heldX = last.x;
+            g_heldY = last.y;
+            return HoldAt(api, last.x, last.y);
         }
 
         int L_CaptureCursor(lua_State* L)
@@ -1531,6 +1595,18 @@ namespace wxl::lua::shims
                 return luaL_error(L, "wxl.input.CaptureCursor: 'captured' (argument 1) is missing; it takes a boolean");
             luaL_checktype(L, 1, LUA_TBOOLEAN);
             const wxl_result result = CaptureFor(Self(L), lua_toboolean(L, 1) != 0);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_CaptureCursorAt(lua_State* L)
+        {
+            const char*      function = "wxl.input.CaptureCursorAt";
+            const lua_Number x = CheckNumber(L, 1, function, "x", "a number from 0 (left) to 1 (right)");
+            const lua_Number y = CheckNumber(L, 2, function, "y", "a number from 0 (top) to 1 (bottom)");
+            if (!(x >= 0.0 && x <= 1.0 && y >= 0.0 && y <= 1.0)) return PushResultFailure(L, WXL_E_INVALID);
+            const wxl_result result = CaptureFor(Self(L), true, static_cast<double>(x), static_cast<double>(y));
             if (result != WXL_OK) return PushResultFailure(L, result);
             lua_pushboolean(L, 1);
             return 1;
@@ -2027,7 +2103,9 @@ namespace wxl::lua::shims
         if (service == "footprint" && name == "WatchPressure") return &L_WatchPressure;
         if (service == "camera" && name == "SetView") return &L_SetView;
         if (service == "camera" && name == "ReleaseView") return &L_ReleaseView;
+        if (service == "camera" && name == "SetViewRolled") return &L_SetViewRolled;
         if (service == "input" && name == "CaptureCursor") return &L_CaptureCursor;
+        if (service == "input" && name == "CaptureCursorAt") return &L_CaptureCursorAt;
         if (service == "input" && name == "BlockMouseLook") return &L_BlockMouseLook;
         if (service == "pose" && name == "Head") return &L_Head;
         if (service == "pose" && name == "ReleaseHead") return &L_ReleaseHead;

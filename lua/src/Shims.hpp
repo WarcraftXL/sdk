@@ -55,11 +55,12 @@
 // Three keep the camera and the pointer a mod holds, also seen by the host as wxl.lua's:
 //
 //   wxl.camera.SetView(position, forward, fov)          the view; the last Lua mod to set one
-//   wxl.camera.ReleaseView()                            has it applied, the one set before
-//                                                       comes back when it lets go, and the
-//                                                       runtime's view goes with the last
+//   wxl.camera.SetViewRolled(position, forward, fov,    has it applied, the one set before
+//                            roll)                      comes back when it lets go, and the
+//   wxl.camera.ReleaseView()                            runtime's view goes with the last
 //   wxl.input.CaptureCursor(captured)                   the pointer, held while one Lua mod
-//                                                       holds it
+//   wxl.input.CaptureCursorAt(x, y)                     holds it, at the point of the last to
+//                                                       capture or move it
 //   wxl.input.BlockMouseLook(blocked)                   the game's mouse look, kept out while
 //                                                       one Lua mod blocks it
 //   wxl.pose.Head(unit, yaw, pitch, smoothing)          a unit's head, the last Lua mod to turn

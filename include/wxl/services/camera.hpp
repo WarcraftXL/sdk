@@ -47,9 +47,14 @@ namespace wxl
      *   SetView(position, forward, fov)  places the camera until ReleaseView(); fov 0 keeps the
      *                                    client's
      *   ReleaseView()                    gives it back to the client
+     *   SetViewRolled(position, forward, fov, roll)
+     *                                    SetView turned around the direction it looks, roll in
+     *                                    radians, positive to the camera's right (abi 0.1.29)
+     *   Roll()                           the roll it draws with this frame (abi 0.1.29)
      *
      * A view set from OnCameraUpdate applies to the frame being prepared. The reads answer
-     * WXL_E_UNSUPPORTED out of the world, and on a runtime older than abi 0.1.24.
+     * WXL_E_UNSUPPORTED out of the world, and on a runtime older than abi 0.1.24 (0.1.29 for
+     * SetViewRolled and Roll).
      */
     class CameraService : public detail::Facade<CameraService, wxl_camera_api>,
                           public api::facade::Methods<wxl_camera_api>

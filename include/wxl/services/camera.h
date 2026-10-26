@@ -16,6 +16,9 @@
 //   set_view                     places the camera from now on: a position, a direction, and a
 //                                field of view or 0 to keep the client's
 //   release_view                 gives the camera back to the client
+//   set_view_rolled              set_view with a roll: the camera turned around the direction it
+//                                looks (abi 0.1.29)
+//   roll                         the roll the camera draws with this frame (abi 0.1.29)
 //
 // The view a mod sets is applied at the end of every update of the camera until it releases it,
 // after the CameraUpdate event, so a mod that recomputes it there each frame moves with the
@@ -26,6 +29,17 @@
 // Coordinates are the client's world coordinates, in yards: x north, y west, z up. A direction
 // need not be of unit length. The field of view is in radians, the angle the client's own
 // "cameraFov" setting is.
+//
+// The roll is an angle in radians around the direction the camera looks, from the camera the
+// client would build for that direction: its right level with the ground, its up as near the
+// world's up as the direction allows. Positive rolls the camera to its right, as an aircraft
+// banking right: the top of the screen leans right and the world on the screen turns the other
+// way. 0 is exactly the picture set_view gives. The roll goes where the client keeps the camera's
+// up (the third row of CSimpleCamera::m_facing), which its view matrix is built from
+// (CSimpleCamera::SetGxProjectionAndView looks along Forward() with Up()): the world, its picking
+// under the pointer (CGWorldFrame::HitTestPoint casts its ray through that matrix) and what the
+// client projects with it (the name plates, the sound's listener) turn together. The interface is
+// drawn with a projection of its own and does not turn.
 //
 // Main thread only: a call off it answers WXL_E_INVALID. Out of the world (no camera yet) the
 // reads answer WXL_E_UNSUPPORTED.
@@ -83,6 +97,23 @@ typedef struct wxl_camera_api
 
     /// Gives the camera back to the client. WXL_E_NOT_FOUND when the mod holds no view.
     wxl_result(WXL_CALL* release_view)(void);
+
+    /**
+     * @brief set_view with a roll. Abi 0.1.29.
+     * @param position  where the camera is
+     * @param forward   the direction it looks; its length does not matter, a zero one is
+     *                  WXL_E_INVALID
+     * @param fov       the field of view in radians, or 0 to keep the client's; past 0 to pi is
+     *                  WXL_E_INVALID
+     * @param roll      radians around `forward`, positive to the camera's right; 0 is set_view's
+     *                  picture. Any finite angle, taken modulo a turn; a non-finite one is
+     *                  WXL_E_INVALID
+     */
+    wxl_result(WXL_CALL* set_view_rolled)(wxl_vec3 position, wxl_vec3 forward, double fov, double roll);
+
+    /// The roll the world camera draws with this frame, in radians from -pi to pi, positive to
+    /// its right: 0 for the client's own camera on level ground. Abi 0.1.29.
+    wxl_result(WXL_CALL* roll)(double* out);
 } wxl_camera_api;
 
 #ifdef __cplusplus

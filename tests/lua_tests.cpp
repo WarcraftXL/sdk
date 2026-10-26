@@ -2551,6 +2551,63 @@ end)
         if (g_failures) sink.Dump();
     }
 
+    Section("a rolled view and a pointer held off the centre in Lua");
+    {
+        using wxltest::FakeView;
+        const fs::path mods = MakeTree(scratch, "roll", binary, fs::path());
+        WriteFile(mods / "roll-a" / "mod.json", LuaManifest("wxl.roll-a"));
+        WriteFile(mods / "roll-a" / "init.lua", R"(
+print("rolled " .. tostring(wxl.camera.SetViewRolled({ x = 1, y = 2, z = 3 }, { x = 1, y = 0, z = 0 }, 0, 0.4)) ..
+      " " .. wxl.camera.Roll())
+print("at " .. tostring(wxl.input.CaptureCursorAt(0.5, 0.375)) .. " " .. wxl.input.CapturePoint().y)
+print("off " .. tostring(select(2, wxl.input.CaptureCursorAt(0.5, 1.5))))
+print("no roll " .. tostring(select(2, pcall(function()
+    return wxl.camera.SetViewRolled({ x = 1, y = 2, z = 3 }, { x = 1, y = 0, z = 0 }, 0) end))))
+)");
+        WriteFile(mods / "roll-b" / "mod.json", LuaManifest("wxl.roll-b", "\"loadAfter\": [ \"wxl.roll-a\" ]"));
+        WriteFile(mods / "roll-b" / "init.lua", R"(
+print("b set " .. tostring(wxl.camera.SetView({ x = 9, y = 9, z = 9 }, { x = 0, y = 1, z = 0 }, 0)))
+print("b capture " .. tostring(wxl.input.CaptureCursor(true)))
+Observe("WorldScript", "OnMouseMotion", function(dx)
+    if dx ~= 99 then return end
+    print("b release " .. tostring(wxl.camera.ReleaseView()) .. " " .. tostring(wxl.input.CaptureCursor(false)))
+end)
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_CAMERA_SERVICE, WXL_CAMERA_SERVICE_VERSION, FakeView::CameraTable()});
+        config.services.push_back(PublishedService{WXL_INPUT_SERVICE, WXL_INPUT_SERVICE_VERSION, FakeView::InputTable()});
+        FakeView::Calls().clear();
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            Check(sink.Has("[wxl.roll-a] rolled true 0.25") && sink.Has("[wxl.roll-a] at true 0.375") &&
+                      sink.Has("[wxl.roll-a] off invalid"),
+                  "SetViewRolled and CaptureCursorAt answer true, Roll and CapturePoint read, a point off the window is invalid");
+            Check(sink.Has("[wxl.roll-a] no roll") && sink.Has("'roll' (argument 4) is missing"),
+                  "a rolled view without its roll is an error naming it");
+            {
+                const auto& calls = FakeView::Calls();
+                Check(calls.size() == 4 && calls[0].name == "set_view_rolled" && calls[0].roll == 0.4 &&
+                          calls[1].name == "capture_at" && calls[1].position.y == 0.375f && calls[2].name == "set_view" &&
+                          calls[3].name == "capture",
+                      "the runtime gets the roll and the point, then the later mod's view and centre");
+            }
+            FakeView::Calls().clear();
+            const wxl_mouse_motion_args release{99, 0};
+            host.Raise(WXL_EV_MouseMotion, &release);
+            const auto& calls = FakeView::Calls();
+            Check(sink.Has("[wxl.roll-b] b release true true") && calls.size() == 2 &&
+                      calls[0].name == "set_view_rolled" && calls[0].roll == 0.4 && calls[1].name == "capture_at" &&
+                      calls[1].position.y == 0.375f,
+                  "the later mod letting go brings back the earlier's rolled view and its point");
+            host.Shutdown();
+        }
+        if (g_failures) sink.Dump();
+    }
+
     Section("what a mod's abi lets it use");
     {
         const wxl::reflect::Version since = wxl::reflect::SinceOf(WXL_EV_ChatMessage);

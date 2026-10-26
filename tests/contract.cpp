@@ -1504,6 +1504,27 @@ int main()
               "Face reaches wxl.action with its facing");
     }
 
+    Section("a rolled view and a pointer held off the centre");
+    {
+        using wxltest::FakeView;
+        FakeView::Calls().clear();
+        const wxl::Expected<double> roll = wxl::CameraService::Roll();
+        Check(wxl::CameraService::SetViewRolled(wxl_vec3{7, 8, 9}, wxl_vec3{0, 1, 0}, 0.0, -0.3) == WXL_OK && roll &&
+                  *roll == 0.25,
+              "a rolled view is set and the roll read through the facade");
+        Check(wxl::InputService::CaptureCursorAt(0.5, 0.35) == WXL_OK, "the pointer is held at a point");
+        const wxl::Expected<wxl_vec3> point = wxl::InputService::CapturePoint();
+        Check(point && point->x == 0.5f && point->y == 0.35f, "and read back where it is held");
+        Check(wxl::InputService::CaptureCursorAt(1.5, 0.5) == WXL_E_INVALID, "a point off the window is refused");
+        Check(wxl::InputService::CaptureCursor(false) == WXL_OK && !wxl::InputService::CapturePoint(),
+              "let go, it is held nowhere");
+        const auto& calls = FakeView::Calls();
+        Check(calls.size() == 3 && calls[0].name == "set_view_rolled" && calls[0].roll == -0.3 &&
+                  calls[0].forward.y == 1.0f && calls[1].name == "capture_at" && calls[1].position.y == 0.35f &&
+                  calls[2].name == "free",
+              "with their arguments");
+    }
+
     Section("the mouse look kept out, a head turned, the runtime's ImGui");
     {
         using wxltest::FakeView;

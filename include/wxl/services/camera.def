@@ -27,6 +27,11 @@ WXL_API(camera, set_view, SetView, result, (vec3 position, vec3 forward, f64 fov
         "Places the world camera from now on, until the mod releases it: a position, a direction, a field of view in radians or 0 to keep the client's.")
 WXL_API(camera, release_view, ReleaseView, result, (), shim, generated,
         "Gives the world camera back to the client.")
+WXL_API_SINCE(camera, set_view_rolled, (0, 1, 29))
+WXL_API(camera, set_view_rolled, SetViewRolled, result, (vec3 position, vec3 forward, f64 fov, f64 roll), shim, generated,
+        "Places the world camera as SetView does, turned by a roll in radians around the direction it looks, positive to the camera's right; 0 is SetView's picture.")
+WXL_API(camera, roll, Roll, out<f64>, (), generated, generated,
+        "The roll the world camera draws with this frame, in radians from -pi to pi, positive to its right.")
 
 // MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
 // guarded by X, and skips it when it is included again with X defined: this table is read

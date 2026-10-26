@@ -132,6 +132,14 @@ targeted (stand near a creature or an NPC, or it is a SKIP) and its circle must 
 seconds (watch it), and `ResetAll` gives the game's back. The target the player had comes back
 after.
 
+Phase 20 checks a rolled camera and a pointer held off the centre (abi 0.1.29), on both clients.
+For two seconds the client's own view is drawn rolled by 0.3 rad (watch it: the horizon leans, its
+right end up, the interface stays level) and `Roll` must read 0.3 back; meanwhile
+`CaptureCursorAt(0.5, 0.4)` holds the pointer a tenth of the screen above the centre (whatever
+stands there is the mouseover: its tooltip shows) and `CapturePoint` reads it back. Both are then
+given back, and the camera must draw level again (a NOTE on a vehicle or a transport, which may
+roll the camera themselves).
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the

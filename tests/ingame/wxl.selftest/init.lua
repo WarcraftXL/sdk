@@ -50,6 +50,10 @@
 --  19. the game's selection circles: the nearest unit is targeted, its circle counted drawn, then
 --      hidden by wxl.selectioncircle, drawn larger and blue for two seconds, and given back; the
 --      target the player had comes back after.
+--  20. a rolled camera and a pointer held off the centre: wxl.camera draws the client's own view
+--      rolled 0.3 rad (the horizon leans) for two seconds and reads the roll back, wxl.input holds
+--      the pointer a tenth of the screen above the centre and reads the point back, then both are
+--      given back and the camera draws level again.
 --
 -- Each check is one line in the log: PASS, FAIL, SKIP (what it needs is not there: a class
 -- without a cast-time spell, say) or NOTE (an event the server may not send). The chat box shows
@@ -1765,6 +1769,61 @@ step(function()
     result("ResetObject finds nothing this mod changed", select(2, sc.ResetObject(wxl.object.LocalPlayer())) == "not_found")
     local target = circleTarget and wxl.object.FromGuid(circleTarget)
     if target then wxl.action.Target(target) else wxl.action.ClearTarget() end
+end)
+
+-- 20. A rolled camera, a pointer off the centre -------------------------------------------------
+
+local rollId, rollEndId, rollSeen, rollFrames = nil, nil, nil, 0
+local ROLL = 0.3
+
+step(function()
+    print("phase 20: a rolled camera and a pointer held off the centre")
+    local camera, input = wxl.camera, wxl.input
+    if not (camera and camera.SetViewRolled and input and input.CaptureCursorAt) then
+        result("wxl.camera.SetViewRolled", false, "this runtime is older than abi 0.1.29")
+        return
+    end
+    local bad = select(2, input.CaptureCursorAt(0.5, 1.5))
+    result("CaptureCursorAt refuses a point off the window", bad == "invalid", tostring(bad))
+    -- The client's own camera, rolled: set at every update from where the client put it, read at
+    -- the frame's end once the frame was drawn from it.
+    rollId = Observe("RenderScript", "OnCameraUpdate", function()
+        local at, forward = camera.Position(), camera.Forward()
+        if at and forward then camera.SetViewRolled(at, forward, 0, ROLL) end
+    end)
+    rollEndId = Observe("RenderScript", "OnFrameEnd", function()
+        rollFrames = rollFrames + 1
+        rollSeen = camera.Roll()
+    end)
+    local held, why = input.CaptureCursorAt(0.5, 0.4)
+    local point = input.CapturePoint()
+    result("CaptureCursorAt holds the pointer and CapturePoint reads it back", held == true and point ~= nil and
+           math.abs(point.x - 0.5) < 1e-6 and math.abs(point.y - 0.4) < 1e-6,
+           tostring(why) .. " " .. tostring(point and point.y))
+    print("look: the horizon leans, its right end up, for two seconds; the mouseover is a tenth of the screen above the centre")
+    wait(2)
+end)
+
+step(function()
+    if not rollId then return end
+    Unobserve(rollId)
+    rollId = nil
+    local camera, input = wxl.camera, wxl.input
+    result("SetViewRolled: the camera draws with the roll set (" .. rollFrames .. " frames)",
+           rollSeen ~= nil and math.abs(rollSeen - ROLL) < 1e-3, tostring(rollSeen))
+    result("ReleaseView gives the rolled view back", camera.ReleaseView() == true)
+    input.CaptureCursor(false)
+    result("CaptureCursor(false) lets the pointer go: held nowhere", select(2, input.CapturePoint()) == "not_found")
+    rollSeen = nil
+    wait(0.3)
+end)
+
+step(function()
+    if not rollEndId then return end
+    Unobserve(rollEndId)
+    rollEndId = nil
+    note("the client's own camera draws level again", rollSeen ~= nil and math.abs(rollSeen) < 1e-3,
+         "on a vehicle or a transport the client may roll its camera itself: " .. tostring(rollSeen))
 end)
 
 -- The end ----------------------------------------------------------------------------------------

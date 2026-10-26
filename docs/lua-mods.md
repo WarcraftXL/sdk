@@ -1443,6 +1443,38 @@ keeps from the game. The pointer is let go while the game's window is not in fro
 and its hold on the pointer go when it reloads, is disabled or unloads. Whether a unit stands
 indoors is `unit:IsOutdoors()`. Everything here runs on the game's thread, where your handlers run.
 
+**Leaning the camera, and a reticle off the centre** (abi `0.1.29`). `wxl.camera.SetViewRolled`
+places the camera as `SetView` does, turned around the direction it looks: a roll in radians,
+positive to the camera's right, as an aircraft banking right (the top of the screen leans right,
+the world turns the other way). `0` is `SetView`'s picture. The game's picking under the pointer
+turns with the world, so a click still lands on what is drawn under it; the interface does not
+turn. `wxl.camera.Roll()` reads the roll the camera draws with. `wxl.input.CaptureCursorAt(x, y)`
+holds the pointer at another point of the window than its centre, `x` from the left edge and `y`
+from the top, from `0` to `1`: the game then picks and clicks there, so a reticle drawn at that
+point is what a click acts on. Look along the line through that point, not the centre, to aim at
+something.
+
+```lua
+local lean = 0
+
+Observe("RenderScript", "OnCameraUpdate", function(index, delta)
+    local head = wxl.camera.Pivot()
+    if not head or wxl.camera.Cinematic() then return end
+    local forward = { x = 1, y = 0, z = -0.2 }
+    lean = lean + (0.08 - lean) * math.min(1, delta * 4)   -- eases to a light lean to the right
+    wxl.camera.SetViewRolled({ x = head.x - 4, y = head.y, z = head.z + 1 }, forward, 0, lean)
+end)
+
+wxl.input.CaptureCursorAt(0.5, 0.4)                 -- held a tenth of the screen above the centre
+```
+
+| Function | Answers |
+|---|---|
+| `wxl.camera.SetViewRolled(position, forward, fov, roll)` | `true`: as `SetView`, turned by `roll` radians around `forward` |
+| `wxl.camera.Roll()` | the roll the camera draws with this frame, from `-pi` to `pi` |
+| `wxl.input.CaptureCursorAt(x, y)` | `true`: the pointer hidden and held at that point; a mod already holding it moves it there. Of several mods, the last to capture or move it has its point; `CaptureCursor(true)` is the centre |
+| `wxl.input.CapturePoint()` | where the pointer is held, `{ x, y, z = 0 }`; `nil, "not_found"` when nobody holds it |
+
 A click in the world arrives first as `WorldScript`'s `OnWorldClickRequest(button, hit, object,
 object_guid, point, targeting)` (abi `0.1.26`), before the game acts on it: the left button selects
 or attacks, the right one talks, loots or uses, either aims a spell waiting for its target
@@ -1888,6 +1920,8 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.action.Face(radians)` | `true`: your player turns that way and the server is told, as mouse look does (abi `0.1.24`) |
 | `wxl.input.BlockMouseLook(blocked)`, `.MouseLookBlocked()` | `true`: the game kept out of its own mouse look, clicks still act; whether some mod keeps it out (abi `0.1.25`) |
 | `wxl.pose.Head(unit, yaw, pitch, smoothing)`, `.ReleaseHead(unit)` | `true`: a unit's head turned from where its body faces and held, or given back (abi `0.1.25`) |
+| `wxl.camera.SetViewRolled(position, forward, fov, roll)`, `.Roll()` | `true`: the camera placed and turned around the direction it looks; the roll it draws with (abi `0.1.29`) |
+| `wxl.input.CaptureCursorAt(x, y)`, `.CapturePoint()` | `true`: the pointer held at a point of the window, where the game picks and clicks; where it is held (abi `0.1.29`) |
 | `wxl.highlight.Set(target, color, outline, glow, glow_strength)`, `.Clear(target)`, `.ClearAll()` | `true`: an object outlined and lit by a glow where it is seen, or taken off; see [The camera, the mouse and the world](#the-camera-the-mouse-and-the-world-wxlcamera-wxlinput-wxlworld) (abi `0.1.27`) |
 | `wxl.highlight.Supported()`, `.UnsupportedReason()`, `.Drawn()` | whether this runtime draws highlights, why not, and the batches the last highlighted frame drew again (abi `0.1.27`) |
 | `wxl.selectioncircle.Hide(kinds, reactions)`, `.SetStyle(kinds, reactions, style)`, `.Reset(kinds, reactions)` | `true`: the game's circles of those kinds and reactions hidden, drawn in another look, or given back (abi `0.1.28`) |
@@ -2168,6 +2202,8 @@ the `wxl.camera`, `wxl.input` and `wxl.world` modules, `wxl.action.Face` and `Is
 `RenderScript`'s `OnImGuiFrame` came with `0.1.25`. `WorldScript`'s `OnWorldClickRequest` and
 `CanAttack`, `CanInteract` and `CanUse` came with `0.1.26`. The `wxl.highlight`
 module came with `0.1.27`, the `wxl.selectioncircle` module with `0.1.28`.
+`wxl.camera.SetViewRolled` and `Roll`, `wxl.input.CaptureCursorAt` and `CapturePoint` came with
+`0.1.29`.
 
 ### Gameplay events
 
