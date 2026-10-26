@@ -140,6 +140,16 @@ stands there is the mouseover: its tooltip shows) and `CapturePoint` reads it ba
 given back, and the camera must draw level again (a NOTE on a vehicle or a transport, which may
 roll the camera themselves).
 
+Phase 21 checks textures made from an SVG and a PNG (abi 0.1.30), on both clients. `wxl.texture`
+draws the selftest's `assets/reticle.svg` 64 pixels wide (its height in proportion, 40), the
+`fill` group red and the `outline` group darker and twice as wide; a frame above the centre of the
+screen shows it for two seconds through `SetTexture` (which must find the file) and its texture
+coordinates. The same request must answer the same path, and so must the interface's own
+`WxlTexture`; a file nobody has answers nil and why. Then the reticle blue with its outline taken
+off (two seconds, another path), and `assets/disc.png` resampled to 48 x 48 and tinted
+see-through (a disc shading from red to white, two seconds). A group on a PNG and a missing file
+are refused with their reason, and `Stats` counts what was made.
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the

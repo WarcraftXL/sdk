@@ -54,6 +54,11 @@
 --      rolled 0.3 rad (the horizon leans) for two seconds and reads the roll back, wxl.input holds
 --      the pointer a tenth of the screen above the centre and reads the point back, then both are
 --      given back and the camera draws level again.
+--  21. textures from SVG and PNG: wxl.texture makes a reticle of the selftest's own SVG at 64
+--      pixels wide, red with a darker outline twice as wide, and a disc of its PNG; a frame in
+--      the middle of the screen shows them for two seconds each through SetTexture, the
+--      interface's WxlTexture answers the same path for the same request, another colour and an
+--      outline taken off give new paths, and a missing file and a group on a PNG are refused.
 --
 -- Each check is one line in the log: PASS, FAIL, SKIP (what it needs is not there: a class
 -- without a cast-time spell, say) or NOTE (an event the server may not send). The chat box shows
@@ -1824,6 +1829,90 @@ step(function()
     rollEndId = nil
     note("the client's own camera draws level again", rollSeen ~= nil and math.abs(rollSeen) < 1e-3,
          "on a vehicle or a transport the client may roll its camera itself: " .. tostring(rollSeen))
+end)
+
+-- 21. Textures from SVG and PNG ---------------------------------------------------------------
+
+local tex = {} -- what phase 21 made: paths and texture coordinates
+
+-- Shows a texture in a frame of the given size in the middle of the screen: whether the client
+-- found the file (SetTexture answers 1), and the region's size.
+local function show(path, w, h, right, bottom)
+    return ask(string.format([[
+        local f = WxlSelfTestTexture or CreateFrame("Frame", "WxlSelfTestTexture", UIParent)
+        f:SetFrameStrata("TOOLTIP")
+        f:SetPoint("CENTER", 0, 120)
+        f:SetSize(%d, %d)
+        f.t = f.t or f:CreateTexture(nil, "OVERLAY")
+        f.t:SetAllPoints(f)
+        local found = f.t:SetTexture(%q)
+        f.t:SetTexCoord(0, %.9g, 0, %.9g)
+        f:Show()
+        return found, f.t:GetWidth() .. "x" .. f.t:GetHeight()]], w, h, path, right, bottom))
+end
+
+step(function()
+    print("phase 21: textures made from an SVG and a PNG")
+    local t = wxl.texture
+    if not (t and t.Make) then
+        result("wxl.texture", false, "this runtime is older than abi 0.1.30")
+        return
+    end
+    local path, right, bottom, tw, th = t.Make(".\\assets\\reticle.svg", 64, nil,
+        { fill = "ff4040ff", outline = { color = "000000cc", width = 2 } })
+    result("Make draws the reticle at 64 pixels wide, its height in proportion", path ~= nil and tw == 64 and th == 64 and
+           right == 1 and math.abs(bottom - 40 / 64) < 1e-6, tostring(path) .. " " .. tostring(right) .. " " .. tostring(bottom))
+    if not path then return end
+    tex.red, tex.right, tex.bottom = path, right, bottom
+    local ok, found, size = show(path, 64, 40, right, bottom)
+    result("SetTexture finds it, the region is 64 x 40 (look: a red reticle with a dark outline above the centre, " ..
+           "two seconds)", ok and found == 1 and size == "64x40", tostring(found) .. " " .. tostring(size))
+    local again = t.Make(".\\assets\\reticle.svg", 64, nil, { outline = { width = 2, color = "000000cc" }, fill = "#ff4040" })
+    result("the same request answers the same path", again == path, tostring(again))
+    local asked, fromUi = ask("return WxlTexture('Mods\\\\wxl.selftest\\\\assets\\\\reticle.svg', 64, nil, " ..
+                              "{ fill = 'ff4040ff', outline = { color = '000000cc', width = 2 } })")
+    result("the interface's WxlTexture answers the same path for the same request", asked and fromUi == path, tostring(fromUi))
+    local okMissing, none, why = ask("return WxlTexture('Interface\\\\AddOns\\\\Nobody\\\\none.svg', 16, 16)")
+    result("WxlTexture answers nil and why for a file nobody has", okMissing and none == nil and
+           tostring(why):find("no file", 1, true) ~= nil, tostring(why))
+    wait(2)
+end)
+
+step(function()
+    local t = wxl.texture
+    if not (t and t.Make) or not tex.red then return end
+    local blue = t.Make(".\\assets\\reticle.svg", 64, nil, { fill = 0xFF4080FF, outline = { width = 0 } })
+    result("another colour and the outline taken off give another path", blue ~= nil and blue ~= tex.red, tostring(blue))
+    if blue then
+        local ok, found = show(blue, 64, 40, tex.right, tex.bottom)
+        result("SetTexture finds it (look: the reticle blue, with no outline, two seconds)", ok and found == 1)
+    end
+    wait(2)
+end)
+
+step(function()
+    local t = wxl.texture
+    if not (t and t.Make) or not tex.red then return end
+    local disc, right, bottom = t.Make(".\\assets\\disc.png", 48, 48, nil, "ffffffc0")
+    result("a PNG resampled to 48 x 48 in a 64 x 64 texture", disc ~= nil and math.abs(right - 0.75) < 1e-6, tostring(disc))
+    if disc then
+        local ok, found = show(disc, 48, 48, right, bottom)
+        result("SetTexture finds it (look: a disc shading red to white, slightly see-through, two seconds)", ok and found == 1)
+    end
+    local _, why = t.Make(".\\assets\\disc.png", 48, 48, { fill = "ff0000" })
+    result("a group on a PNG is refused, and says why", tostring(why):find("PNG", 1, true) ~= nil, tostring(why))
+    local _, none = t.Make(".\\assets\\none.svg", 16, 16)
+    result("a missing file is refused, and named", tostring(none):find("none.svg", 1, true) ~= nil, tostring(none))
+    wait(2)
+end)
+
+step(function()
+    local t = wxl.texture
+    if not (t and t.Make) or not tex.red then return end
+    run("if WxlSelfTestTexture then WxlSelfTestTexture:Hide() end")
+    local stats = t.Stats()
+    result("Stats counts what was made", stats ~= nil and stats.textures >= 3 and stats.resident >= 1 and stats.reused >= 1,
+           stats and (stats.textures .. " textures, " .. stats.bytes .. " bytes, " .. stats.reused .. " reused") or "nil")
 end)
 
 -- The end ----------------------------------------------------------------------------------------
