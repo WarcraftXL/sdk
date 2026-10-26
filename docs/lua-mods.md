@@ -479,6 +479,7 @@ The events that can be answered, as the SDK stands:
 |---|---|---|
 | `WorldScript:OnInput` | `handled` | the client never sees the input |
 | `WorldScript:OnMouseWheel` | `handled` | the game never sees the turn of the wheel (abi `0.1.24`) |
+| `WorldScript:OnWorldClickRequest` | `refused` | the game does nothing for the click: no target, no talk, no loot, no walk (abi `0.1.26`) |
 | `WorldScript:OnSoundPlay` | `suppressed` | the sound does not play |
 | `AssetScript:OnFileOpen` | `redirect` | the client opens the path you return instead, for an open on the main thread; on any thread, use `wxl.storage.Redirect` |
 | `NetScript:OnMessageReceived` | `suppressed` | the client never sees the server's message |
@@ -1442,6 +1443,23 @@ keeps from the game. The pointer is let go while the game's window is not in fro
 and its hold on the pointer go when it reloads, is disabled or unloads. Whether a unit stands
 indoors is `unit:IsOutdoors()`. Everything here runs on the game's thread, where your handlers run.
 
+A click in the world arrives first as `WorldScript`'s `OnWorldClickRequest(button, hit, object,
+object_guid, point, targeting)` (abi `0.1.26`), before the game acts on it: the left button selects
+or attacks, the right one talks, loots or uses, either aims a spell waiting for its target
+(`targeting`) or walks with click-to-move. An `Override` answering `true` refuses it, and the game
+does nothing. A game where the reticle decides what you aim at refuses the clicks on models and
+name plates and leaves the ground to the game, so that a spell's circle is still placed:
+
+```lua
+Override("WorldScript", "OnWorldClickRequest", function(button, hit, object, guid, point, targeting)
+    return not targeting and (hit == "object" or hit == "name_plate")
+end)
+```
+
+What the player can do with what is there is the client's own answer: `unit:CanAttack()`,
+`unit:CanInteract()` (an NPC offering something, alive, out of combat, friendly enough) and a game
+object's `CanUse()` (its quest in the log, its lock open), each true out of reach too.
+
 `wxl.input.BlockMouseLook(true)` (abi `0.1.25`) keeps the game out of its own mouse look: a held
 mouse button turns no camera and no character, hides no pointer, and a click let go within 0.8 s
 still selects (left) or talks, loots, attacks (right). `wxl.pose.Head(unit, yaw, pitch, smoothing)`
@@ -1921,6 +1939,8 @@ method, a container every item method. The tables are made from the runtime's ta
 | `IsFlying()` | `boolean` | Whether it flies, as the client's IsFlying reads it. Came with abi 0.1.18. |
 | `IsFalling()` | `boolean` | Whether it is falling, as the client's IsFalling reads it. Came with abi 0.1.18. |
 | `IsOutdoors()` | `boolean` | Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused. Came with abi 0.1.24. |
+| `CanAttack()` | `boolean` | Whether the active player may attack it, by the client's own reckoning (faction, duel, PvP, sanctuary): what turns the cursor into a sword. Came with abi 0.1.26. |
+| `CanInteract()` | `boolean` | Whether the active player can interact with it now: an NPC offering something (gossip, quests, trade, training, a flight), alive, out of combat, of a reaction that lets it; out of reach counts. Came with abi 0.1.26. |
 
 **Players**
 
@@ -1993,6 +2013,7 @@ method, a container every item method. The tables are made from the runtime's ta
 | `State()` | `integer` | 0 active, 1 ready, 2 destroyed. |
 | `GameObjectType()` | `integer` | The game-object type, in the server's numbering (door 0, button 1, chest 3, ...). |
 | `ArtKit()` | `integer` | The art kit it shows. |
+| `CanUse()` | `boolean` | Whether the active player can use it now, as the client decides the cursor over it: its kind lets it be used, its quest is in the log, its lock opens; out of reach counts. Came with abi 0.1.26. |
 
 **Dynamic objects**
 
@@ -2056,6 +2077,7 @@ A few to start from:
 | `WorldScript` | `OnMouseMotion`, `OnMouseWheel` | `dx`, `dy`; `delta`, `handled` | the mouse moved, in its own counts; the wheel turned, in notches, which an `Override` keeps from the game (abi `0.1.24`) |
 | `RenderScript` | `OnCameraUpdate` | `index`, `delta` | the client placed the world camera for the frame: set a view with `wxl.camera.SetView` here (abi `0.1.24`) |
 | `RenderScript` | `OnImGuiFrame` | `index`, `delta` | a frame of the runtime's Dear ImGui is open, for a C++ mod's windows (abi `0.1.25`) |
+| `WorldScript` | `OnWorldClickRequest` | `button`, `hit`, `object`, `object_guid`, `point`, `targeting`, `refused` | a click in the world the game is about to act on (`hit`: `"none"`, `"ground"`, `"object"`, `"world_object"`, `"name_plate"`; `targeting` while a spell waits for its target), which an `Override` refuses (abi `0.1.26`) |
 
 The families `PlayerScript`, `GlueScript` and `ChatScript`, and `WorldScript`'s `OnZoneChanged`,
 `OnMouseoverChanged` and `OnCVarChanged`, came with `0.1.6`: a mod that uses one asks for
@@ -2088,7 +2110,8 @@ points (`has_source`, `source`, `has_dest`, `dest` and their transports) came wi
 `WorldScript`'s `OnMouseMotion` and `OnMouseWheel`, `RenderScript`'s `OnCameraUpdate`,
 the `wxl.camera`, `wxl.input` and `wxl.world` modules, `wxl.action.Face` and `IsOutdoors` came with
 `0.1.24`. `wxl.input.BlockMouseLook` and `MouseLookBlocked`, the `wxl.pose` module and
-`RenderScript`'s `OnImGuiFrame` came with `0.1.25`.
+`RenderScript`'s `OnImGuiFrame` came with `0.1.25`. `WorldScript`'s `OnWorldClickRequest` and
+`CanAttack`, `CanInteract` and `CanUse` came with `0.1.26`.
 
 ### Gameplay events
 

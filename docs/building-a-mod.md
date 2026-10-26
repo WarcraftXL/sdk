@@ -568,6 +568,8 @@ rows as the methods, by `wxl-object-members`.
 | `IsFlying()` | `bool` | Whether it flies, as the client's IsFlying reads it. Came with abi 0.1.18: WXL_E_UNSUPPORTED on an older runtime. |
 | `IsFalling()` | `bool` | Whether it is falling, as the client's IsFalling reads it. Came with abi 0.1.18: WXL_E_UNSUPPORTED on an older runtime. |
 | `IsOutdoors()` | `bool` | Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused. Came with abi 0.1.24: WXL_E_UNSUPPORTED on an older runtime. |
+| `CanAttack()` | `bool` | Whether the active player may attack it, by the client's own reckoning (faction, duel, PvP, sanctuary): what turns the cursor into a sword. Came with abi 0.1.26: WXL_E_UNSUPPORTED on an older runtime. |
+| `CanInteract()` | `bool` | Whether the active player can interact with it now: an NPC offering something (gossip, quests, trade, training, a flight), alive, out of combat, of a reaction that lets it; out of reach counts. Came with abi 0.1.26: WXL_E_UNSUPPORTED on an older runtime. |
 
 **`wxl::Player`**: Players
 
@@ -640,6 +642,7 @@ rows as the methods, by `wxl-object-members`.
 | `State()` | `uint32_t` | 0 active, 1 ready, 2 destroyed. |
 | `GoType()` | `uint32_t` | The game-object type, in the server's numbering (door 0, button 1, chest 3, ...). |
 | `ArtKit()` | `uint32_t` | The art kit it shows. |
+| `CanUse()` | `bool` | Whether the active player can use it now, as the client decides the cursor over it: its kind lets it be used, its quest is in the log, its lock opens; out of reach counts. Came with abi 0.1.26: WXL_E_UNSUPPORTED on an older runtime. |
 
 **`wxl::DynamicObject`**: Dynamic objects
 
@@ -1564,6 +1567,28 @@ answers it: false in a building or a cave the world marks indoors, where a mount
 
 The three services and `Face` run on the main thread, where your handlers of world events run;
 from another thread they are refused with `WXL_E_INVALID`.
+
+**Clicks in the world.** Before the game acts on a click in the world it raises
+`WorldScript::OnWorldClickRequest(button, hit, object, object_guid, point, targeting, refused)` (abi
+`0.1.26`): the button, what the click met (`WXL_WORLD_HIT_NONE`, `_GROUND`, `_OBJECT` for a model,
+`_WORLD_OBJECT` for a building or a transport, `_NAME_PLATE`), the object and its guid, the point,
+and whether a spell waits for its target. Answering `refused` keeps the game from acting on it: no
+target, no talk, no loot, no walk. `WorldClick` still follows a click that goes on. Taking the
+targeting away from the mouse is one handler; the ground is left to the game for a spell's circle:
+
+```cpp
+void OnWorldClickRequest(wxl_mouse_button, wxl_world_hit hit, wxl::Object, wxl_guid, wxl_vec3,
+                         bool targeting, wxl::Answer refused) override
+{
+    if (!targeting && (hit == WXL_WORLD_HIT_OBJECT || hit == WXL_WORLD_HIT_NAME_PLATE)) refused.Set();
+}
+```
+
+What the player can do with an object is the client's own answer: `wxl::Unit::CanAttack()`,
+`wxl::Unit::CanInteract()` (an NPC offering something, alive, out of combat, friendly enough) and
+`wxl::GameObject::CanUse()` (its quest in the log, its lock open), each true out of reach too; with
+`wxl::ActionService::Target`, `ClearTarget` and `Interact`, a mod chooses the target and the
+interaction itself.
 
 **Keeping the game out of its mouse look.** With the left button held the game turns its own
 camera, with the right one it turns the character, and either way it hides the pointer and
