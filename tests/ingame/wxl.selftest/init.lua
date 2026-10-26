@@ -40,7 +40,10 @@
 --      ground three yards in front of the player, plays its animation, fades it, reads where the
 --      player's head is in the world, then takes it away; wxl.test-bones watches the bones of the
 --      character models for a second; the casts seen since the start say where a ground spell
---      landed.
+--      landed;
+--  17. reticle targeting's bricks: the runtime raises WorldClickRequest; CanAttack agrees with the
+--      client's UnitCanAttack for the nearest unit (targeted for the question, then the target is
+--      given back); CanInteract and a game object's CanUse answer for everything in view.
 --
 -- Each check is one line in the log: PASS, FAIL, SKIP (what it needs is not there: a class
 -- without a cast-time spell, say) or NOTE (an event the server may not send). The chat box shows
@@ -1607,6 +1610,63 @@ step(function()
     note("a cast named its ground point (" .. destinations .. " since the start)", destinations > 0,
          "only a ground-targeted spell or a blink names one" .. (lastDestination and (": " .. lastDestination) or ""))
     if lastDestination then print("     " .. lastDestination) end
+end)
+
+-- 17. Reticle targeting's bricks: the click before the game acts, what the player can do -----------
+
+local previousTarget
+
+step(function()
+    print("phase 17: the click before the game acts, what the player can do with what is there")
+    local me = wxl.object.LocalPlayer()
+    if not (me and me.CanAttack) then
+        result("Unit:CanAttack", false, "this runtime is older than abi 0.1.26")
+        return
+    end
+    result("the runtime raises WorldClickRequest", wxl.runtime.Raises("WorldScript", "OnWorldClickRequest") == true)
+
+    -- The nearest other unit, whatever it is.
+    local nearest, best
+    for _, unit in ipairs(wxl.object.InView("Unit")) do
+        local d = unit:Distance(me)
+        if d and (not best or d < best) then nearest, best = unit, d end
+    end
+    local interacting, usable, units, objects = 0, 0, 0, 0
+    for _, unit in ipairs(wxl.object.InView("Unit")) do
+        local can = unit:CanInteract()
+        if type(can) == "boolean" then units = units + 1 end
+        if can then interacting = interacting + 1 end
+    end
+    for _, object in ipairs(wxl.object.InView("GameObject")) do
+        local can = object:CanUse()
+        if type(can) == "boolean" then objects = objects + 1 end
+        if can then usable = usable + 1 end
+    end
+    result("Unit:CanInteract answers for every unit in view (" .. interacting .. " of " .. units .. " offer something)",
+           units == #wxl.object.InView("Unit"))
+    result("GameObject:CanUse answers for every game object in view (" .. usable .. " of " .. objects .. " usable)",
+           objects == #wxl.object.InView("GameObject"))
+    if not nearest then
+        skip("Unit:CanAttack against UnitCanAttack", "no unit in view")
+        return
+    end
+    local asked, guid = ask("return UnitGUID('target')")
+    previousTarget = asked and guid or nil
+    wxl.action.Target(nearest)
+    local ok, client = ask("return UnitCanAttack('player', 'target') and true or false")
+    local mine = nearest:CanAttack()
+    result("Unit:CanAttack agrees with UnitCanAttack for the nearest unit (" .. tostring(nearest:Name()) .. ")",
+           ok and mine == client, "CanAttack " .. tostring(mine) .. ", UnitCanAttack " .. tostring(client))
+    wait(0.5)
+end)
+
+step(function()
+    if previousTarget then
+        local target = wxl.object.FromGuid(previousTarget)
+        if target then wxl.action.Target(target) else wxl.action.ClearTarget() end
+    else
+        wxl.action.ClearTarget()
+    end
 end)
 
 -- The end ----------------------------------------------------------------------------------------

@@ -110,6 +110,13 @@ matrices there and the root bone read by `BoneInfo` (parent -1). A cast that nam
 since the start (a ground-targeted spell, a blink) is a NOTE with the point; cast one before the
 run to see it. Without `wxl.test-bones` in `Mods/` its checks are a FAIL.
 
+Phase 17 checks what a game without click targeting builds on (abi 0.1.26): the runtime raises
+`WorldClickRequest` (a click in the world is not made by the suite: click a creature with a mod
+that refuses it to see the game do nothing), `CanInteract` and a game object's `CanUse` answer for
+everything in view (their counts are in the line), and `CanAttack` agrees with the client's
+`UnitCanAttack` for the nearest unit, which is targeted for the question; the target the player had
+comes back after. Stand near a creature or an NPC for the last check, or it is a SKIP.
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the
