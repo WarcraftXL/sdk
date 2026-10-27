@@ -584,6 +584,20 @@ WXL_EVENTS_SINCE(0, 1, 33, 148)
     thread, inside the frame. */
 WXL_EVENT(Render, RenderPoint,     148, wxl_render_point_args)
 
+// --- The ground of the map (wxl.terrain) -------------------------------------------------------
+
+WXL_EVENTS_SINCE(0, 1, 35, 149)
+
+/** A chunk of the map's ground was loaded: it is drawn, walked on and edited from now on. A chunk
+    some mod edited has its edits back already (`edited`). Main thread. */
+WXL_EVENT(World, TerrainChunkLoaded,   149, wxl_terrain_chunk_state_args)
+/** A chunk of the map's ground is being unloaded, as the player moves away or the map goes. Its
+    edits are kept for its next load. Main thread. */
+WXL_EVENT(World, TerrainChunkUnloaded, 150, wxl_terrain_chunk_state_args)
+/** The map is being unloaded (a teleport to another map, a logout): every mod's edits of its ground
+    are dropped. Raised at every unload of a map, `chunks` 0 when no edit existed. Main thread. */
+WXL_EVENT(World, TerrainEditsCleared,  151, wxl_terrain_cleared_args)
+
 // Give back whatever was defaulted above, so the file can be included again right after with a
 // different selector. What the consumer defined itself is left alone: undefining it here would
 // break the consumer that includes the table twice on purpose.

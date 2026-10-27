@@ -78,6 +78,11 @@
 //   wxl.cvar.Release(name)                              registered it; another Lua mod's Register of
 //                                                       it is refused, and it is released when its
 //                                                       mod goes (the variable stays)
+//   wxl.terrain.SetHeights(heights)                    the ground's edits, each Lua mod's in a
+//   wxl.terrain.Reset(chunk_x, chunk_y), .ResetAll()    layer of wxl.lua's own, which its reset and
+//                                                       its going take off alone
+//   wxl.terrain.Trace, .Locate, .Vertices,              answer a table
+//              .VerticesIn, .Stats
 //
 // wxl.texture's take a table and answer several values; nothing is kept for the mod:
 //

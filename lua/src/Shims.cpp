@@ -38,6 +38,7 @@
 #include "wxl/services/render.h"
 #include "wxl/services/relay.h"
 #include "wxl/services/storage.h"
+#include "wxl/services/terrain.h"
 
 namespace wxl::lua::shims
 {
@@ -2446,6 +2447,273 @@ namespace wxl::lua::shims
             return 1;
         }
 
+        // --- wxl.terrain: each Lua mod's edits in a layer of its own ------------------------
+
+        const wxl_terrain_api* Terrain() { return wxl::api::Table<wxl_terrain_api>(); }
+
+        /// The layer of wxl.lua's edits each Lua mod writes in: the runtime sees every Lua mod as
+        /// wxl.lua, so a mod's reset and its unload take off its own edits only.
+        std::vector<std::pair<ScriptMod*, uint32_t>> g_terrainLayers;
+        uint32_t                                     g_nextTerrainLayer = 1;
+
+        uint32_t TerrainLayer(ScriptMod& mod)
+        {
+            for (const auto& held : g_terrainLayers)
+                if (held.first == &mod) return held.second;
+            g_terrainLayers.emplace_back(&mod, g_nextTerrainLayer);
+            return g_nextTerrainLayer++;
+        }
+
+        void PushVec3(lua_State* L, const wxl_vec3& v)
+        {
+            lua_createtable(L, 0, 3);
+            lua_pushnumber(L, v.x);
+            lua_setfield(L, -2, "x");
+            lua_pushnumber(L, v.y);
+            lua_setfield(L, -2, "y");
+            lua_pushnumber(L, v.z);
+            lua_setfield(L, -2, "z");
+        }
+
+        wxl_vec3 CheckTerrainPoint(lua_State* L, int index, const char* call, const char* what)
+        {
+            if (!lua_istable(L, index))
+                luaL_error(L, "wxl.terrain.%s: '%s' (argument %d) must be a point {x, y, z}", call, what, index);
+            lua_getfield(L, index, "x");
+            lua_getfield(L, index, "y");
+            lua_getfield(L, index, "z");
+            if (!lua_isnumber(L, -3) || !lua_isnumber(L, -2) || !lua_isnumber(L, -1))
+                luaL_error(L, "wxl.terrain.%s: '%s' (argument %d) must be a point with numbers x, y and z", call, what, index);
+            const wxl_vec3 v{static_cast<float>(lua_tonumber(L, -3)), static_cast<float>(lua_tonumber(L, -2)),
+                             static_cast<float>(lua_tonumber(L, -1))};
+            lua_pop(L, 3);
+            return v;
+        }
+
+        int32_t CheckChunk(lua_State* L, int index, const char* call, const char* what)
+        {
+            if (!lua_isnumber(L, index))
+                luaL_error(L, "wxl.terrain.%s: '%s' (argument %d) must be a chunk's column or row, 0 to 1023", call, what, index);
+            return static_cast<int32_t>(lua_tointeger(L, index));
+        }
+
+        int L_TerrainTrace(lua_State* L)
+        {
+            const wxl_vec3         start  = CheckTerrainPoint(L, 1, "Trace", "start");
+            const wxl_vec3         finish = CheckTerrainPoint(L, 2, "Trace", "finish");
+            const wxl_terrain_api* api    = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::trace)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_terrain_hit hit{};
+            hit.struct_size = sizeof hit;
+            if (api->trace(start, finish, &hit) != WXL_TRUE)
+            {
+                lua_pushnil(L);
+                return 1;
+            }
+            lua_createtable(L, 0, 5);
+            PushVec3(L, hit.point);
+            lua_setfield(L, -2, "point");
+            PushVec3(L, hit.normal);
+            lua_setfield(L, -2, "normal");
+            lua_pushinteger(L, hit.chunk_x);
+            lua_setfield(L, -2, "chunk_x");
+            lua_pushinteger(L, hit.chunk_y);
+            lua_setfield(L, -2, "chunk_y");
+            lua_pushnumber(L, hit.fraction);
+            lua_setfield(L, -2, "fraction");
+            return 1;
+        }
+
+        int L_TerrainLocate(lua_State* L)
+        {
+            const double           x   = luaL_checknumber(L, 1);
+            const double           y   = luaL_checknumber(L, 2);
+            const wxl_terrain_api* api = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::locate)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_terrain_place place{};
+            place.struct_size = sizeof place;
+            if (api->locate(x, y, &place) != WXL_TRUE)
+            {
+                lua_pushnil(L);
+                return 1;
+            }
+            lua_createtable(L, 0, 6);
+            lua_pushinteger(L, place.chunk_x);
+            lua_setfield(L, -2, "chunk_x");
+            lua_pushinteger(L, place.chunk_y);
+            lua_setfield(L, -2, "chunk_y");
+            lua_pushinteger(L, place.cell_row);
+            lua_setfield(L, -2, "cell_row");
+            lua_pushinteger(L, place.cell_col);
+            lua_setfield(L, -2, "cell_col");
+            lua_pushinteger(L, place.nearest);
+            lua_setfield(L, -2, "nearest");
+            lua_pushboolean(L, place.loaded == WXL_TRUE);
+            lua_setfield(L, -2, "loaded");
+            return 1;
+        }
+
+        int L_TerrainVertices(lua_State* L)
+        {
+            const int32_t          cx       = CheckChunk(L, 1, "Vertices", "chunk_x");
+            const int32_t          cy       = CheckChunk(L, 2, "Vertices", "chunk_y");
+            const bool             original = lua_toboolean(L, 3) != 0;
+            const wxl_terrain_api* api      = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::vertices)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_vec3       out[WXL_TERRAIN_CHUNK_VERTICES];
+            const uint32_t count = api->vertices(cx, cy, original ? WXL_TRUE : WXL_FALSE, out, WXL_TERRAIN_CHUNK_VERTICES);
+            if (!count) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            lua_createtable(L, static_cast<int>(count), 0);
+            for (uint32_t i = 0; i < count && i < WXL_TERRAIN_CHUNK_VERTICES; ++i)
+            {
+                PushVec3(L, out[i]);
+                lua_rawseti(L, -2, static_cast<int>(i) + 1);
+            }
+            return 1;
+        }
+
+        int L_TerrainVerticesIn(lua_State* L)
+        {
+            const double           x      = luaL_checknumber(L, 1);
+            const double           y      = luaL_checknumber(L, 2);
+            const double           radius = luaL_checknumber(L, 3);
+            const wxl_terrain_api* api    = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::vertices_in)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const uint32_t                  count = api->vertices_in(x, y, radius, nullptr, 0);
+            std::vector<wxl_terrain_vertex> out(count);
+            const uint32_t written = count ? api->vertices_in(x, y, radius, out.data(), count) : 0;
+            const uint32_t n       = written < count ? written : count;
+            lua_createtable(L, static_cast<int>(n), 0);
+            for (uint32_t i = 0; i < n; ++i)
+            {
+                const wxl_terrain_vertex& v = out[i];
+                lua_createtable(L, 0, 9);
+                lua_pushinteger(L, v.chunk_x);
+                lua_setfield(L, -2, "chunk_x");
+                lua_pushinteger(L, v.chunk_y);
+                lua_setfield(L, -2, "chunk_y");
+                lua_pushinteger(L, v.index);
+                lua_setfield(L, -2, "index");
+                lua_pushnumber(L, v.x);
+                lua_setfield(L, -2, "x");
+                lua_pushnumber(L, v.y);
+                lua_setfield(L, -2, "y");
+                lua_pushnumber(L, v.z);
+                lua_setfield(L, -2, "z");
+                lua_pushnumber(L, v.original_z);
+                lua_setfield(L, -2, "original_z");
+                lua_pushboolean(L, v.inner == WXL_TRUE);
+                lua_setfield(L, -2, "inner");
+                lua_pushboolean(L, v.loaded == WXL_TRUE);
+                lua_setfield(L, -2, "loaded");
+                lua_rawseti(L, -2, static_cast<int>(i) + 1);
+            }
+            return 1;
+        }
+
+        /// A number field of an edit's entry; a Lua error naming the entry when it is not one.
+        double EditField(lua_State* L, int position, const char* name)
+        {
+            lua_getfield(L, -1, name);
+            if (!lua_isnumber(L, -1))
+                luaL_error(L, "wxl.terrain.SetHeights: entry %d must be a table {chunk_x, chunk_y, index, height} of numbers; its %s is %s",
+                           position, name, luaL_typename(L, -1));
+            const double value = lua_tonumber(L, -1);
+            lua_pop(L, 1);
+            return value;
+        }
+
+        int L_TerrainSetHeights(lua_State* L)
+        {
+            ScriptMod& mod = Self(L);
+            if (!lua_istable(L, 1))
+                luaL_error(L, "wxl.terrain.SetHeights: 'heights' (argument 1) must be a list of {chunk_x, chunk_y, index, height}");
+            const int                       count = static_cast<int>(lua_objlen(L, 1));
+            std::vector<wxl_terrain_height> heights;
+            heights.reserve(static_cast<size_t>(count));
+            for (int n = 1; n <= count; ++n)
+            {
+                lua_rawgeti(L, 1, n);
+                if (!lua_istable(L, -1))
+                    luaL_error(L, "wxl.terrain.SetHeights: entry %d must be a table {chunk_x, chunk_y, index, height}", n);
+                wxl_terrain_height h{};
+                h.chunk_x = static_cast<int32_t>(EditField(L, n, "chunk_x"));
+                h.chunk_y = static_cast<int32_t>(EditField(L, n, "chunk_y"));
+                const double index = EditField(L, n, "index");
+                h.index  = index < 0 ? 0xFFFFFFFFu : static_cast<uint32_t>(index);
+                h.height = static_cast<float>(EditField(L, n, "height"));
+                lua_pop(L, 1);
+                heights.push_back(h);
+            }
+            const wxl_terrain_api* api = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::set_heights)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set_heights(heights.data(), static_cast<uint32_t>(heights.size()), TerrainLayer(mod));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_TerrainReset(lua_State* L)
+        {
+            ScriptMod&             mod = Self(L);
+            const int32_t          cx  = CheckChunk(L, 1, "Reset", "chunk_x");
+            const int32_t          cy  = CheckChunk(L, 2, "Reset", "chunk_y");
+            const wxl_terrain_api* api = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::reset_chunk)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->reset_chunk(cx, cy, TerrainLayer(mod));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_TerrainResetAll(lua_State* L)
+        {
+            ScriptMod&             mod = Self(L);
+            const wxl_terrain_api* api = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::reset_all)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->reset_all(TerrainLayer(mod));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_TerrainStats(lua_State* L)
+        {
+            const wxl_terrain_api* api = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::stats)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_terrain_stats stats{};
+            stats.struct_size       = sizeof stats;
+            const wxl_result result = api->stats(&stats);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_createtable(L, 0, 8);
+            const auto field = [&](const char* name, double value) {
+                lua_pushnumber(L, value);
+                lua_setfield(L, -2, name);
+            };
+            field("edited_chunks", stats.edited_chunks);
+            field("edited_vertices", stats.edited_vertices);
+            field("edits", static_cast<double>(stats.edits));
+            field("reapplied", static_cast<double>(stats.reapplied));
+            field("last_vertices", stats.last_vertices);
+            field("last_chunks", stats.last_chunks);
+            field("last_microseconds", stats.last_microseconds);
+            field("max_microseconds", stats.max_microseconds);
+            return 1;
+        }
+
+        /// A Lua mod's edits come off when it goes.
+        void ReleaseTerrain(ScriptMod& mod)
+        {
+            for (size_t i = 0; i < g_terrainLayers.size(); ++i)
+            {
+                if (g_terrainLayers[i].first != &mod) continue;
+                const wxl_terrain_api* api = Terrain();
+                if (api && wxl::detail::Carries(api, &wxl_terrain_api::reset_all)) api->reset_all(g_terrainLayers[i].second);
+                g_terrainLayers.erase(g_terrainLayers.begin() + static_cast<std::ptrdiff_t>(i));
+                return;
+            }
+        }
+
         // --- wxl.render: tables into descriptions, push constants, the shaders each Lua mod replaced -
 
         const wxl_render_api* Render() { return wxl::api::Table<wxl_render_api>(); }
@@ -3026,6 +3294,14 @@ namespace wxl::lua::shims
         if (service == "texture" && name == "Make") return &L_TextureMake;
         if (service == "texture" && name == "Stats") return &L_TextureStats;
         if (service == "cvar" && name == "Register") return &L_CVarRegister;
+        if (service == "terrain" && name == "Trace") return &L_TerrainTrace;
+        if (service == "terrain" && name == "Locate") return &L_TerrainLocate;
+        if (service == "terrain" && name == "Vertices") return &L_TerrainVertices;
+        if (service == "terrain" && name == "VerticesIn") return &L_TerrainVerticesIn;
+        if (service == "terrain" && name == "SetHeights") return &L_TerrainSetHeights;
+        if (service == "terrain" && name == "Reset") return &L_TerrainReset;
+        if (service == "terrain" && name == "ResetAll") return &L_TerrainResetAll;
+        if (service == "terrain" && name == "Stats") return &L_TerrainStats;
         if (service == "cvar" && name == "Release") return &L_CVarRelease;
         if (service == "render" && name == "CreatePipeline") return &L_RenderCreatePipeline;
         if (service == "render" && name == "Begin") return &L_RenderBegin;
@@ -3046,6 +3322,7 @@ namespace wxl::lua::shims
     void ReleaseHeld(ScriptMod& mod)
     {
         ReleaseFootprint(mod);
+        ReleaseTerrain(mod);
         ReleaseViewAndPointer(mod);
         ReleaseStorage(mod);
         ReleaseRelay(mod);

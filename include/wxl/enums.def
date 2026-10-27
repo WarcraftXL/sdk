@@ -374,6 +374,14 @@ WXL_ENUM_VALUE(wxl_render_point, WXL_RENDER_POINT_AFTER_WORLD,        2, after_w
 WXL_ENUM_VALUE(wxl_render_point, WXL_RENDER_POINT_AFTER_UI,           3, after_ui)           ///< the interface drawn too: the frame as it will be shown, the mods' Dear ImGui windows aside
 WXL_ENUM_END(wxl_render_point)
 
+/// Whether there is ground under a point of the map (wxl.terrain's presence).
+WXL_ENUM(wxl_terrain_presence)
+WXL_ENUM_VALUE(wxl_terrain_presence, WXL_TERRAIN_NONE,       0, none)       ///< off the map, out of the world, or a map without terrain
+WXL_ENUM_VALUE(wxl_terrain_presence, WXL_TERRAIN_GROUND,     1, ground)     ///< ground, loaded
+WXL_ENUM_VALUE(wxl_terrain_presence, WXL_TERRAIN_HOLE,       2, hole)       ///< a hole of the map's ground (a cave's mouth, a building's cellar)
+WXL_ENUM_VALUE(wxl_terrain_presence, WXL_TERRAIN_NOT_LOADED, 3, not_loaded) ///< the chunk there is not loaded: too far, or still being read
+WXL_ENUM_END(wxl_terrain_presence)
+
 #ifdef WXL_ENUM_DEFAULTED
     #undef WXL_ENUM
     #undef WXL_ENUM_DEFAULTED

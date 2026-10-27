@@ -67,6 +67,8 @@
 //   render_pipeline const wxl_render_pipeline_desc*: what wxl.render makes a pipeline of; a
 //       script passes a table (its shim reads the SPIR-V from the mod's folder)
 //   render_pass const wxl_render_pass*: what a wxl.render pass draws into; a script passes a table
+//   terrain_heights (const wxl_terrain_height*, uint32_t count): vertices of wxl.terrain set to
+//       heights; a script passes a list of {chunk_x, chunk_y, index, height}
 //   provider const wxl_asset_provider*  transform const wxl_asset_transform*: what a native
 //       mod hands wxl.storage; no script reaches a row taking one
 //   hash_fn wxl_file_hash_fn  relay_endpoint const wxl_relay_endpoint*
@@ -84,7 +86,8 @@
 //   out<K> wxl_result, K*            found<K> wxl_bool, K*: K a value kind (u64 u32 i32 f64 str
 //       boolean vec3) or a struct kind (m2_item_display: wxl_m2_item_display, file_hash:
 //       wxl_file_hash, asset_reload: wxl_asset_reload, texture: wxl_texture, texture_stats:
-//       wxl_texture_stats, written no longer
+//       wxl_texture_stats, terrain_hit: wxl_terrain_hit, terrain_place: wxl_terrain_place,
+//       terrain_stats: wxl_terrain_stats, written no longer
 //       than its struct_size)
 //   whole_bytes wxl_result, (void* buffer, uint64_t capacity, uint64_t* out_read): a buffer
 //       too small is WXL_E_INVALID with out_read set to what it needs
@@ -123,6 +126,7 @@
 #include "wxl/services/selectioncircle.h"
 #include "wxl/services/texture.h"
 #include "wxl/services/cvar.h"
+#include "wxl/services/terrain.h"
 #include "wxl/services/render.h"
 #include "wxl/services/vk.h"
 #include "wxl/services/m2.h"
@@ -183,6 +187,10 @@ namespace wxl::api
         struct render_pass {};
         struct texture {};
         struct texture_stats {};
+        struct terrain_hit {};
+        struct terrain_place {};
+        struct terrain_stats {};
+        struct terrain_heights {};
         template <class K>
         struct opt {};
 
@@ -253,6 +261,9 @@ namespace wxl::api
     template <> struct Value<kind::f32> { using type = float; };
     template <> struct Value<kind::texture> { using type = wxl_texture; };
     template <> struct Value<kind::texture_stats> { using type = wxl_texture_stats; };
+    template <> struct Value<kind::terrain_hit> { using type = wxl_terrain_hit; };
+    template <> struct Value<kind::terrain_place> { using type = wxl_terrain_place; };
+    template <> struct Value<kind::terrain_stats> { using type = wxl_terrain_stats; };
 
     /// The C parameters a parameter kind stands for.
     template <class K, class = void>
@@ -292,6 +303,7 @@ namespace wxl::api
     template <> struct Param<kind::texture_request> { using C = List<const wxl_texture_request*>; };
     template <> struct Param<kind::render_pipeline> { using C = List<const wxl_render_pipeline_desc*>; };
     template <> struct Param<kind::render_pass> { using C = List<const wxl_render_pass*>; };
+    template <> struct Param<kind::terrain_heights> { using C = List<const wxl_terrain_height*, uint32_t>; };
     template <class R>
     struct Param<R, std::enable_if_t<IsResource<R>::value>>
     {

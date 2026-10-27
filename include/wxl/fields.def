@@ -137,6 +137,20 @@ WXL_ARGS_FIELD(wxl_render_point_args, height, u32)
 WXL_ARGS_FIELD(wxl_render_point_args, samples, u32) ///< its samples per pixel on the Vulkan renderer (1 without multisampling); 0 on Direct3D 9
 WXL_ARGS_END(wxl_render_point_args)
 
+/// A chunk of the map's ground loaded or unloaded (wxl.terrain).
+WXL_ARGS(wxl_terrain_chunk_state_args)
+WXL_ARGS_FIELD(wxl_terrain_chunk_state_args, map_id, u32)
+WXL_ARGS_FIELD(wxl_terrain_chunk_state_args, chunk_x, i32) ///< the chunk's column on the map, 0-1023
+WXL_ARGS_FIELD(wxl_terrain_chunk_state_args, chunk_y, i32) ///< its row
+WXL_ARGS_FIELD(wxl_terrain_chunk_state_args, edited, bool) ///< whether some mod has edits on it: put back already when it loads
+WXL_ARGS_END(wxl_terrain_chunk_state_args)
+
+/// Every edit of the map's ground dropped (wxl.terrain).
+WXL_ARGS(wxl_terrain_cleared_args)
+WXL_ARGS_FIELD(wxl_terrain_cleared_args, map_id, u32)  ///< the map being unloaded
+WXL_ARGS_FIELD(wxl_terrain_cleared_args, chunks, u32)  ///< the chunks that had edits, 0 for none
+WXL_ARGS_END(wxl_terrain_cleared_args)
+
 /// An object appearing, changing or leaving.
 WXL_ARGS(wxl_object_args)
 WXL_ARGS_FIELD(wxl_object_args, object, handle)

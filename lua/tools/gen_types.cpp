@@ -551,6 +551,68 @@ namespace
                    "---@return {textures: integer, resident: integer, texture_limit: integer, bytes: integer, byte_limit: integer, made: integer, reused: integer, released: integer}|nil stats\n"
                    "---@return string|nil reason\n"
                    "function " + owner + ".Stats() end\n\n";
+        if (std::strcmp(row.service, "terrain") == 0)
+        {
+            const std::string point = "{x: number, y: number, z: number}";
+            if (name == "Trace")
+                return "---The first point where the segment from `start` to `finish` meets the loaded ground, holes let\n"
+                       "---through: the point, the unit normal of the triangle met (facing up), its chunk, and how far\n"
+                       "---along the segment (0 to 1). nil when it meets none.\n"
+                       "---@param start " + point + "\n---@param finish " + point + "\n"
+                       "---@return {point: " + point + ", normal: " + point + ", chunk_x: integer, chunk_y: integer, fraction: number}|nil hit\n"
+                       "function " + owner + ".Trace(start, finish) end\n\n";
+            if (name == "Locate")
+                return "---Where a point is on the grid: its chunk (column and row on the map, 0-1023), its cell in the\n"
+                       "---chunk (0-7, the row along world x), the chunk's vertex nearest to it (0-144), and whether the\n"
+                       "---chunk is loaded. nil off the map.\n"
+                       "---@param x number\n---@param y number\n"
+                       "---@return {chunk_x: integer, chunk_y: integer, cell_row: integer, cell_col: integer, nearest: integer, loaded: boolean}|nil place\n"
+                       "function " + owner + ".Locate(x, y) end\n\n";
+            if (name == "Vertices")
+                return "---The world positions of a loaded chunk's 145 vertices, in index order (index i at [i + 1]):\n"
+                       "---rows of 9 outer vertices, each but the last followed by a row of 8 inner ones. nil,\n"
+                       "---\"not_found\" when the chunk is not loaded. `original` true: the heights before any mod's edit.\n"
+                       "---@param chunk_x integer\n---@param chunk_y integer\n---@param original? boolean\n"
+                       "---@return " + point + "[]|nil vertices\n---@return string|nil reason\n"
+                       "function " + owner + ".Vertices(chunk_x, chunk_y, original) end\n\n";
+            if (name == "VerticesIn")
+                return "---Every vertex within `radius` yards (0 to 128) of a point, each once whichever chunks it is on:\n"
+                       "---its chunk and index (ready for SetHeights, which writes a vertex on a chunk's edge into every\n"
+                       "---chunk holding it), its place, its height now and before any edit, whether it is an inner\n"
+                       "---vertex, and whether its chunk is loaded (the heights are 0 when it is not). An empty list\n"
+                       "---off the map or for a radius out of range.\n"
+                       "---@param x number\n---@param y number\n---@param radius number\n"
+                       "---@return {chunk_x: integer, chunk_y: integer, index: integer, x: number, y: number, z: number, original_z: number, inner: boolean, loaded: boolean}[] vertices\n"
+                       "function " + owner + ".VerticesIn(x, y, radius) end\n\n";
+            if (name == "SetHeights")
+                return "---Sets vertices to absolute world heights, all or none: the ground drawn, the walking, the\n"
+                       "---falling, the camera and the client's clicks follow. A vertex on a chunk's edge is set in\n"
+                       "---its neighbour too. Held by this mod until Reset, ResetAll, or until the mod is disabled,\n"
+                       "---reloads or unloads; kept while the chunk is away and put back when it loads; dropped with\n"
+                       "---the map. nil, \"invalid\" for an entry off the grid (logged, nothing set); nil,\n"
+                       "---\"unsupported\" out of the world or on a map without terrain.\n"
+                       "---@param heights {chunk_x: integer, chunk_y: integer, index: integer, height: number}[]\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".SetHeights(heights) end\n\n";
+            if (name == "Reset")
+                return "---Takes this mod's edits off a chunk (and off its edge vertices' copies in its neighbours): the\n"
+                       "---original heights come back, or another mod's edits where it has some. nil, \"not_found\" when\n"
+                       "---this mod has none there.\n"
+                       "---@param chunk_x integer\n---@param chunk_y integer\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Reset(chunk_x, chunk_y) end\n\n";
+            if (name == "ResetAll")
+                return "---Takes every edit of this mod off. nil, \"not_found\" when it has none.\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".ResetAll() end\n\n";
+            if (name == "Stats")
+                return "---What the service holds and what its last edit cost: edited_chunks, edited_vertices, edits,\n"
+                       "---reapplied (chunks given their edits back as they loaded), last_vertices, last_chunks,\n"
+                       "---last_microseconds, max_microseconds.\n"
+                       "---@return {edited_chunks: integer, edited_vertices: integer, edits: integer, reapplied: integer, last_vertices: integer, last_chunks: integer, last_microseconds: integer, max_microseconds: integer}|nil stats\n"
+                       "---@return string|nil reason\n"
+                       "function " + owner + ".Stats() end\n\n";
+        }
         if (std::strcmp(row.service, "cvar") == 0 && name == "Register")
             return "---Registers a console variable for this mod: the console, the interface's GetCVar and SetCVar\n"
                    "---and every mod read and set it, and the client saves it with its own. It keeps a value the\n"

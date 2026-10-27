@@ -1310,6 +1310,10 @@
 ---arrives as its number.
 ---@alias wxl.RenderPoint "after_opaque_world"|"after_liquids"|"after_world"|"after_ui"
 
+---A wxl_terrain_presence value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.TerrainPresence "none"|"ground"|"hole"|"not_loaded"
+
 -- The script families. A function defined on one of these tables as On<Event> is
 -- subscribed when the entry file has run and called with the event's parameters;
 -- on an event that can be answered its return values are taken, as Override
@@ -1329,6 +1333,9 @@
 ---@field OnMouseMotion fun(self: WorldScript, dx: integer, dy: integer)
 ---@field OnMouseWheel fun(self: WorldScript, delta: number, handled: boolean|nil): boolean|nil answers through handled
 ---@field OnWorldClickRequest fun(self: WorldScript, button: wxl.MouseButton|integer, hit: wxl.WorldHit|integer, object: wxl.Object|nil, object_guid: wxl.Guid, point: wxl.Vec3, targeting: boolean, refused: boolean|nil): boolean|nil answers through refused
+---@field OnTerrainChunkLoaded fun(self: WorldScript, map_id: integer, chunk_x: integer, chunk_y: integer, edited: boolean)
+---@field OnTerrainChunkUnloaded fun(self: WorldScript, map_id: integer, chunk_x: integer, chunk_y: integer, edited: boolean)
+---@field OnTerrainEditsCleared fun(self: WorldScript, map_id: integer, chunks: integer)
 WorldScript = {}
 
 ---@class RenderScript
@@ -1662,6 +1669,9 @@ SocialScript = {}
 ---@overload fun(family: "LuaScript", method: "OnInterfaceSignature", handler: fun(file: string, extra: string, verdict: wxl.InterfaceSignature|integer, accepted: boolean|nil)): integer
 ---@overload fun(family: "LuaScript", method: "OnInterfaceCleanupRequest", handler: fun(refused: boolean|nil)): integer
 ---@overload fun(family: "RenderScript", method: "OnRenderPoint", handler: fun(point: wxl.RenderPoint|integer, frame: integer, width: integer, height: integer, samples: integer)): integer
+---@overload fun(family: "WorldScript", method: "OnTerrainChunkLoaded", handler: fun(map_id: integer, chunk_x: integer, chunk_y: integer, edited: boolean)): integer
+---@overload fun(family: "WorldScript", method: "OnTerrainChunkUnloaded", handler: fun(map_id: integer, chunk_x: integer, chunk_y: integer, edited: boolean)): integer
+---@overload fun(family: "WorldScript", method: "OnTerrainEditsCleared", handler: fun(map_id: integer, chunks: integer)): integer
 ---@param family wxl.Family
 ---@param method string
 ---@param handler function
@@ -3916,6 +3926,95 @@ function render.Dispatch(pipeline, x, y, z, push) end
 ---@return string|nil reason
 function render.BonePalette(matrices) end
 
+---wxl.terrain. The ground of the map the player is on: its height, rays against it, its grid, and its vertices set to other heights, which the client then draws, walks on and collides with. Main thread only.
+---Came with abi 0.1.35: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.terrain
+local terrain = {}
+
+---The ground's height under a point, on the triangle the client walks on; nil where there is no ground (a hole, a chunk not loaded). original true: before any mod's edit.
+---@param x number
+---@param y number
+---@param original? boolean
+---@return number|nil
+---@return string|nil reason
+function terrain.Height(x, y, original) end
+
+---Whether there is ground under a point: "ground", "hole", "not_loaded" or "none" (off the map, out of the world, a map without terrain).
+---@param x number
+---@param y number
+---@return wxl.TerrainPresence|integer|nil
+---@return string|nil reason
+function terrain.Presence(x, y) end
+
+---The first point where the segment from `start` to `finish` meets the loaded ground, holes let
+---through: the point, the unit normal of the triangle met (facing up), its chunk, and how far
+---along the segment (0 to 1). nil when it meets none.
+---@param start {x: number, y: number, z: number}
+---@param finish {x: number, y: number, z: number}
+---@return {point: {x: number, y: number, z: number}, normal: {x: number, y: number, z: number}, chunk_x: integer, chunk_y: integer, fraction: number}|nil hit
+function terrain.Trace(start, finish) end
+
+---Where a point is on the grid: its chunk (column and row on the map, 0-1023), its cell in the
+---chunk (0-7, the row along world x), the chunk's vertex nearest to it (0-144), and whether the
+---chunk is loaded. nil off the map.
+---@param x number
+---@param y number
+---@return {chunk_x: integer, chunk_y: integer, cell_row: integer, cell_col: integer, nearest: integer, loaded: boolean}|nil place
+function terrain.Locate(x, y) end
+
+---The world positions of a loaded chunk's 145 vertices, in index order (index i at [i + 1]):
+---rows of 9 outer vertices, each but the last followed by a row of 8 inner ones. nil,
+---"not_found" when the chunk is not loaded. `original` true: the heights before any mod's edit.
+---@param chunk_x integer
+---@param chunk_y integer
+---@param original? boolean
+---@return {x: number, y: number, z: number}[]|nil vertices
+---@return string|nil reason
+function terrain.Vertices(chunk_x, chunk_y, original) end
+
+---Sets vertices to absolute world heights, all or none: the ground drawn, the walking, the
+---falling, the camera and the client's clicks follow. A vertex on a chunk's edge is set in
+---its neighbour too. Held by this mod until Reset, ResetAll, or until the mod is disabled,
+---reloads or unloads; kept while the chunk is away and put back when it loads; dropped with
+---the map. nil, "invalid" for an entry off the grid (logged, nothing set); nil,
+---"unsupported" out of the world or on a map without terrain.
+---@param heights {chunk_x: integer, chunk_y: integer, index: integer, height: number}[]
+---@return true|nil ok
+---@return string|nil reason
+function terrain.SetHeights(heights) end
+
+---Takes this mod's edits off a chunk (and off its edge vertices' copies in its neighbours): the
+---original heights come back, or another mod's edits where it has some. nil, "not_found" when
+---this mod has none there.
+---@param chunk_x integer
+---@param chunk_y integer
+---@return true|nil ok
+---@return string|nil reason
+function terrain.Reset(chunk_x, chunk_y) end
+
+---Takes every edit of this mod off. nil, "not_found" when it has none.
+---@return true|nil ok
+---@return string|nil reason
+function terrain.ResetAll() end
+
+---What the service holds and what its last edit cost: edited_chunks, edited_vertices, edits,
+---reapplied (chunks given their edits back as they loaded), last_vertices, last_chunks,
+---last_microseconds, max_microseconds.
+---@return {edited_chunks: integer, edited_vertices: integer, edits: integer, reapplied: integer, last_vertices: integer, last_chunks: integer, last_microseconds: integer, max_microseconds: integer}|nil stats
+---@return string|nil reason
+function terrain.Stats() end
+
+---Every vertex within `radius` yards (0 to 128) of a point, each once whichever chunks it is on:
+---its chunk and index (ready for SetHeights, which writes a vertex on a chunk's edge into every
+---chunk holding it), its place, its height now and before any edit, whether it is an inner
+---vertex, and whether its chunk is loaded (the heights are 0 when it is not). An empty list
+---off the map or for a radius out of range.
+---@param x number
+---@param y number
+---@param radius number
+---@return {chunk_x: integer, chunk_y: integer, index: integer, x: number, y: number, z: number, original_z: number, inner: boolean, loaded: boolean}[] vertices
+function terrain.VerticesIn(x, y, radius) end
+
 ---@class wxl.ModInfo
 ---@field id string
 ---@field name string
@@ -4000,6 +4099,7 @@ function object.Unwatch(type, name) end
 ---@field texture wxl.texture
 ---@field cvar wxl.cvar
 ---@field render wxl.render
+---@field terrain wxl.terrain
 ---@field events table<wxl.Family, string[]> every family's events, as On<Event>
 wxl = {}
 
