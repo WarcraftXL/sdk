@@ -18,6 +18,7 @@
 #include "wxl/services/texture.hpp"
 #include "wxl/services/cvar.hpp"
 #include "wxl/services/terrain.hpp"
+#include "wxl/services/draw.hpp"
 #include "wxl/services/gx.hpp"
 #include "wxl/services/hook.hpp"
 #include "wxl/services/input.hpp"

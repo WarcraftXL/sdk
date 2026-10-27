@@ -1316,4 +1316,35 @@ namespace wxl::lua
         const ResourceBox* box = static_cast<const ResourceBox*>(luaL_testudata(L, index, MetaName(name).c_str()));
         return box && box->open ? static_cast<wxl_handle>(box->value) : WXL_HANDLE_NONE;
     }
+
+    void PushDrawShape(lua_State* L, wxl_handle value) { PushResource<kind::Shape>(L, value); }
+
+    wxl_handle ToDrawShape(lua_State* L, int index)
+    {
+        const ResourceBox* box = static_cast<const ResourceBox*>(luaL_testudata(L, index, MetaName(kind::Shape::kName).c_str()));
+        return box && box->open ? static_cast<wxl_handle>(box->value) : WXL_HANDLE_NONE;
+    }
+
+    void CloseDrawShapes(lua_State* L)
+    {
+        PushKept(L);
+        if (!lua_istable(L, -1))
+        {
+            lua_pop(L, 1);
+            return;
+        }
+        const std::string meta = MetaName(kind::Shape::kName);
+        for (int i = static_cast<int>(lua_objlen(L, -1)); i >= 1; --i)
+        {
+            lua_rawgeti(L, -1, i);
+            ResourceBox* box = static_cast<ResourceBox*>(luaL_testudata(L, -1, meta.c_str()));
+            if (box && box->open)
+            {
+                box->open = false;
+                box->give_back(box->value);
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
 } // namespace wxl::lua

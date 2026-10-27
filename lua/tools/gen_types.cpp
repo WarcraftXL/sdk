@@ -676,6 +676,54 @@ namespace
                 return "---Gives back everything this mod changed on the game's circles.\n"
                        "function " + owner + ".ResetAll() end\n\n";
         }
+        if (std::strcmp(row.service, "draw") == 0)
+        {
+            const std::string shape =
+                "{kind: \"line\"|\"circle\"|\"ring\"|\"sector\"|\"rectangle\"|\"polygon\"|\"grid\"|\"box\"|\"sphere\"|\"cylinder\", "
+                "center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, "
+                "size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}";
+            const std::string style =
+                "{color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: \"tested\"|\"on_top\"?, pulse: number?, "
+                "fade_in: number?, fade_out: number?}";
+            const std::string about =
+                "---`shape.kind` says which fields it reads: line `points` (`closed`, `on_ground`); circle `center`, `radius`;\n"
+                "---ring and `inner`; sector and `facing`, `angle` (radians), `inner`; rectangle `center`, `size` (x along\n"
+                "---`facing`, y across); polygon `points`; grid `center`, `size`, `spacing`, `facing`; box `center`, `size`,\n"
+                "---`facing`, `pitch`, `roll`; sphere `center`, `radius`; cylinder `center`, `radius`, `size.z` (its height).\n"
+                "---Points are offsets from `center` (nil: world coordinates). Ground shapes follow the ground; `flat` keeps\n"
+                "---them at `center.z`. `style.color` 0xRRGGBB; `alpha` the lines' opacity, `fill_alpha` the inside's;\n"
+                "---`width` pixels at 1080 lines; `depth` \"tested\" (hidden behind walls) or \"on_top\"; `pulse` seconds a beat.\n";
+            if (name == "Draw")
+                return "---Draws a shape in the next frame of the world only: call it each frame for what follows the\n"
+                       "---frame. nil, \"invalid\" for a shape refused (logged under `draw`, saying why).\n" + about +
+                       "---@param shape " + shape + "\n---@param style? " + style + "\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Draw(shape, style) end\n\n";
+            if (name == "Add")
+                return "---Keeps a shape until removed (shape:Remove()), or for `duration` seconds; it goes when this mod\n"
+                       "---unloads. `style.fade_in` and `fade_out` bring it in and take it out over the end of its duration.\n" +
+                       about + "---@param shape " + shape + "\n---@param style? " + style + "\n---@param duration? number\n"
+                       "---@return wxl.Shape|nil shape\n---@return string|nil reason\n"
+                       "function " + owner + ".Add(shape, style, duration) end\n\n";
+            if (name == "Update")
+                return "---The kept shape becomes another, from a table as Draw's; it stays attached when it is.\n"
+                       "---@param self wxl.Shape\n---@param shape " + shape + "\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Update(self, shape) end\n\n";
+            if (name == "SetStyle")
+                return "---The kept shape's look, from a table as Draw's.\n"
+                       "---@param self wxl.Shape\n---@param style " + style + "\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".SetStyle(self, style) end\n\n";
+            if (name == "Clear")
+                return "---Every shape this mod keeps goes.\n"
+                       "function " + owner + ".Clear() end\n\n";
+            if (name == "Stats")
+                return "---What the last frame of the world drew and what it cost (every mod's shapes).\n"
+                       "---@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer}|nil stats\n"
+                       "---@return string|nil reason\n"
+                       "function " + owner + ".Stats() end\n\n";
+        }
         if (std::strcmp(row.service, "render") == 0)
         {
             const std::string answers = "---@return true|nil ok\n---@return string|nil reason\n";

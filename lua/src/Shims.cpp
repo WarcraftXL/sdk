@@ -39,6 +39,7 @@
 #include "wxl/services/relay.h"
 #include "wxl/services/storage.h"
 #include "wxl/services/terrain.h"
+#include "wxl/services/draw.h"
 
 namespace wxl::lua::shims
 {
@@ -3247,6 +3248,259 @@ namespace wxl::lua::shims
                 g_replaced.erase(g_replaced.begin() + static_cast<std::ptrdiff_t>(i));
             }
         }
+        // --- wxl.draw: tables into shapes and styles ---------------------------------------------
+
+        const wxl_draw_api* Draw() { return wxl::api::Table<wxl_draw_api>(); }
+
+        constexpr const char* kDrawKinds[]  = {"line", "circle", "ring", "sector", "rectangle", "polygon", "grid", "box", "sphere", "cylinder"};
+        constexpr const char* kDrawDepths[] = {"tested", "on_top"};
+
+        /// A point of a table {x, y, z} or {x, y, z} by position; false for anything else.
+        bool ReadPoint(lua_State* L, int index, wxl_vec3& out)
+        {
+            if (!lua_istable(L, index)) return false;
+            index = index < 0 ? lua_gettop(L) + index + 1 : index;
+            lua_getfield(L, index, "x");
+            if (lua_isnil(L, -1))
+            {
+                lua_pop(L, 1);
+                lua_rawgeti(L, index, 1);
+                lua_rawgeti(L, index, 2);
+                lua_rawgeti(L, index, 3);
+            }
+            else
+            {
+                lua_getfield(L, index, "y");
+                lua_getfield(L, index, "z");
+            }
+            const bool ok = lua_isnumber(L, -3) && lua_isnumber(L, -2) && (lua_isnumber(L, -1) || lua_isnil(L, -1));
+            if (ok)
+                out = wxl_vec3{static_cast<float>(lua_tonumber(L, -3)), static_cast<float>(lua_tonumber(L, -2)),
+                               static_cast<float>(lua_tonumber(L, -1))};
+            lua_pop(L, 3);
+            return ok;
+        }
+
+        /// The number in field @p name of the table at @p index, or @p otherwise when it is nil.
+        float FieldNumber(lua_State* L, int index, const char* name, float otherwise, const char* where)
+        {
+            lua_getfield(L, index, name);
+            float value = otherwise;
+            if (lua_isnumber(L, -1)) value = static_cast<float>(lua_tonumber(L, -1));
+            else if (!lua_isnil(L, -1)) luaL_error(L, "%s: '%s' must be a number", where, name);
+            lua_pop(L, 1);
+            return value;
+        }
+
+        bool FieldFlag(lua_State* L, int index, const char* name, const char* where)
+        {
+            lua_getfield(L, index, name);
+            const int type = lua_type(L, -1);
+            if (type != LUA_TNIL && type != LUA_TBOOLEAN) luaL_error(L, "%s: '%s' must be true or false", where, name);
+            const bool value = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+            return value;
+        }
+
+        /// A shape table into @p shape, its points into @p points (which the shape points into).
+        void ReadDrawShape(lua_State* L, int index, const char* where, wxl_draw_shape& shape, std::vector<wxl_vec3>& points)
+        {
+            if (!lua_istable(L, index))
+                luaL_error(L, "%s: the shape (argument %d) must be a table {kind = \"circle\", center = {x, y, z}, radius = 5, ...}", where,
+                           index);
+            shape             = wxl_draw_shape{};
+            shape.struct_size = sizeof shape;
+            lua_getfield(L, index, "kind");
+            if (lua_isnil(L, -1)) luaL_error(L, "%s: the shape has no 'kind'; it takes \"line\", \"circle\", \"ring\", \"sector\", "
+                                               "\"rectangle\", \"polygon\", \"grid\", \"box\", \"sphere\" or \"cylinder\"", where);
+            const std::string kindWhere = std::string(where) + ": the shape's 'kind'";
+            shape.kind = CheckNamed(L, lua_gettop(L), kDrawKinds, 10, 0, kindWhere.c_str());
+            lua_pop(L, 1);
+            lua_getfield(L, index, "center");
+            if (!lua_isnil(L, -1) && !ReadPoint(L, -1, shape.center))
+                luaL_error(L, "%s: the shape's 'center' must be a point {x, y, z}", where);
+            lua_pop(L, 1);
+            lua_getfield(L, index, "size");
+            if (!lua_isnil(L, -1) && !ReadPoint(L, -1, shape.size))
+                luaL_error(L, "%s: the shape's 'size' must be {x, y, z}", where);
+            lua_pop(L, 1);
+            shape.radius  = FieldNumber(L, index, "radius", 0.0f, where);
+            shape.inner   = FieldNumber(L, index, "inner", 0.0f, where);
+            shape.angle   = FieldNumber(L, index, "angle", 0.0f, where);
+            shape.facing  = FieldNumber(L, index, "facing", 0.0f, where);
+            shape.pitch   = FieldNumber(L, index, "pitch", 0.0f, where);
+            shape.roll    = FieldNumber(L, index, "roll", 0.0f, where);
+            shape.spacing = FieldNumber(L, index, "spacing", 0.0f, where);
+            // A rectangle's and a grid's sides may be given by name.
+            shape.size.x = FieldNumber(L, index, "length", shape.size.x, where);
+            shape.size.y = FieldNumber(L, index, "width", shape.size.y, where);
+            shape.size.z = FieldNumber(L, index, "height", shape.size.z, where);
+            if (FieldFlag(L, index, "flat", where)) shape.flags |= WXL_DRAW_FLAT;
+            if (FieldFlag(L, index, "on_ground", where)) shape.flags |= WXL_DRAW_ON_GROUND;
+            if (FieldFlag(L, index, "closed", where)) shape.flags |= WXL_DRAW_CLOSED;
+            lua_getfield(L, index, "points");
+            points.clear();
+            if (!lua_isnil(L, -1))
+            {
+                if (!lua_istable(L, -1)) luaL_error(L, "%s: the shape's 'points' must be a list of points {x, y, z}", where);
+                const int list  = lua_gettop(L);
+                const size_t n  = lua_objlen(L, list);
+                if (n > WXL_DRAW_MAX_POINTS)
+                    luaL_error(L, "%s: the shape has %d points, more than a shape may (%d)", where, static_cast<int>(n),
+                               static_cast<int>(WXL_DRAW_MAX_POINTS));
+                points.resize(n);
+                for (size_t i = 0; i < n; ++i)
+                {
+                    lua_rawgeti(L, list, static_cast<int>(i + 1));
+                    if (!ReadPoint(L, -1, points[i]))
+                        luaL_error(L, "%s: point %d of the shape is not a point {x, y, z}", where, static_cast<int>(i + 1));
+                    lua_pop(L, 1);
+                }
+                shape.points      = points.data();
+                shape.point_count = static_cast<uint32_t>(n);
+            }
+            lua_pop(L, 1);
+        }
+
+        /// A style table (nil: the service's default) into @p style; false for nil.
+        bool ReadDrawStyle(lua_State* L, int index, const char* where, wxl_draw_style& style)
+        {
+            style             = wxl_draw_style{};
+            style.struct_size = sizeof style;
+            style.color       = 0xFFFFFFu;
+            style.alpha       = 1.0f;
+            style.width       = 2.0f;
+            if (lua_isnoneornil(L, index)) return false;
+            if (!lua_istable(L, index))
+                luaL_error(L, "%s: the style (argument %d) must be a table {color = 0xRRGGBB, alpha, fill_alpha, width, depth, pulse}",
+                           where, index);
+            lua_getfield(L, index, "color");
+            if (lua_isnumber(L, -1))
+            {
+                const double value = lua_tonumber(L, -1);
+                if (value < 0.0 || value > 16777215.0) luaL_error(L, "%s: the style's 'color' must be 0xRRGGBB", where);
+                style.color = static_cast<uint32_t>(value);
+            }
+            else if (!lua_isnil(L, -1)) luaL_error(L, "%s: the style's 'color' must be a number 0xRRGGBB", where);
+            lua_pop(L, 1);
+            style.alpha      = FieldNumber(L, index, "alpha", 1.0f, where);
+            style.fill_alpha = FieldNumber(L, index, "fill_alpha", 0.0f, where);
+            style.width      = FieldNumber(L, index, "width", 2.0f, where);
+            style.pulse      = FieldNumber(L, index, "pulse", 0.0f, where);
+            style.fade_in    = FieldNumber(L, index, "fade_in", 0.0f, where);
+            style.fade_out   = FieldNumber(L, index, "fade_out", 0.0f, where);
+            lua_getfield(L, index, "depth");
+            if (!lua_isnil(L, -1))
+            {
+                const std::string depthWhere = std::string(where) + ": the style's 'depth'";
+                style.depth = CheckNamed(L, lua_gettop(L), kDrawDepths, 2, 0, depthWhere.c_str());
+            }
+            lua_pop(L, 1);
+            return true;
+        }
+
+        int L_DrawDraw(lua_State* L)
+        {
+            wxl_draw_shape        shape{};
+            wxl_draw_style        style{};
+            std::vector<wxl_vec3> points;
+            ReadDrawShape(L, 1, "wxl.draw.Draw", shape, points);
+            const bool          styled = ReadDrawStyle(L, 2, "wxl.draw.Draw", style);
+            const wxl_draw_api* api    = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::draw)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->draw(&shape, styled ? &style : nullptr);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_DrawAdd(lua_State* L)
+        {
+            wxl_draw_shape        shape{};
+            wxl_draw_style        style{};
+            std::vector<wxl_vec3> points;
+            ReadDrawShape(L, 1, "wxl.draw.Add", shape, points);
+            const bool styled = ReadDrawStyle(L, 2, "wxl.draw.Add", style);
+            float      duration = 0.0f;
+            if (!lua_isnoneornil(L, 3))
+            {
+                if (!lua_isnumber(L, 3)) luaL_error(L, "wxl.draw.Add: 'duration' (argument 3) must be seconds, or nil to keep it until removed");
+                duration = static_cast<float>(lua_tonumber(L, 3));
+            }
+            const wxl_draw_api* api = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::add)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_handle made = api->add(&shape, styled ? &style : nullptr, duration);
+            if (made == WXL_HANDLE_NONE) return PushResultFailure(L, WXL_E_INVALID);
+            PushDrawShape(L, made);
+            return 1;
+        }
+
+        wxl_handle CheckDrawShape(lua_State* L, const char* where)
+        {
+            const wxl_handle handle = ToDrawShape(L, 1);
+            if (handle == WXL_HANDLE_NONE) luaL_error(L, "%s: 'self' (argument 1) must be a Shape wxl.draw.Add answered, not removed", where);
+            return handle;
+        }
+
+        int L_DrawUpdate(lua_State* L)
+        {
+            const wxl_handle      handle = CheckDrawShape(L, "wxl.draw.Update");
+            wxl_draw_shape        shape{};
+            std::vector<wxl_vec3> points;
+            ReadDrawShape(L, 2, "wxl.draw.Update", shape, points);
+            const wxl_draw_api* api = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::update)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->update(handle, &shape);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_DrawSetStyle(lua_State* L)
+        {
+            const wxl_handle handle = CheckDrawShape(L, "wxl.draw.SetStyle");
+            wxl_draw_style   style{};
+            const bool       styled = ReadDrawStyle(L, 2, "wxl.draw.SetStyle", style);
+            const wxl_draw_api* api = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::set_style)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set_style(handle, styled ? &style : nullptr);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_DrawClear(lua_State* L)
+        {
+            CloseDrawShapes(L);
+            return 0;
+        }
+
+        int L_DrawStats(lua_State* L)
+        {
+            const wxl_draw_api* api = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::stats)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_draw_stats stats{};
+            stats.struct_size       = sizeof stats;
+            const wxl_result result = api->stats(&stats);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_createtable(L, 0, 10);
+            const auto field = [&](const char* name, double value) {
+                lua_pushnumber(L, value);
+                lua_setfield(L, -2, name);
+            };
+            field("shapes", stats.shapes);
+            field("immediate", stats.immediate);
+            field("drawn", stats.drawn);
+            field("vertices", stats.vertices);
+            field("left_out", stats.left_out);
+            field("rebuilt", stats.rebuilt);
+            field("build_microseconds", stats.build_microseconds);
+            field("max_build_microseconds", stats.max_build_microseconds);
+            field("immediate_microseconds", stats.immediate_microseconds);
+            field("frames", stats.frames);
+            return 1;
+        }
+
     } // namespace
 
     lua_CFunction Find(std::string_view service, std::string_view name)
@@ -3303,6 +3557,12 @@ namespace wxl::lua::shims
         if (service == "terrain" && name == "ResetAll") return &L_TerrainResetAll;
         if (service == "terrain" && name == "Stats") return &L_TerrainStats;
         if (service == "cvar" && name == "Release") return &L_CVarRelease;
+        if (service == "draw" && name == "Draw") return &L_DrawDraw;
+        if (service == "draw" && name == "Add") return &L_DrawAdd;
+        if (service == "draw" && name == "Update") return &L_DrawUpdate;
+        if (service == "draw" && name == "SetStyle") return &L_DrawSetStyle;
+        if (service == "draw" && name == "Clear") return &L_DrawClear;
+        if (service == "draw" && name == "Stats") return &L_DrawStats;
         if (service == "render" && name == "CreatePipeline") return &L_RenderCreatePipeline;
         if (service == "render" && name == "Begin") return &L_RenderBegin;
         if (service == "render" && name == "Draw") return &L_RenderDraw;

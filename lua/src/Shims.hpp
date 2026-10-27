@@ -83,6 +83,9 @@
 //                                                       its going take off alone
 //   wxl.terrain.Trace, .Locate, .Vertices,              answer a table
 //              .VerticesIn, .Stats
+//   wxl.draw.Draw(shape, style), .Add(shape, style,     read a shape and a style from tables; Add
+//            duration), .Update(s, shape),              answers a wxl.Shape kept until the Lua mod
+//            .SetStyle(s, style), .Clear(), .Stats()    goes, Clear gives back this mod's alone
 //
 // wxl.texture's take a table and answer several values; nothing is kept for the mod:
 //

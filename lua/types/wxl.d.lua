@@ -1314,6 +1314,14 @@
 ---arrives as its number.
 ---@alias wxl.TerrainPresence "none"|"ground"|"hole"|"not_loaded"
 
+---A wxl_draw_kind value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.DrawKind "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder"
+
+---A wxl_draw_depth value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.DrawDepth "tested"|"on_top"
+
 -- The script families. A function defined on one of these tables as On<Event> is
 -- subscribed when the entry file has run and called with the event's parameters;
 -- on an event that can be answered its return values are taken, as Override
@@ -2724,6 +2732,38 @@ function Pipeline:DestroyPipeline() end
 ---@return string|nil reason
 function Pipeline:PipelineReady() end
 
+---A Shape of wxl.draw.
+---@class wxl.Shape
+local Shape = {}
+
+---The kept shape's center (a line's or a polygon's points are offsets from it) and facing in radians.
+---@param center wxl.Vec3
+---@param facing number
+---@return true|nil ok
+---@return string|nil reason
+function Shape:Move(center, facing) end
+
+---The kept shape goes in seconds from now, after its fade-out; 0: when removed.
+---@param seconds number
+---@return true|nil ok
+---@return string|nil reason
+function Shape:SetDuration(seconds) end
+
+---The kept shape follows a world object: its center and points become offsets from the object's position, turned with its facing when flags is 1 (ATTACH_TURN; 0 or nil: not turned). It goes when the object leaves view.
+---@param target wxl.Object
+---@param flags? integer 0 when left out
+---@return true|nil ok
+---@return string|nil reason
+function Shape:Attach(target, flags) end
+
+---The kept shape stays where it is now, in world coordinates.
+---@return true|nil ok
+---@return string|nil reason
+function Shape:Detach() end
+
+---The kept shape goes now; a Lua mod's go when it unloads.
+function Shape:Remove() end
+
 ---wxl.script. The client's own script: functions and events added to it, text run in it.
 ---@class wxl.script
 local script = {}
@@ -4015,6 +4055,74 @@ function terrain.Stats() end
 ---@return {chunk_x: integer, chunk_y: integer, index: integer, x: number, y: number, z: number, original_z: number, inner: boolean, loaded: boolean}[] vertices
 function terrain.VerticesIn(x, y, radius) end
 
+---wxl.draw. Shapes drawn in the world: lines, shapes lying on the ground, volumes; for a frame, or kept, or following an object. Main thread only.
+---Came with abi 0.1.36: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.draw
+local draw = {}
+
+---Whether this runtime draws shapes on the device it runs now.
+---@return boolean|nil
+---@return string|nil reason
+function draw.Supported() end
+
+---Why shapes are not drawn, in a sentence for a log; empty when they are.
+---@return string|nil
+---@return string|nil reason
+function draw.UnsupportedReason() end
+
+---Draws a shape in the next frame of the world only: call it each frame for what follows the
+---frame. nil, "invalid" for a shape refused (logged under `draw`, saying why).
+---`shape.kind` says which fields it reads: line `points` (`closed`, `on_ground`); circle `center`, `radius`;
+---ring and `inner`; sector and `facing`, `angle` (radians), `inner`; rectangle `center`, `size` (x along
+---`facing`, y across); polygon `points`; grid `center`, `size`, `spacing`, `facing`; box `center`, `size`,
+---`facing`, `pitch`, `roll`; sphere `center`, `radius`; cylinder `center`, `radius`, `size.z` (its height).
+---Points are offsets from `center` (nil: world coordinates). Ground shapes follow the ground; `flat` keeps
+---them at `center.z`. `style.color` 0xRRGGBB; `alpha` the lines' opacity, `fill_alpha` the inside's;
+---`width` pixels at 1080 lines; `depth` "tested" (hidden behind walls) or "on_top"; `pulse` seconds a beat.
+---@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder", center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
+---@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?}
+---@return true|nil ok
+---@return string|nil reason
+function draw.Draw(shape, style) end
+
+---Keeps a shape until removed (shape:Remove()), or for `duration` seconds; it goes when this mod
+---unloads. `style.fade_in` and `fade_out` bring it in and take it out over the end of its duration.
+---`shape.kind` says which fields it reads: line `points` (`closed`, `on_ground`); circle `center`, `radius`;
+---ring and `inner`; sector and `facing`, `angle` (radians), `inner`; rectangle `center`, `size` (x along
+---`facing`, y across); polygon `points`; grid `center`, `size`, `spacing`, `facing`; box `center`, `size`,
+---`facing`, `pitch`, `roll`; sphere `center`, `radius`; cylinder `center`, `radius`, `size.z` (its height).
+---Points are offsets from `center` (nil: world coordinates). Ground shapes follow the ground; `flat` keeps
+---them at `center.z`. `style.color` 0xRRGGBB; `alpha` the lines' opacity, `fill_alpha` the inside's;
+---`width` pixels at 1080 lines; `depth` "tested" (hidden behind walls) or "on_top"; `pulse` seconds a beat.
+---@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder", center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
+---@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?}
+---@param duration? number
+---@return wxl.Shape|nil shape
+---@return string|nil reason
+function draw.Add(shape, style, duration) end
+
+---The kept shape becomes another, from a table as Draw's; it stays attached when it is.
+---@param self wxl.Shape
+---@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder", center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
+---@return true|nil ok
+---@return string|nil reason
+function draw.Update(self, shape) end
+
+---The kept shape's look, from a table as Draw's.
+---@param self wxl.Shape
+---@param style {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?}
+---@return true|nil ok
+---@return string|nil reason
+function draw.SetStyle(self, style) end
+
+---Every shape this mod keeps goes.
+function draw.Clear() end
+
+---What the last frame of the world drew and what it cost (every mod's shapes).
+---@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer}|nil stats
+---@return string|nil reason
+function draw.Stats() end
+
 ---@class wxl.ModInfo
 ---@field id string
 ---@field name string
@@ -4100,6 +4208,7 @@ function object.Unwatch(type, name) end
 ---@field cvar wxl.cvar
 ---@field render wxl.render
 ---@field terrain wxl.terrain
+---@field draw wxl.draw
 ---@field events table<wxl.Family, string[]> every family's events, as On<Event>
 wxl = {}
 

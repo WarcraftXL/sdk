@@ -32,3 +32,4 @@
 #include "wxl/services/render.def"
 #include "wxl/services/vk.def"
 #include "wxl/services/terrain.def"
+#include "wxl/services/draw.def"

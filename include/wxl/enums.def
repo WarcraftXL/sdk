@@ -382,6 +382,26 @@ WXL_ENUM_VALUE(wxl_terrain_presence, WXL_TERRAIN_HOLE,       2, hole)       ///<
 WXL_ENUM_VALUE(wxl_terrain_presence, WXL_TERRAIN_NOT_LOADED, 3, not_loaded) ///< the chunk there is not loaded: too far, or still being read
 WXL_ENUM_END(wxl_terrain_presence)
 
+/// What wxl.draw draws (wxl_draw_shape.kind).
+WXL_ENUM(wxl_draw_kind)
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_LINE,      0, line)      ///< a polyline through points
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_CIRCLE,    1, circle)    ///< on the ground: a disc
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_RING,      2, ring)      ///< on the ground: a disc with a hole
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_SECTOR,    3, sector)    ///< on the ground: a cone or an arc of a ring
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_RECTANGLE, 4, rectangle) ///< on the ground: a rectangle turned to a facing
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_POLYGON,   5, polygon)   ///< on the ground: the inside of points
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_GRID,      6, grid)      ///< on the ground: lines every spacing yards over a rectangle
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_BOX,       7, box)       ///< a volume: a box turned to a facing, a pitch and a roll
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_SPHERE,    8, sphere)    ///< a volume: a ball
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_CYLINDER,  9, cylinder)  ///< a volume: an upright cylinder, turned as a box
+WXL_ENUM_END(wxl_draw_kind)
+
+/// Whether a wxl.draw shape is hidden by what stands in front of it.
+WXL_ENUM(wxl_draw_depth)
+WXL_ENUM_VALUE(wxl_draw_depth, WXL_DRAW_DEPTH_TESTED, 0, tested) ///< walls, units and the ground hide it
+WXL_ENUM_VALUE(wxl_draw_depth, WXL_DRAW_DEPTH_ON_TOP, 1, on_top) ///< drawn over everything of the world
+WXL_ENUM_END(wxl_draw_depth)
+
 #ifdef WXL_ENUM_DEFAULTED
     #undef WXL_ENUM
     #undef WXL_ENUM_DEFAULTED

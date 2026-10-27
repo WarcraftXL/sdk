@@ -53,6 +53,16 @@ namespace wxl::lua
     /// The handle of the box of that kind at @p index; WXL_HANDLE_NONE for anything else, or one
     /// given back already.
     wxl_handle ToRenderResource(lua_State* L, int index, RenderResource kind);
+
+    /// Pushes a wxl.Shape box holding @p value (wxl.draw), kept until the state unloads.
+    void PushDrawShape(lua_State* L, wxl_handle value);
+
+    /// The handle of the wxl.Shape box at @p index; WXL_HANDLE_NONE for anything else, or one
+    /// given back already.
+    wxl_handle ToDrawShape(lua_State* L, int index);
+
+    /// Gives back every wxl.Shape the state still holds.
+    void CloseDrawShapes(lua_State* L);
 } // namespace wxl::lua
 
 #endif // WXL_LUA_SERVICES_HPP
