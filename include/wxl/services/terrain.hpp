@@ -88,7 +88,8 @@ namespace wxl
 
         /// The calling mod's tile provider (abi 0.1.45): @p fn is asked for a tile's split files
         /// when the client has read a root ADT without MCIN; null takes it off.
-        static wxl_result SetTileProvider(wxl_terrain_tile_fn fn, void* user = nullptr)
+        /// @p name_fn (abi 0.1.46): names files by FileDataID, or null.
+        static wxl_result SetTileProvider(wxl_terrain_tile_fn fn, void* user = nullptr, wxl_terrain_name_fn name_fn = nullptr)
         {
             const wxl_terrain_api* api = Raw();
             if (!detail::Carries(api, &wxl_terrain_api::set_tile_provider)) return WXL_E_UNSUPPORTED;
@@ -97,6 +98,7 @@ namespace wxl
             provider.struct_size = sizeof provider;
             provider.fn          = fn;
             provider.user        = user;
+            provider.name_fn     = name_fn;
             return api->set_tile_provider(&provider);
         }
 

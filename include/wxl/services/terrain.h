@@ -100,6 +100,15 @@
 // with its ground, liquids and sounds, untextured and without placements. Tiles with MCIN load as
 // the client loads them.
 //
+// Since abi 0.1.46 a tile provider may also name files by FileDataID (its name_fn): 8.1 and later
+// name a tile's textures by FileDataID in _tex0 (MDID in place of MTEX) and some placements' models
+// in _obj0 (MDDF flag 0x40, MODF flag 0x8: nameId is a FileDataID). The runtime asks for each such
+// id of a tile it loads and hands the client the names: the textures in MDID's order, a placement
+// by FileDataID given its model's name as a placement by name. An id no provider names is left
+// out as above (a layer of that texture, a placement of that model). A placement whose model the
+// client cannot read (an M2 of magic MD21 or past version 264, a WMO root past 17) is left out on
+// any tile, whatever names it.
+//
 // --- Editing ----------------------------------------------------------------------------------
 //
 //   set_heights  sets vertices to absolute heights, many at once
@@ -377,12 +386,19 @@ typedef struct wxl_terrain_tile_files
 /// provider is set; it fills @p out. The first provider that answers a file gives it.
 typedef void(WXL_CALL* wxl_terrain_tile_fn)(void* user, const wxl_terrain_tile* tile, wxl_terrain_tile_files* out);
 
+/// Called on the main thread for a FileDataID a tile being loaded names (abi 0.1.46): writes the
+/// file's name as the client's archives hold it ("tileset\\elwynn\\grass.blp"), NUL-terminated, into
+/// @p out of @p capacity bytes, and answers WXL_TRUE; WXL_FALSE for an id it does not know.
+typedef wxl_bool(WXL_CALL* wxl_terrain_name_fn)(void* user, uint32_t file_id, char* out, uint32_t capacity);
+
 /// What set_tile_provider takes.
 typedef struct wxl_terrain_tile_provider
 {
     uint32_t            struct_size;
     wxl_terrain_tile_fn fn;
     void*               user;
+    // --- abi 0.1.46 (read when struct_size reaches past it)
+    wxl_terrain_name_fn name_fn; ///< names files by FileDataID; null for none
 } wxl_terrain_tile_provider;
 
 typedef struct wxl_terrain_api
