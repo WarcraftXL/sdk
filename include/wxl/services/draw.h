@@ -57,6 +57,38 @@
 // and take it out over the end of its duration. A null style is white lines 2 pixels wide, no
 // fill, tested against depth.
 //
+// From abi 0.1.38 a style goes on past `fade_out` (an older runtime reads the first part only, and
+// a struct_size that stops at `fade_out` is the look above). Every field after it left at 0
+// changes nothing.
+//
+// Lines. `softness` (pixels at 1080 lines) fades a line's edges over that many pixels, its width
+// measured where it is half seen. Under WXL_DRAW_STYLE_LINE_ALPHA, a line's opacity goes from
+// `alpha_start` at its first point to `alpha_end` at its last, along its length; a shape's
+// `point_alphas` set it point by point (both multiply `alpha`). `shadow_alpha` > 0 draws a shadow
+// under the shape's lines, in `shadow_color`, moved `shadow_x` pixels to the right and `shadow_y`
+// pixels down (1.5 and 1.5 sit like the game's text shadows; -15 to 15), as a stroke
+// `shadow_softness` pixels wider than the line whose edges fade over as many pixels: the shape's
+// lines drawn once more, under every line of the frame.
+//
+// The inside of a ground shape (circle, ring, sector, rectangle, polygon, grid). `texture` names a
+// texture the client loads as it loads its own: a BLP of the game's archives, a file a mod serves,
+// or the path wxl.texture answers, with its `right` and `bottom` as `texture_right` and
+// `texture_bottom` (the part of the texture its picture fills; 0 for 1). The inside is drawn once
+// the texture has loaded and left out until then; a texture no shape uses is let go of a few
+// seconds later. The picture is multiplied by `fill_color` under WXL_DRAW_STYLE_FILL_COLOR (by
+// `color` otherwise) and by `fill_alpha`. `uv` (wxl_draw_uv) lays it on the ground: FIT once over
+// the shape's bounds, TILE repeated in the same frame, both turned with the shape's facing (the
+// picture's top towards it); WORLD in the world's own frame, its top to the north whatever the
+// shape, so that shapes side by side join. `uv_size_x` and `uv_size_y` are one picture's size: a
+// part of the bounds for FIT and TILE (0.5: twice across), yards for WORLD (0: 1). `uv_rotation`
+// turns the picture (radians, counter-clockwise seen from above) and `uv_offset_x`, `uv_offset_y`
+// move it, in pictures. `blend` (wxl_draw_blend) puts the inside on the ground: ALPHA over it, ADD
+// as light, MODULATE multiplied into it (a stain, a scorch, a mark scored into the dirt: white
+// leaves the ground as it is, the picture's colour darkens it, and the opacity says how much).
+// `feather` (yards) fades the inside out towards its border, `radial_fade` (0 to 1) from the centre
+// outwards over that part of the radius (1: from the centre itself). Any of these on a shape with
+// no texture draws its plain inside so. Volumes ignore them.
+//
 // --- Lifetimes ---------------------------------------------------------------------------------
 //
 // `draw` is immediate mode: the shape is drawn in the next frame of the world and then forgotten
@@ -120,11 +152,21 @@
 #define WXL_DRAW_MAX_FRAME_VERTICES 524288u
 /// The widest line, in pixels at 1080 lines.
 #define WXL_DRAW_MAX_WIDTH 31.0f
+/// The softest line edge and shadow, in pixels at 1080 lines.
+#define WXL_DRAW_MAX_SOFTNESS 15.0f
+/// The farthest a shadow is moved, in pixels at 1080 lines, either way.
+#define WXL_DRAW_MAX_SHADOW_OFFSET 15.0f
+/// The longest texture path, its terminating zero included.
+#define WXL_DRAW_MAX_TEXTURE_PATH 260u
 
 /// wxl_draw_shape.flags.
 #define WXL_DRAW_FLAT      0x1u ///< a ground shape lies flat at center.z, wherever the ground is
 #define WXL_DRAW_ON_GROUND 0x2u ///< a line lies on the ground (its points' z where there is none)
 #define WXL_DRAW_CLOSED    0x4u ///< a line joins its last point to its first
+
+/// wxl_draw_style.flags.
+#define WXL_DRAW_STYLE_FILL_COLOR 0x1u ///< the inside is drawn in fill_color, not color
+#define WXL_DRAW_STYLE_LINE_ALPHA 0x2u ///< a line's opacity goes from alpha_start to alpha_end along it
 
 /// attach's flags.
 #define WXL_DRAW_ATTACH_TURN 0x1u ///< offsets turn with the object's facing (and a shape's facing adds to it)
@@ -150,7 +192,12 @@ typedef struct wxl_draw_shape
     float           spacing;     ///< grid: yards between two lines
     const wxl_vec3* points;      ///< line, polygon: offsets from center
     uint32_t        point_count;
+    // abi 0.1.38
+    const float*    point_alphas; ///< line: an opacity per point (0 to 1) multiplying the style's; null for none
 } wxl_draw_shape;
+
+/// The size of a wxl_draw_shape before abi 0.1.38, which a runtime still takes.
+#define WXL_DRAW_SHAPE_SIZE_0136 ((uint32_t)offsetof(wxl_draw_shape, point_alphas))
 
 /// How a shape looks.
 typedef struct wxl_draw_style
@@ -164,7 +211,33 @@ typedef struct wxl_draw_style
     float    pulse;      ///< seconds a beat of the opacity; 0 for none
     float    fade_in;    ///< seconds, after add
     float    fade_out;   ///< seconds, at the end of a duration
+    // abi 0.1.38: every field left at 0 changes nothing
+    uint32_t    flags;           ///< WXL_DRAW_STYLE_FILL_COLOR, WXL_DRAW_STYLE_LINE_ALPHA
+    uint32_t    fill_color;      ///< 0xRRGGBB of the inside, under WXL_DRAW_STYLE_FILL_COLOR
+    float       softness;        ///< pixels at 1080 lines over which the lines' edges fade, 0 to WXL_DRAW_MAX_SOFTNESS
+    float       alpha_start;     ///< a line's opacity at its first point, under WXL_DRAW_STYLE_LINE_ALPHA
+    float       alpha_end;       ///< and at its last
+    uint32_t    shadow_color;    ///< 0xRRGGBB
+    float       shadow_alpha;    ///< the shadow's opacity, 0 to 1; 0 for none
+    float       shadow_x;        ///< pixels at 1080 lines to the right, -15 to 15
+    float       shadow_y;        ///< pixels at 1080 lines down, -15 to 15
+    float       shadow_softness; ///< pixels: the shadow's stroke this much wider, its edges fading over as many
+    const char* texture;         ///< the inside's texture, a path the client loads; null or "" for none
+    float       texture_right;   ///< the part of the texture its picture fills across, 0 to 1 (0: 1)
+    float       texture_bottom;  ///< and down
+    uint32_t    uv;              ///< wxl_draw_uv
+    float       uv_size_x;       ///< one picture's width: of the bounds (FIT, TILE) or yards (WORLD); 0: 1
+    float       uv_size_y;       ///< and its height
+    float       uv_rotation;     ///< radians, counter-clockwise seen from above
+    float       uv_offset_x;     ///< in pictures
+    float       uv_offset_y;
+    uint32_t    blend;           ///< wxl_draw_blend: how the inside goes onto the ground
+    float       feather;         ///< yards over which the inside fades out towards its border; 0 for none
+    float       radial_fade;     ///< 0 to 1: the part of the radius over which the inside fades out; 0 for none
 } wxl_draw_style;
+
+/// The size of a wxl_draw_style before abi 0.1.38, which a runtime still takes.
+#define WXL_DRAW_STYLE_SIZE_0136 ((uint32_t)offsetof(wxl_draw_style, flags))
 
 /// What the runtime drew in the last frame of the world, and what it cost.
 typedef struct wxl_draw_stats
@@ -180,6 +253,11 @@ typedef struct wxl_draw_stats
     float    max_build_microseconds; ///< the most a frame took since the client started
     float    immediate_microseconds; ///< of the last frame's mods, the time their draw calls took
     uint32_t frames;           ///< frames of the world drawn with shapes
+    // abi 0.1.38
+    uint32_t textured;         ///< insides the last frame drew with a texture, a feather, a fade or a blend
+    uint32_t textures;         ///< textures held for shapes, loaded or not
+    uint32_t textures_loading; ///< of those, still loading
+    uint32_t shadows;          ///< shapes whose lines the last frame drew a shadow under
 } wxl_draw_stats;
 
 typedef struct wxl_draw_api

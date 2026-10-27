@@ -411,6 +411,20 @@ WXL_ENUM_VALUE(wxl_animation_end, WXL_ANIMATION_END_REPLACED,    3, replaced)   
 WXL_ENUM_VALUE(wxl_animation_end, WXL_ANIMATION_END_GONE,        4, gone)        ///< the unit left view, or the world was left
 WXL_ENUM_END(wxl_animation_end)
 
+/// How a wxl.draw ground shape's texture is laid on the ground (wxl_draw_style.uv).
+WXL_ENUM(wxl_draw_uv)
+WXL_ENUM_VALUE(wxl_draw_uv, WXL_DRAW_UV_FIT,   0, fit)   ///< once over the shape's bounds, turned with its facing
+WXL_ENUM_VALUE(wxl_draw_uv, WXL_DRAW_UV_TILE,  1, tile)  ///< repeated in the shape's frame, turned with its facing
+WXL_ENUM_VALUE(wxl_draw_uv, WXL_DRAW_UV_WORLD, 2, world) ///< repeated in the world's frame, its top to the north
+WXL_ENUM_END(wxl_draw_uv)
+
+/// How a wxl.draw ground shape's inside goes onto the ground (wxl_draw_style.blend).
+WXL_ENUM(wxl_draw_blend)
+WXL_ENUM_VALUE(wxl_draw_blend, WXL_DRAW_BLEND_ALPHA,    0, alpha)    ///< over it, by its opacity
+WXL_ENUM_VALUE(wxl_draw_blend, WXL_DRAW_BLEND_ADD,      1, add)      ///< added to it, as light
+WXL_ENUM_VALUE(wxl_draw_blend, WXL_DRAW_BLEND_MODULATE, 2, modulate) ///< multiplied into it, darkening it as a stain
+WXL_ENUM_END(wxl_draw_blend)
+
 #ifdef WXL_ENUM_DEFAULTED
     #undef WXL_ENUM
     #undef WXL_ENUM_DEFAULTED

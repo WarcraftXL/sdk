@@ -1326,6 +1326,14 @@
 ---arrives as its number.
 ---@alias wxl.AnimationEnd "finished"|"interrupted"|"stopped"|"replaced"|"gone"
 
+---A wxl_draw_uv value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.DrawUv "fit"|"tile"|"world"
+
+---A wxl_draw_blend value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.DrawBlend "alpha"|"add"|"modulate"
+
 -- The script families. A function defined on one of these tables as On<Event> is
 -- subscribed when the entry file has run and called with the event's parameters;
 -- on an event that can be answered its return values are taken, as Override
@@ -4085,8 +4093,15 @@ function draw.UnsupportedReason() end
 ---Points are offsets from `center` (nil: world coordinates). Ground shapes follow the ground; `flat` keeps
 ---them at `center.z`. `style.color` 0xRRGGBB; `alpha` the lines' opacity, `fill_alpha` the inside's;
 ---`width` pixels at 1080 lines; `depth` "tested" (hidden behind walls) or "on_top"; `pulse` seconds a beat.
----@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder", center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
----@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?}
+---Since abi 0.1.38: `softness` fades the lines' edges (pixels); `alpha_start`, `alpha_end` (and the shape's
+---`alphas`, one per point) fade a line along its length; `shadow_alpha` draws a shadow under the lines
+---(`shadow_color`, `shadow_offset` {x, y} pixels right and down, 1.5 by default, `shadow_softness`).
+---A ground shape's inside takes a `texture` (a BLP path, or {path, right, bottom} as wxl.texture.Make
+---answers), laid by `uv` "fit", "tile" or "world" (`uv_size`, `uv_rotation`, `uv_offset`), tinted by
+---`fill_color` (or `color`) and `fill_alpha`, put on the ground by `blend` "alpha", "add" or "modulate",
+---faded at its border over `feather` yards and from its centre by `radial_fade` (0 to 1).
+---@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder", center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
+---@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?}
 ---@return true|nil ok
 ---@return string|nil reason
 function draw.Draw(shape, style) end
@@ -4100,8 +4115,15 @@ function draw.Draw(shape, style) end
 ---Points are offsets from `center` (nil: world coordinates). Ground shapes follow the ground; `flat` keeps
 ---them at `center.z`. `style.color` 0xRRGGBB; `alpha` the lines' opacity, `fill_alpha` the inside's;
 ---`width` pixels at 1080 lines; `depth` "tested" (hidden behind walls) or "on_top"; `pulse` seconds a beat.
----@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder", center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
----@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?}
+---Since abi 0.1.38: `softness` fades the lines' edges (pixels); `alpha_start`, `alpha_end` (and the shape's
+---`alphas`, one per point) fade a line along its length; `shadow_alpha` draws a shadow under the lines
+---(`shadow_color`, `shadow_offset` {x, y} pixels right and down, 1.5 by default, `shadow_softness`).
+---A ground shape's inside takes a `texture` (a BLP path, or {path, right, bottom} as wxl.texture.Make
+---answers), laid by `uv` "fit", "tile" or "world" (`uv_size`, `uv_rotation`, `uv_offset`), tinted by
+---`fill_color` (or `color`) and `fill_alpha`, put on the ground by `blend` "alpha", "add" or "modulate",
+---faded at its border over `feather` yards and from its centre by `radial_fade` (0 to 1).
+---@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder", center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
+---@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?}
 ---@param duration? number
 ---@return wxl.Shape|nil shape
 ---@return string|nil reason
@@ -4109,14 +4131,14 @@ function draw.Add(shape, style, duration) end
 
 ---The kept shape becomes another, from a table as Draw's; it stays attached when it is.
 ---@param self wxl.Shape
----@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder", center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
+---@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder", center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
 ---@return true|nil ok
 ---@return string|nil reason
 function draw.Update(self, shape) end
 
 ---The kept shape's look, from a table as Draw's.
 ---@param self wxl.Shape
----@param style {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?}
+---@param style {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?}
 ---@return true|nil ok
 ---@return string|nil reason
 function draw.SetStyle(self, style) end
@@ -4125,7 +4147,7 @@ function draw.SetStyle(self, style) end
 function draw.Clear() end
 
 ---What the last frame of the world drew and what it cost (every mod's shapes).
----@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer}|nil stats
+---@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer, textured: integer, textures: integer, textures_loading: integer, shadows: integer}|nil stats
 ---@return string|nil reason
 function draw.Stats() end
 

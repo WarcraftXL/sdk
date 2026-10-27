@@ -3,7 +3,7 @@
   "id": "wxl.probe",
   "name": "Probe",
   "version": "1.0.0",
-  "abi": "0.1.37",
+  "abi": "0.1.38",
   "description": "A Lua test tool: it listens to every event the runtime raises and writes into the log what it saw, how often, and the marks you set with /mark, so that a test session can be read back from the log alone.",
   "lua": "init.lua",
   "optional": [

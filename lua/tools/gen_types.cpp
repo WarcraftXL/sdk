@@ -700,10 +700,14 @@ namespace
             const std::string shape =
                 "{kind: \"line\"|\"circle\"|\"ring\"|\"sector\"|\"rectangle\"|\"polygon\"|\"grid\"|\"box\"|\"sphere\"|\"cylinder\", "
                 "center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, "
-                "size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}";
+                "size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}";
             const std::string style =
                 "{color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: \"tested\"|\"on_top\"?, pulse: number?, "
-                "fade_in: number?, fade_out: number?}";
+                "fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, "
+                "shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, "
+                "texture: string|table?, texture_right: number?, texture_bottom: number?, uv: \"fit\"|\"tile\"|\"world\"?, "
+                "uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, "
+                "blend: \"alpha\"|\"add\"|\"modulate\"?, feather: number?, radial_fade: number?}";
             const std::string about =
                 "---`shape.kind` says which fields it reads: line `points` (`closed`, `on_ground`); circle `center`, `radius`;\n"
                 "---ring and `inner`; sector and `facing`, `angle` (radians), `inner`; rectangle `center`, `size` (x along\n"
@@ -711,7 +715,14 @@ namespace
                 "---`facing`, `pitch`, `roll`; sphere `center`, `radius`; cylinder `center`, `radius`, `size.z` (its height).\n"
                 "---Points are offsets from `center` (nil: world coordinates). Ground shapes follow the ground; `flat` keeps\n"
                 "---them at `center.z`. `style.color` 0xRRGGBB; `alpha` the lines' opacity, `fill_alpha` the inside's;\n"
-                "---`width` pixels at 1080 lines; `depth` \"tested\" (hidden behind walls) or \"on_top\"; `pulse` seconds a beat.\n";
+                "---`width` pixels at 1080 lines; `depth` \"tested\" (hidden behind walls) or \"on_top\"; `pulse` seconds a beat.\n"
+                "---Since abi 0.1.38: `softness` fades the lines' edges (pixels); `alpha_start`, `alpha_end` (and the shape's\n"
+                "---`alphas`, one per point) fade a line along its length; `shadow_alpha` draws a shadow under the lines\n"
+                "---(`shadow_color`, `shadow_offset` {x, y} pixels right and down, 1.5 by default, `shadow_softness`).\n"
+                "---A ground shape's inside takes a `texture` (a BLP path, or {path, right, bottom} as wxl.texture.Make\n"
+                "---answers), laid by `uv` \"fit\", \"tile\" or \"world\" (`uv_size`, `uv_rotation`, `uv_offset`), tinted by\n"
+                "---`fill_color` (or `color`) and `fill_alpha`, put on the ground by `blend` \"alpha\", \"add\" or \"modulate\",\n"
+                "---faded at its border over `feather` yards and from its centre by `radial_fade` (0 to 1).\n";
             if (name == "Draw")
                 return "---Draws a shape in the next frame of the world only: call it each frame for what follows the\n"
                        "---frame. nil, \"invalid\" for a shape refused (logged under `draw`, saying why).\n" + about +
@@ -739,7 +750,7 @@ namespace
                        "function " + owner + ".Clear() end\n\n";
             if (name == "Stats")
                 return "---What the last frame of the world drew and what it cost (every mod's shapes).\n"
-                       "---@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer}|nil stats\n"
+                       "---@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer, textured: integer, textures: integer, textures_loading: integer, shadows: integer}|nil stats\n"
                        "---@return string|nil reason\n"
                        "function " + owner + ".Stats() end\n\n";
         }

@@ -18,7 +18,7 @@ WXL_API(draw, supported, Supported, boolean, (), generated, generated,
 WXL_API(draw, unsupported_reason, UnsupportedReason, str, (), generated, generated,
         "Why shapes are not drawn, in a sentence for a log; empty when they are.")
 WXL_API(draw, draw, Draw, result, (draw_shape shape, draw_style style), shim, generated,
-        "Draws a shape in the next frame of the world only, from two tables: the shape {kind, center, radius, inner, angle, facing, pitch, roll, size, spacing, points, flat, on_ground, closed} and its look {color, alpha, fill_alpha, width, depth, pulse} (nil: white lines 2 pixels wide).")
+        "Draws a shape in the next frame of the world only, from two tables: the shape {kind, center, radius, inner, angle, facing, pitch, roll, size, spacing, points, alphas, flat, on_ground, closed} and its look {color, alpha, fill_alpha, width, depth, pulse, fill_color, softness, alpha_start, alpha_end, shadow_color, shadow_alpha, shadow_offset, shadow_softness, texture, texture_right, texture_bottom, uv, uv_size, uv_rotation, uv_offset, blend, feather, radial_fade} (nil: white lines 2 pixels wide).")
 WXL_API(draw, add, Add, Shape, (draw_shape shape, draw_style style, f32 duration), shim, generated,
         "Keeps a shape (tables as Draw's) until removed, or for duration seconds when it is above 0 (nil: until removed); the style may add fade_in and fade_out. Answers the Shape, or nil and why.")
 WXL_API(draw, update, Update, result, (Shape self, draw_shape shape), shim, generated,
@@ -38,7 +38,7 @@ WXL_API_CLOSE(draw, remove, Remove, none, Shape, unloaded,
 WXL_API(draw, clear, Clear, none, (), shim, generated,
         "Every shape this mod keeps goes.")
 WXL_API(draw, stats, Stats, out<draw_stats>, (), shim, by_hand,
-        "What the last frame drew and cost: a table {shapes, immediate, drawn, vertices, left_out, rebuilt, build_microseconds, max_build_microseconds, immediate_microseconds, frames}.")
+        "What the last frame drew and cost: a table {shapes, immediate, drawn, vertices, left_out, rebuilt, build_microseconds, max_build_microseconds, immediate_microseconds, frames, textured, textures, textures_loading, shadows}.")
 
 // MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
 // guarded by X, and skips it when it is included again with X defined: this table is read

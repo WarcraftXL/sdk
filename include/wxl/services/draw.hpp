@@ -136,6 +136,13 @@ namespace wxl
             flags |= WXL_DRAW_ON_GROUND;
             return *this;
         }
+        /// A line's opacity at each point (0 to 1, as many as its points), kept by address as the
+        /// points are (abi 0.1.38).
+        DrawShape& PointAlphas(const std::vector<float>& alphas)
+        {
+            point_alphas = alphas.empty() ? nullptr : alphas.data();
+            return *this;
+        }
     };
 
     /**
@@ -180,6 +187,82 @@ namespace wxl
             fade_out = out_seconds;
             return *this;
         }
+
+        // abi 0.1.38 ---------------------------------------------------------------------------
+
+        /// The inside in its own colour, not the lines'.
+        DrawStyle& FillColor(uint32_t rgb)
+        {
+            fill_color = rgb & 0xFFFFFFu;
+            flags |= WXL_DRAW_STYLE_FILL_COLOR;
+            return *this;
+        }
+        /// The lines' edges fade over @p pixels.
+        DrawStyle& Softness(float pixels)
+        {
+            softness = pixels;
+            return *this;
+        }
+        /// A line's opacity goes from @p start at its first point to @p end at its last.
+        DrawStyle& LineAlpha(float start, float end)
+        {
+            alpha_start = start;
+            alpha_end   = end;
+            flags |= WXL_DRAW_STYLE_LINE_ALPHA;
+            return *this;
+        }
+        /// A shadow under the lines: @p x pixels right, @p y down, its stroke @p soft pixels wider
+        /// and fading over as many.
+        DrawStyle& Shadow(uint32_t rgb = 0x000000u, float opacity = 0.6f, float x = 1.5f, float y = 1.5f, float soft = 1.0f)
+        {
+            shadow_color    = rgb & 0xFFFFFFu;
+            shadow_alpha    = opacity;
+            shadow_x        = x;
+            shadow_y        = y;
+            shadow_softness = soft;
+            return *this;
+        }
+        /// The inside drawn with a texture the client loads; @p right and @p bottom the part of it
+        /// the picture fills (wxl.texture's answer), 1 for a whole texture. The path is kept by
+        /// address until the call that takes the style returns.
+        DrawStyle& Texture(const char* path, float right = 1.0f, float bottom = 1.0f)
+        {
+            texture        = path;
+            texture_right  = right;
+            texture_bottom = bottom;
+            return *this;
+        }
+        /// How the texture lies: @p mode (wxl_draw_uv), one picture's size (of the bounds, or yards
+        /// for WORLD), turned by @p rotation radians and moved by @p offset_x, @p offset_y pictures.
+        DrawStyle& Uv(uint32_t mode, float size_x = 1.0f, float size_y = 1.0f, float rotation = 0.0f, float offset_x = 0.0f,
+                      float offset_y = 0.0f)
+        {
+            uv          = mode;
+            uv_size_x   = size_x;
+            uv_size_y   = size_y;
+            uv_rotation = rotation;
+            uv_offset_x = offset_x;
+            uv_offset_y = offset_y;
+            return *this;
+        }
+        /// How the inside goes onto the ground (wxl_draw_blend).
+        DrawStyle& Blend(uint32_t mode)
+        {
+            blend = mode;
+            return *this;
+        }
+        /// The inside fades out over @p yards towards its border.
+        DrawStyle& Feather(float yards)
+        {
+            feather = yards;
+            return *this;
+        }
+        /// The inside fades out from the centre outwards over @p part of the radius (0 to 1).
+        DrawStyle& RadialFade(float part)
+        {
+            radial_fade = part;
+            return *this;
+        }
     };
 
     /**
@@ -192,6 +275,11 @@ namespace wxl
      *     wxl_handle cone = wxl::DrawService::Add(wxl::DrawShape::Sector(at, 15.0f, facing, 1.2f),
      *                                             wxl::DrawStyle(0xFF4020).Fill(0.3f).Fade(0.1f, 0.4f), 3.0f);
      *     wxl::DrawService::Attach(cone, boss, WXL_DRAW_ATTACH_TURN);
+     *
+     *     // Cracks multiplied into the ground, soft at its border (abi 0.1.38).
+     *     wxl::DrawService::Add(wxl::DrawShape::Circle(at, 4.0f),
+     *                           wxl::DrawStyle(0xFFFFFF, 0.0f).Fill(0.9f).Texture("SPELLS\\CrackedGround.blp")
+     *                               .Blend(WXL_DRAW_BLEND_MODULATE).Feather(1.0f), 30.0f);
      *
      *   Supported(), UnsupportedReason()        whether this runtime draws them, and why not
      *   Draw(shape, style)                      for the next frame of the world only

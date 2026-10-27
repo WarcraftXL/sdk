@@ -3328,6 +3328,8 @@ namespace wxl::lua::shims
 
         constexpr const char* kDrawKinds[]  = {"line", "circle", "ring", "sector", "rectangle", "polygon", "grid", "box", "sphere", "cylinder"};
         constexpr const char* kDrawDepths[] = {"tested", "on_top"};
+        constexpr const char* kDrawUvs[]    = {"fit", "tile", "world"};
+        constexpr const char* kDrawBlends[] = {"alpha", "add", "modulate"};
 
         /// A point of a table {x, y, z} or {x, y, z} by position; false for anything else.
         bool ReadPoint(lua_State* L, int index, wxl_vec3& out)
@@ -3376,8 +3378,10 @@ namespace wxl::lua::shims
             return value;
         }
 
-        /// A shape table into @p shape, its points into @p points (which the shape points into).
-        void ReadDrawShape(lua_State* L, int index, const char* where, wxl_draw_shape& shape, std::vector<wxl_vec3>& points)
+        /// A shape table into @p shape, its points into @p points and their opacities into @p alphas
+        /// (which the shape points into).
+        void ReadDrawShape(lua_State* L, int index, const char* where, wxl_draw_shape& shape, std::vector<wxl_vec3>& points,
+                           std::vector<float>& alphas)
         {
             if (!lua_istable(L, index))
                 luaL_error(L, "%s: the shape (argument %d) must be a table {kind = \"circle\", center = {x, y, z}, radius = 5, ...}", where,
@@ -3434,10 +3438,79 @@ namespace wxl::lua::shims
                 shape.point_count = static_cast<uint32_t>(n);
             }
             lua_pop(L, 1);
+            lua_getfield(L, index, "alphas");
+            alphas.clear();
+            if (!lua_isnil(L, -1))
+            {
+                if (!lua_istable(L, -1)) luaL_error(L, "%s: the shape's 'alphas' must be a list of opacities, one per point", where);
+                const int    list = lua_gettop(L);
+                const size_t n    = lua_objlen(L, list);
+                if (n != points.size())
+                    luaL_error(L, "%s: the shape has %d points and %d 'alphas': give one opacity per point", where,
+                               static_cast<int>(points.size()), static_cast<int>(n));
+                alphas.resize(n);
+                for (size_t i = 0; i < n; ++i)
+                {
+                    lua_rawgeti(L, list, static_cast<int>(i + 1));
+                    if (!lua_isnumber(L, -1)) luaL_error(L, "%s: alpha %d of the shape is not a number", where, static_cast<int>(i + 1));
+                    alphas[i] = static_cast<float>(lua_tonumber(L, -1));
+                    lua_pop(L, 1);
+                }
+                shape.point_alphas = alphas.empty() ? nullptr : alphas.data();
+            }
+            lua_pop(L, 1);
         }
 
-        /// A style table (nil: the service's default) into @p style; false for nil.
-        bool ReadDrawStyle(lua_State* L, int index, const char* where, wxl_draw_style& style)
+        /// A colour field 0xRRGGBB of the table at @p index; false when it is nil.
+        bool FieldColor(lua_State* L, int index, const char* name, uint32_t& out, const char* where)
+        {
+            lua_getfield(L, index, name);
+            bool given = false;
+            if (lua_isnumber(L, -1))
+            {
+                const double value = lua_tonumber(L, -1);
+                if (value < 0.0 || value > 16777215.0) luaL_error(L, "%s: the style's '%s' must be 0xRRGGBB", where, name);
+                out   = static_cast<uint32_t>(value);
+                given = true;
+            }
+            else if (!lua_isnil(L, -1)) luaL_error(L, "%s: the style's '%s' must be a number 0xRRGGBB", where, name);
+            lua_pop(L, 1);
+            return given;
+        }
+
+        /// A pair field: a number (both the same) or {x, y}; false when it is nil.
+        bool FieldPair(lua_State* L, int index, const char* name, float& x, float& y, bool number_ok, const char* where)
+        {
+            lua_getfield(L, index, name);
+            bool given = true;
+            if (number_ok && lua_isnumber(L, -1)) x = y = static_cast<float>(lua_tonumber(L, -1));
+            else if (lua_istable(L, -1))
+            {
+                const int at = lua_gettop(L);
+                lua_getfield(L, at, "x");
+                if (lua_isnil(L, -1))
+                {
+                    lua_pop(L, 1);
+                    lua_rawgeti(L, at, 1);
+                    lua_rawgeti(L, at, 2);
+                }
+                else
+                    lua_getfield(L, at, "y");
+                if (!lua_isnumber(L, -2) || !lua_isnumber(L, -1))
+                    luaL_error(L, "%s: the style's '%s' must be {x, y}%s", where, name, number_ok ? " or a number" : "");
+                x = static_cast<float>(lua_tonumber(L, -2));
+                y = static_cast<float>(lua_tonumber(L, -1));
+                lua_pop(L, 2);
+            }
+            else if (lua_isnil(L, -1)) given = false;
+            else luaL_error(L, "%s: the style's '%s' must be {x, y}%s", where, name, number_ok ? " or a number" : "");
+            lua_pop(L, 1);
+            return given;
+        }
+
+        /// A style table (nil: the service's default) into @p style, its texture's path into
+        /// @p texture (which the style points into); false for nil.
+        bool ReadDrawStyle(lua_State* L, int index, const char* where, wxl_draw_style& style, std::string& texture)
         {
             style             = wxl_draw_style{};
             style.struct_size = sizeof style;
@@ -3470,6 +3543,72 @@ namespace wxl::lua::shims
                 style.depth = CheckNamed(L, lua_gettop(L), kDrawDepths, 2, 0, depthWhere.c_str());
             }
             lua_pop(L, 1);
+
+            // abi 0.1.38: lines' softness, opacity along them and shadow; the inside's texture.
+            if (FieldColor(L, index, "fill_color", style.fill_color, where)) style.flags |= WXL_DRAW_STYLE_FILL_COLOR;
+            style.softness = FieldNumber(L, index, "softness", 0.0f, where);
+            lua_getfield(L, index, "alpha_start");
+            lua_getfield(L, index, "alpha_end");
+            const bool along = !lua_isnil(L, -1) || !lua_isnil(L, -2);
+            lua_pop(L, 2);
+            if (along)
+            {
+                style.flags |= WXL_DRAW_STYLE_LINE_ALPHA;
+                style.alpha_start = FieldNumber(L, index, "alpha_start", 1.0f, where);
+                style.alpha_end   = FieldNumber(L, index, "alpha_end", 1.0f, where);
+            }
+            style.shadow_alpha = FieldNumber(L, index, "shadow_alpha", 0.0f, where);
+            if (style.shadow_alpha > 0.0f)
+            {
+                // A shadow asked for by its opacity alone: black, 1.5 pixels down and right, 1 soft.
+                style.shadow_x        = 1.5f;
+                style.shadow_y        = 1.5f;
+                style.shadow_softness = 1.0f;
+            }
+            FieldColor(L, index, "shadow_color", style.shadow_color, where);
+            FieldPair(L, index, "shadow_offset", style.shadow_x, style.shadow_y, false, where);
+            style.shadow_softness = FieldNumber(L, index, "shadow_softness", style.shadow_softness, where);
+            lua_getfield(L, index, "texture");
+            if (lua_type(L, -1) == LUA_TSTRING) texture = lua_tostring(L, -1);
+            else if (lua_istable(L, -1))
+            {
+                // wxl.texture.Make's answers in a list: {path, right, bottom}.
+                const int at = lua_gettop(L);
+                lua_rawgeti(L, at, 1);
+                lua_rawgeti(L, at, 2);
+                lua_rawgeti(L, at, 3);
+                if (lua_type(L, -3) != LUA_TSTRING || (!lua_isnil(L, -2) && !lua_isnumber(L, -2)) || (!lua_isnil(L, -1) && !lua_isnumber(L, -1)))
+                    luaL_error(L, "%s: the style's 'texture' must be a path, or {path, right, bottom} as wxl.texture.Make answers", where);
+                texture              = lua_tostring(L, -3);
+                style.texture_right  = lua_isnumber(L, -2) ? static_cast<float>(lua_tonumber(L, -2)) : 0.0f;
+                style.texture_bottom = lua_isnumber(L, -1) ? static_cast<float>(lua_tonumber(L, -1)) : 0.0f;
+                lua_pop(L, 3);
+            }
+            else if (!lua_isnil(L, -1))
+                luaL_error(L, "%s: the style's 'texture' must be a path, or {path, right, bottom} as wxl.texture.Make answers", where);
+            lua_pop(L, 1);
+            if (!texture.empty()) style.texture = texture.c_str();
+            style.texture_right  = FieldNumber(L, index, "texture_right", style.texture_right, where);
+            style.texture_bottom = FieldNumber(L, index, "texture_bottom", style.texture_bottom, where);
+            lua_getfield(L, index, "uv");
+            if (!lua_isnil(L, -1))
+            {
+                const std::string uvWhere = std::string(where) + ": the style's 'uv'";
+                style.uv = CheckNamed(L, lua_gettop(L), kDrawUvs, 3, 0, uvWhere.c_str());
+            }
+            lua_pop(L, 1);
+            FieldPair(L, index, "uv_size", style.uv_size_x, style.uv_size_y, true, where);
+            style.uv_rotation = FieldNumber(L, index, "uv_rotation", 0.0f, where);
+            FieldPair(L, index, "uv_offset", style.uv_offset_x, style.uv_offset_y, false, where);
+            lua_getfield(L, index, "blend");
+            if (!lua_isnil(L, -1))
+            {
+                const std::string blendWhere = std::string(where) + ": the style's 'blend'";
+                style.blend = CheckNamed(L, lua_gettop(L), kDrawBlends, 3, 0, blendWhere.c_str());
+            }
+            lua_pop(L, 1);
+            style.feather     = FieldNumber(L, index, "feather", 0.0f, where);
+            style.radial_fade = FieldNumber(L, index, "radial_fade", 0.0f, where);
             return true;
         }
 
@@ -3478,8 +3617,10 @@ namespace wxl::lua::shims
             wxl_draw_shape        shape{};
             wxl_draw_style        style{};
             std::vector<wxl_vec3> points;
-            ReadDrawShape(L, 1, "wxl.draw.Draw", shape, points);
-            const bool          styled = ReadDrawStyle(L, 2, "wxl.draw.Draw", style);
+            std::vector<float>    alphas;
+            std::string           texture;
+            ReadDrawShape(L, 1, "wxl.draw.Draw", shape, points, alphas);
+            const bool          styled = ReadDrawStyle(L, 2, "wxl.draw.Draw", style, texture);
             const wxl_draw_api* api    = Draw();
             if (!api || !wxl::detail::Carries(api, &wxl_draw_api::draw)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
             const wxl_result result = api->draw(&shape, styled ? &style : nullptr);
@@ -3493,8 +3634,10 @@ namespace wxl::lua::shims
             wxl_draw_shape        shape{};
             wxl_draw_style        style{};
             std::vector<wxl_vec3> points;
-            ReadDrawShape(L, 1, "wxl.draw.Add", shape, points);
-            const bool styled = ReadDrawStyle(L, 2, "wxl.draw.Add", style);
+            std::vector<float>    alphas;
+            std::string           texture;
+            ReadDrawShape(L, 1, "wxl.draw.Add", shape, points, alphas);
+            const bool styled = ReadDrawStyle(L, 2, "wxl.draw.Add", style, texture);
             float      duration = 0.0f;
             if (!lua_isnoneornil(L, 3))
             {
@@ -3521,7 +3664,8 @@ namespace wxl::lua::shims
             const wxl_handle      handle = CheckDrawShape(L, "wxl.draw.Update");
             wxl_draw_shape        shape{};
             std::vector<wxl_vec3> points;
-            ReadDrawShape(L, 2, "wxl.draw.Update", shape, points);
+            std::vector<float>    alphas;
+            ReadDrawShape(L, 2, "wxl.draw.Update", shape, points, alphas);
             const wxl_draw_api* api = Draw();
             if (!api || !wxl::detail::Carries(api, &wxl_draw_api::update)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
             const wxl_result result = api->update(handle, &shape);
@@ -3534,7 +3678,8 @@ namespace wxl::lua::shims
         {
             const wxl_handle handle = CheckDrawShape(L, "wxl.draw.SetStyle");
             wxl_draw_style   style{};
-            const bool       styled = ReadDrawStyle(L, 2, "wxl.draw.SetStyle", style);
+            std::string      texture;
+            const bool       styled = ReadDrawStyle(L, 2, "wxl.draw.SetStyle", style, texture);
             const wxl_draw_api* api = Draw();
             if (!api || !wxl::detail::Carries(api, &wxl_draw_api::set_style)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
             const wxl_result result = api->set_style(handle, styled ? &style : nullptr);
@@ -3557,7 +3702,7 @@ namespace wxl::lua::shims
             stats.struct_size       = sizeof stats;
             const wxl_result result = api->stats(&stats);
             if (result != WXL_OK) return PushResultFailure(L, result);
-            lua_createtable(L, 0, 10);
+            lua_createtable(L, 0, 14);
             const auto field = [&](const char* name, double value) {
                 lua_pushnumber(L, value);
                 lua_setfield(L, -2, name);
@@ -3572,6 +3717,10 @@ namespace wxl::lua::shims
             field("max_build_microseconds", stats.max_build_microseconds);
             field("immediate_microseconds", stats.immediate_microseconds);
             field("frames", stats.frames);
+            field("textured", stats.textured);
+            field("textures", stats.textures);
+            field("textures_loading", stats.textures_loading);
+            field("shadows", stats.shadows);
             return 1;
         }
 
