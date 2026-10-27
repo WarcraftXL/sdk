@@ -15,6 +15,8 @@
 //   begin, end                      a pass: what draws go into, inside a RenderPoint
 //   draw, draw_indexed, fullscreen  the mod's own draws
 //   draw_batch, keep_batch          a model batch of the client's drawn again with a program of the mod
+//   dispatch                        a compute pipeline of the mod's, between passes
+//   bone_palette                    bones (or any rows) of the mod's in the frame, read by address
 //   scene_color_slot, scene_depth_slot
 //                                   the frame drawn so far, as textures to sample
 //   replace_shader, restore_shader  a client shader's program replaced by the mod's
@@ -60,7 +62,7 @@
 //
 // A pipeline is the mod's SPIR-V (compiled from GLSL when the mod is built, or shipped as .spv
 // files) with the state it draws with: what it draws into (the colour formats, up to 4, the depth
-// format, the samples), how it blends, tests depth and culls. Three kinds:
+// format, the samples), how it blends, tests depth and culls. Four kinds:
 //
 //   WXL_RENDER_PIPELINE_GRAPHICS    the mod's vertex and fragment programs. No vertex input: a
 //                                   vertex program reads its vertices from buffers, by address
@@ -70,11 +72,13 @@
 //   WXL_RENDER_PIPELINE_BATCH       the mod's fragment program behind the vertex program of a
 //                                   client batch (draw_batch): the batch's vertices, skinned,
 //                                   placed as the client placed them
+//   WXL_RENDER_PIPELINE_COMPUTE     the mod's compute program (`compute`, abi 0.1.34), run by
+//                                   `dispatch`; it draws into nothing, so its state is unread
 //
 // Every program sees the same descriptor set: set 0, binding 0 `texture2D uImages[]`, binding 1
-// `sampler uSamplers[]`, indexed with nonuniformEXT where the index varies. GRAPHICS and
-// FULLSCREEN programs get 128 bytes of push constants, the mod's own (what `push` of a draw
-// holds). A BATCH program shares the client's interface instead (the SDK's
+// `sampler uSamplers[]`, indexed with nonuniformEXT where the index varies. GRAPHICS, FULLSCREEN
+// and COMPUTE programs get 128 bytes of push constants, the mod's own (what `push` of a draw or a
+// dispatch holds). A BATCH program shares the client's interface instead (the SDK's
 // `wxl/render/batch.glsl` declares it): its inputs are the batch's varyings at fixed locations
 // (colours 0 and 1, texture coordinates 0 to 7 at locations 2 to 9, ...), its push constants the
 // batch's own, among them the batch's textures (`pc.stages[i]`: the bindless image in the low 16
@@ -92,12 +96,35 @@
 // later in the same frame: draw at a later point the batches seen during the world (an outline,
 // a silhouette, a glow). A kept batch is valid until the frame ends.
 //
+// --- Compute and palettes (abi 0.1.34) --------------------------------------------------------------
+//
+// `dispatch` runs a COMPUTE pipeline over x * y * z workgroups (its local size is the program's),
+// inside RenderPoint and outside a pass: the frame's own drawing stops for it, as for a pass. A
+// compute program reads images through the bindless table and reads and writes buffers through
+// their addresses (`buffer_address`); what it writes is seen by every draw and dispatch after it,
+// and what the frame drew before it is there for it to read. It writes no image: a pass draws
+// into images, from the buffers a dispatch filled if need be.
+//
+// `bone_palette` writes matrices of the mod's into the open frame and answers their address:
+// `count` matrices, each three vec4 rows of floats (48 bytes), as the mod's program reads them
+// (`WxlRows(address).rows[3 * bone + row]` with batch.glsl's or render.glsl's WxlRows). There is
+// no bound on the bones but memory (16 MiB at once); the rows are read until the frame
+// completes, so a palette is written for each frame it is drawn with, inside RenderPoint or a
+// handler of the frame (ModelBatchDrawn, ...). A mod's own skinned vertices (any bone index size,
+// any count) are drawn with a GRAPHICS pipeline whose vertex program reads that address from its
+// push constants.
+//
+// The client's own model batches read their bones from the frame's bone palette on this renderer
+// (its skinned programs read up to 256 bones a draw there, not the vertex registers from c31):
+// a BATCH program or a replacement vertex program reaches a bone with batch.glsl's WxlBoneRow,
+// which reads it wherever the batch has it.
+//
 // --- Shaders of the client -----------------------------------------------------------------------
 //
 // `replace_shader` gives the client's shaders whose name starts with `name` (as the client names
 // them: "Diffuse_T1", "Ocean", ...) the mod's SPIR-V for `stage` (0 vertex, 1 pixel), written
 // against the same interface as a BATCH program (the client's registers at `pc.vertexRegs` and
-// `pc.pixelRegs`). The client's own program comes back with `restore_shader`, or when the mod goes.
+// `pc.pixelRegs`, the bones through WxlBoneRow). The client's own program comes back with `restore_shader`, or when the mod goes.
 //
 // --- Threads, devices -----------------------------------------------------------------------------
 //
@@ -142,6 +169,10 @@
 #define WXL_RENDER_PIPELINE_GRAPHICS   0
 #define WXL_RENDER_PIPELINE_FULLSCREEN 1
 #define WXL_RENDER_PIPELINE_BATCH      2
+#define WXL_RENDER_PIPELINE_COMPUTE    3 ///< abi 0.1.34
+
+/// The bytes of one matrix of a bone palette: three vec4 rows of floats.
+#define WXL_RENDER_PALETTE_MATRIX_BYTES 48
 
 /// How a colour attachment blends what a program writes (source) with what is there (destination).
 #define WXL_RENDER_BLEND_NONE          0 ///< written over
@@ -204,6 +235,9 @@ typedef struct wxl_render_pipeline_desc
     wxl_bool    depth_write;
     uint32_t    cull;          ///< WXL_RENDER_CULL_*
     uint32_t    topology;      ///< WXL_RENDER_TOPOLOGY_*, GRAPHICS only (a batch keeps its own)
+    // Appended with abi 0.1.34: read when struct_size covers them.
+    const void* compute;       ///< SPIR-V of the compute program, COMPUTE only (null otherwise)
+    uint32_t    compute_size;  ///< its bytes
 } wxl_render_pipeline_desc;
 
 /// A pass: what the draws until end go into. Every attachment has the same size; the pass covers it.
@@ -296,6 +330,23 @@ typedef struct wxl_render_api
     wxl_result(WXL_CALL* replace_shader)(wxl_str name, uint32_t stage, const void* spirv, uint32_t size);
     /// Takes the mod's replacement for @p name and @p stage back. WXL_E_NOT_FOUND for none.
     wxl_result(WXL_CALL* restore_shader)(wxl_str name, uint32_t stage);
+
+    // --- Appended with abi 0.1.34 --------------------------------------------------------------
+
+    /**
+     * @brief A COMPUTE pipeline over @p x x @p y x @p z workgroups, @p push (up to 128 bytes) as
+     *        its push constants, inside RenderPoint and outside a pass. WXL_E_INVALID outside a
+     *        point, inside a pass, for another kind of pipeline or more workgroups than the device
+     *        runs at once.
+     */
+    wxl_result(WXL_CALL* dispatch)(wxl_handle pipeline, uint32_t x, uint32_t y, uint32_t z, const void* push, uint32_t push_size);
+    /**
+     * @brief Matrices of the mod's (@p size bytes: WXL_RENDER_PALETTE_MATRIX_BYTES each, three
+     *        vec4 rows) written into the open frame; their GPU address in @p address, read until
+     *        the frame completes. WXL_E_INVALID outside a frame, for a size that is no whole number
+     *        of matrices, or past 16 MiB.
+     */
+    wxl_result(WXL_CALL* bone_palette)(const void* matrices, uint32_t size, uint64_t* address);
 } wxl_render_api;
 
 #ifdef __cplusplus

@@ -2473,7 +2473,7 @@ namespace wxl::lua::shims
         }
 
         constexpr const char* kRenderFormats[] = {"rgba8", "bgra8", "r8", "rg8", "r16f", "rg16f", "rgba16f", "r32f", "rgba32f", "depth32f"};
-        constexpr const char* kRenderKinds[]   = {"graphics", "fullscreen", "batch"};
+        constexpr const char* kRenderKinds[]   = {"graphics", "fullscreen", "batch", "compute"};
         constexpr const char* kRenderBlends[]  = {"none", "alpha", "add", "premultiplied", "multiply"};
         constexpr const char* kRenderDepths[]  = {"off", "less", "less_equal", "equal", "greater", "greater_equal", "always"};
         constexpr const char* kRenderCulls[]   = {"none", "back", "front", "batch"};
@@ -2556,13 +2556,30 @@ namespace wxl::lua::shims
             if (!lua_istable(L, 1)) luaL_error(L, "%s: 'desc' (argument 1) must be a table", fn);
             wxl_render_pipeline_desc desc{};
             desc.struct_size = sizeof desc;
-            desc.kind        = FieldNamed(L, 1, "kind", kRenderKinds, 3, 0, WXL_RENDER_PIPELINE_GRAPHICS, fn);
+            desc.kind        = FieldNamed(L, 1, "kind", kRenderKinds, 4, 0, WXL_RENDER_PIPELINE_GRAPHICS, fn);
 
-            std::string vertex, fragment, name;
+            std::string vertex, fragment, compute, name;
             lua_getfield(L, 1, "name");
             if (lua_type(L, -1) == LUA_TSTRING) name = lua_tostring(L, -1);
             lua_pop(L, 1);
             desc.name = name.empty() ? nullptr : name.c_str();
+            if (desc.kind == WXL_RENDER_PIPELINE_COMPUTE)
+            {
+                // A compute program alone: it draws into nothing.
+                lua_getfield(L, 1, "compute");
+                if (lua_isnil(L, -1)) luaL_error(L, "%s: 'compute' is missing; a compute pipeline takes SPIR-V", fn);
+                ReadSpirv(L, mod, lua_gettop(L), compute, "wxl.render.CreatePipeline: 'compute'");
+                lua_pop(L, 1);
+                desc.compute      = compute.data();
+                desc.compute_size = static_cast<uint32_t>(compute.size());
+                const wxl_render_api* api = Render();
+                if (!api || !wxl::detail::Carries(api, &wxl_render_api::create_pipeline)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+                const wxl_handle made = api->create_pipeline(&desc);
+                if (made == WXL_HANDLE_NONE)
+                    return PushResultFailure(L, api->supported && api->supported() ? WXL_E_INVALID : WXL_E_UNSUPPORTED);
+                PushRenderResource(L, RenderResource::pipeline, made);
+                return 1;
+            }
             lua_getfield(L, 1, "vertex");
             if (!lua_isnil(L, -1)) ReadSpirv(L, mod, lua_gettop(L), vertex, "wxl.render.CreatePipeline: 'vertex'");
             lua_pop(L, 1);
@@ -2833,6 +2850,59 @@ namespace wxl::lua::shims
                                              static_cast<uint32_t>(constants.size())));
         }
 
+        /// Dispatch(pipeline, x, y, z [, push])
+        int L_RenderDispatch(lua_State* L)
+        {
+            const char*      fn       = "wxl.render.Dispatch";
+            const wxl_handle pipeline = CheckPipeline(L, 1, fn);
+            const uint32_t   x        = CheckRenderCount(L, 2, fn, "x");
+            const uint32_t   y        = CheckRenderCount(L, 3, fn, "y");
+            const uint32_t   z        = CheckRenderCount(L, 4, fn, "z");
+            std::string      push;
+            ReadPush(L, 5, push, "wxl.render.Dispatch: 'push' (argument 5)");
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::dispatch)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            return PushOk(L, api->dispatch(pipeline, x, y, z, push.empty() ? nullptr : push.data(), static_cast<uint32_t>(push.size())));
+        }
+
+        /// BonePalette(matrices): their address on the GPU, or nil and why. A string of bytes, or a
+        /// table of numbers (32-bit floats), 12 a matrix.
+        int L_RenderBonePalette(lua_State* L)
+        {
+            const char* fn = "wxl.render.BonePalette";
+            std::string bytes;
+            if (lua_type(L, 1) == LUA_TSTRING)
+            {
+                size_t      size = 0;
+                const char* text = lua_tolstring(L, 1, &size);
+                bytes.assign(text, size);
+            }
+            else if (lua_type(L, 1) == LUA_TTABLE)
+            {
+                const size_t count = lua_objlen(L, 1);
+                if (count > (16u << 20) / 4) luaL_error(L, "%s: 'matrices' (argument 1) holds more than 16 MiB of numbers", fn);
+                bytes.resize(count * 4);
+                for (size_t i = 0; i < count; ++i)
+                {
+                    lua_rawgeti(L, 1, static_cast<int>(i) + 1);
+                    if (lua_type(L, -1) != LUA_TNUMBER) luaL_error(L, "%s: entry %d of 'matrices' is not a number", fn, static_cast<int>(i) + 1);
+                    const float value = static_cast<float>(lua_tonumber(L, -1));
+                    std::memcpy(&bytes[i * 4], &value, 4);
+                    lua_pop(L, 1);
+                }
+            }
+            else luaL_error(L, "%s: 'matrices' (argument 1) must be a table of numbers (12 a matrix) or a string of bytes", fn);
+            if (bytes.empty() || bytes.size() % WXL_RENDER_PALETTE_MATRIX_BYTES)
+                luaL_error(L, "%s: 'matrices' (argument 1) must hold whole matrices: 12 numbers, or 48 bytes, each", fn);
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::bone_palette)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            uint64_t         address = 0;
+            const wxl_result result  = api->bone_palette(bytes.data(), static_cast<uint32_t>(bytes.size()), &address);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushnumber(L, static_cast<lua_Number>(address));
+            return 1;
+        }
+
         /// The client shaders a Lua mod replaced: the runtime sees them as wxl.lua's, by name and stage.
         struct Replaced
         {
@@ -2965,6 +3035,8 @@ namespace wxl::lua::shims
         if (service == "render" && name == "DrawBatch") return &L_RenderDrawBatch;
         if (service == "render" && name == "ReplaceShader") return &L_RenderReplaceShader;
         if (service == "render" && name == "RestoreShader") return &L_RenderRestoreShader;
+        if (service == "render" && name == "Dispatch") return &L_RenderDispatch;
+        if (service == "render" && name == "BonePalette") return &L_RenderBonePalette;
         if (service == "profile" && name == "Begin") return &profile::L_Begin;
         if (service == "profile" && name == "End") return &profile::L_End;
         if (service == "profile" && name == "Text") return &profile::L_Text;

@@ -47,8 +47,8 @@ namespace wxl
      *     }
      *
      * Every member of the C table is a method of the same name (CreateImage, ImageSlot, Draw,
-     * DrawBatch, KeepBatch, SceneColorSlot, ReplaceShader, ...); DestroyImage, DestroyBuffer and
-     * DestroyPipeline give resources back. On a device it does not drive, Supported() is false and
+     * DrawBatch, KeepBatch, SceneColorSlot, ReplaceShader, Dispatch, BonePalette, ...);
+     * DestroyImage, DestroyBuffer and DestroyPipeline give resources back. On a device it does not drive, Supported() is false and
      * the calls answer WXL_E_UNSUPPORTED or 0.
      */
     class RenderService : public detail::Facade<RenderService, wxl_render_api>, public api::facade::Methods<wxl_render_api>
@@ -103,6 +103,16 @@ namespace wxl
             d.kind          = WXL_RENDER_PIPELINE_FULLSCREEN;
             d.fragment      = fragment_spirv;
             d.fragment_size = fragment_bytes;
+            return d;
+        }
+        /// The mod's compute program (abi 0.1.34), run by RenderService::Dispatch.
+        static RenderPipelineDesc Compute(const void* compute_spirv, uint32_t compute_bytes)
+        {
+            RenderPipelineDesc d;
+            d.kind         = WXL_RENDER_PIPELINE_COMPUTE;
+            d.color_count  = 0;
+            d.compute      = compute_spirv;
+            d.compute_size = compute_bytes;
             return d;
         }
         /// The mod's fragment program behind a client batch's vertex program.

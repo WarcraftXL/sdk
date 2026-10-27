@@ -623,14 +623,15 @@ namespace
                 return "---A pipeline of the mod's SPIR-V and the state it draws with, compiled now; nil and why when the\n"
                        "---device refuses it. `vertex`/`fragment`: SPIR-V bytes, or the path of a .spv file of the mod's\n"
                        "---folder. `kind`: \"graphics\" (vertex and fragment, vertices read from buffers), \"fullscreen\"\n"
-                       "---(fragment over the pass, `uv` at location 0), \"batch\" (fragment behind a client batch).\n"
+                       "---(fragment over the pass, `uv` at location 0), \"batch\" (fragment behind a client batch),\n"
+                       "---\"compute\" (`compute` alone, run by Dispatch; abi 0.1.34).\n"
                        "---`colors`: formats (\"rgba8\", \"bgra8\" the frame's, \"r8\", \"rg8\", \"r16f\", \"rg16f\",\n"
                        "---\"rgba16f\", \"r32f\", \"rgba32f\"), the frame's by default. `depth`: \"depth32f\" or nil.\n"
                        "---`samples`: 0 the frame's, 1, 2, 4, 8. `blend`: \"none\", \"alpha\", \"add\", \"premultiplied\",\n"
                        "---\"multiply\", one or one per colour. `depth_test`: \"off\", \"less\", \"less_equal\", \"equal\",\n"
                        "---\"greater\", \"greater_equal\", \"always\". `cull`: \"none\", \"back\", \"front\", \"batch\".\n"
                        "---`topology`: \"triangles\", \"triangle_strip\", \"lines\", \"points\".\n"
-                       "---@param desc {kind: string?, name: string?, vertex: string?, fragment: string, colors: string|string[]?, depth: string?, samples: integer?, blend: string|string[]?, depth_test: string?, depth_write: boolean?, cull: string?, topology: string?}\n"
+                       "---@param desc {kind: string?, name: string?, vertex: string?, fragment: string?, compute: string?, colors: string|string[]?, depth: string?, samples: integer?, blend: string|string[]?, depth_test: string?, depth_write: boolean?, cull: string?, topology: string?}\n"
                        "---@return wxl.Pipeline|nil pipeline\n---@return string|nil reason\n"
                        "function " + owner + ".CreatePipeline(desc) end\n\n";
             if (name == "Begin")
@@ -668,6 +669,19 @@ namespace
                 return "---Gives a shader this mod replaced its own program back; nil, \"not_found\" for one it did not replace.\n"
                        "---@param name string\n---@param stage integer\n" + answers +
                        "function " + owner + ".RestoreShader(name, stage) end\n\n";
+            if (name == "Dispatch")
+                return "---Runs a compute pipeline over x * y * z workgroups inside OnRenderPoint, outside a pass: the\n"
+                       "---frame's drawing stops for it. What it writes through buffer addresses is seen after it.\n" + push +
+                       "---@param pipeline wxl.Pipeline\n---@param x integer\n---@param y integer\n---@param z integer\n"
+                       "---@param push? number[]|string\n" + answers +
+                       "function " + owner + ".Dispatch(pipeline, x, y, z, push) end\n\n";
+            if (name == "BonePalette")
+                return "---Writes matrices into the open frame and answers their address on the GPU, read until the frame\n"
+                       "---ends: a table of numbers, 12 a matrix (three rows of four), or a string of bytes, 48 a matrix.\n"
+                       "---No bound on their count but 16 MiB at once. The address goes into a program's push constants\n"
+                       "---as two 32-bit words, low first (a string of bytes).\n"
+                       "---@param matrices number[]|string\n---@return number|nil address\n---@return string|nil reason\n"
+                       "function " + owner + ".BonePalette(matrices) end\n\n";
         }
         if (name == "Begin")
             return "---Opens a zone named `name` on the profiler's timeline, inside the handler or callback running\n"

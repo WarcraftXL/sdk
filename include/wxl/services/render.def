@@ -71,6 +71,11 @@ WXL_API(render, replace_shader, ReplaceShader, result, (str name, u32 stage, byt
         "Gives the client's shaders named name (or starting with it) the mod's SPIR-V for a stage (0 vertex, 1 pixel), until restored or the mod goes; spirv is a file of the mod's folder or a string of bytes.")
 WXL_API(render, restore_shader, RestoreShader, result, (str name, u32 stage), shim, generated,
         "Gives a replaced shader its own program back.")
+WXL_API_SINCE(render, dispatch, (0, 1, 34))
+WXL_API(render, dispatch, Dispatch, result, (Pipeline pipeline, u32 x, u32 y, u32 z, bytes push, bytes_size push_size), shim, generated,
+        "Runs a COMPUTE pipeline over x * y * z workgroups inside RenderPoint, outside a pass; push as Draw's.")
+WXL_API(render, bone_palette, BonePalette, out<u64>, (bytes matrices, bytes_size size), shim, generated,
+        "Writes matrices into the frame (a table of numbers, 12 a matrix: three rows of four, or a string of bytes) and answers their address on the GPU, read until the frame ends.")
 
 // MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
 // guarded by X, and skips it when it is included again with X defined: this table is read

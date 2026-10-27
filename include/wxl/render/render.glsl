@@ -17,6 +17,8 @@
 
 #extension GL_EXT_nonuniform_qualifier : require
 #extension GL_EXT_samplerless_texture_functions : require
+#extension GL_EXT_buffer_reference : require
+#extension GL_EXT_buffer_reference_uvec2 : require
 
 layout(set = 0, binding = 0) uniform texture2D uImages[];
 layout(set = 0, binding = 1) uniform sampler uSamplers[];
@@ -25,6 +27,22 @@ layout(set = 0, binding = 1) uniform sampler uSamplers[];
 vec4 WxlSample(uint image, uint sampler_index, vec2 uv)
 {
     return texture(sampler2D(uImages[nonuniformEXT(image)], uSamplers[nonuniformEXT(sampler_index)]), uv);
+}
+
+#ifndef WXL_RENDER_ROWS
+#define WXL_RENDER_ROWS
+/// vec4 rows at an address: a buffer's (buffer_address) or a bone palette's (bone_palette).
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer WxlRows
+{
+    vec4 rows[];
+};
+#endif
+
+/// Row @p row (0, 1 or 2) of matrix @p matrix of a bone palette at @p palette (bone_palette's
+/// address, as two 32-bit words, low first).
+vec4 WxlPaletteRow(uvec2 palette, uint matrix, uint row)
+{
+    return WxlRows(palette).rows[3u * matrix + row];
 }
 
 /// The texel at @p texel of level 0 of the image @p image.

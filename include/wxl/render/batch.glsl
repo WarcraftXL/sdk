@@ -41,11 +41,11 @@ layout(set = 0, binding = 1) uniform sampler uSamplers[];
 
 layout(push_constant) uniform WxlBatchPush
 {
-    uvec2 data;       ///< the client's
+    uvec2 data;       ///< the client's; the batch's bone palette when its flags count bones (WxlBoneRow)
     uvec2 vertexRegs; ///< the batch's vertex registers (vec4 rows)
     uvec2 pixelRegs;  ///< the mod's constants (vec4 rows)
     float alphaRef;   ///< the batch's alpha test: 1 to 255, 0 for none
-    uint  flags;      ///< the client's
+    uint  flags;      ///< the client's; bits 4..12 the bones of the batch's palette (WxlBoneRow)
     vec4  clipPlane;  ///< the client's
     uint  fogColor;   ///< the client's
     float pointSize;  ///< the client's
@@ -53,10 +53,14 @@ layout(push_constant) uniform WxlBatchPush
     uint  stages[16]; ///< the batch's textures: image slot (low 16 bits), sampler (high 16)
 } pc;
 
+#ifndef WXL_RENDER_ROWS
+#define WXL_RENDER_ROWS
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer WxlRows
 {
     vec4 rows[];
 };
+#endif
+
 
 layout(location = 0) in vec4 wxlColor0;
 layout(location = 1) in vec4 wxlColor1;
@@ -90,6 +94,18 @@ vec4 WxlStageSample(uint stage, vec2 uv)
 vec4 WxlStageSampleWith(uint stage, uint sampler_index, vec2 uv)
 {
     return texture(sampler2D(uImages[nonuniformEXT(pc.stages[stage] & 0xFFFFu)], uSamplers[nonuniformEXT(sampler_index)]), uv);
+}
+
+/// Row @p row (0, 1 or 2) of bone @p bone of the batch, as the client's skinned vertex programs
+/// read it (a position is skinned as dot(row, vec4(position, 1)) for x, y and z, weighted over the
+/// vertex's bones): from the frame's bone palette when the batch drew with one (abi 0.1.34, the
+/// Vulkan renderer), else from the vertex registers c31 + 3 * bone + row.
+vec4 WxlBoneRow(uint bone, uint row)
+{
+    const uint bones = (pc.flags >> 4u) & 0x1FFu;
+    if (bones == 0u) return WxlRows(pc.vertexRegs).rows[min(31u + 3u * bone + row, 255u)];
+    const uvec2 palette = (pc.flags & (1u << 13u)) != 0u ? pc.pixelRegs : pc.data;
+    return WxlRows(palette).rows[min(3u * bone + row, 3u * bones - 1u)];
 }
 
 /// The batch's own alpha test (its reference against the 8-bit alpha, as the client tests it):

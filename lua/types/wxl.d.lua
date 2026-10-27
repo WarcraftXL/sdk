@@ -3797,14 +3797,15 @@ function render.Sampler(flags) end
 ---A pipeline of the mod's SPIR-V and the state it draws with, compiled now; nil and why when the
 ---device refuses it. `vertex`/`fragment`: SPIR-V bytes, or the path of a .spv file of the mod's
 ---folder. `kind`: "graphics" (vertex and fragment, vertices read from buffers), "fullscreen"
----(fragment over the pass, `uv` at location 0), "batch" (fragment behind a client batch).
+---(fragment over the pass, `uv` at location 0), "batch" (fragment behind a client batch),
+---"compute" (`compute` alone, run by Dispatch; abi 0.1.34).
 ---`colors`: formats ("rgba8", "bgra8" the frame's, "r8", "rg8", "r16f", "rg16f",
 ---"rgba16f", "r32f", "rgba32f"), the frame's by default. `depth`: "depth32f" or nil.
 ---`samples`: 0 the frame's, 1, 2, 4, 8. `blend`: "none", "alpha", "add", "premultiplied",
 ---"multiply", one or one per colour. `depth_test`: "off", "less", "less_equal", "equal",
 ---"greater", "greater_equal", "always". `cull`: "none", "back", "front", "batch".
 ---`topology`: "triangles", "triangle_strip", "lines", "points".
----@param desc {kind: string?, name: string?, vertex: string?, fragment: string, colors: string|string[]?, depth: string?, samples: integer?, blend: string|string[]?, depth_test: string?, depth_write: boolean?, cull: string?, topology: string?}
+---@param desc {kind: string?, name: string?, vertex: string?, fragment: string?, compute: string?, colors: string|string[]?, depth: string?, samples: integer?, blend: string|string[]?, depth_test: string?, depth_write: boolean?, cull: string?, topology: string?}
 ---@return wxl.Pipeline|nil pipeline
 ---@return string|nil reason
 function render.CreatePipeline(desc) end
@@ -3891,6 +3892,29 @@ function render.ReplaceShader(name, stage, spirv) end
 ---@return true|nil ok
 ---@return string|nil reason
 function render.RestoreShader(name, stage) end
+
+---Came with abi 0.1.34: a mod whose mod.json asks for an older abi cannot use it.
+---Runs a compute pipeline over x * y * z workgroups inside OnRenderPoint, outside a pass: the
+---frame's drawing stops for it. What it writes through buffer addresses is seen after it.
+---`push`: a table of numbers (each a 32-bit float) or a string of bytes, up to 128 bytes; nil for none.
+---@param pipeline wxl.Pipeline
+---@param x integer
+---@param y integer
+---@param z integer
+---@param push? number[]|string
+---@return true|nil ok
+---@return string|nil reason
+function render.Dispatch(pipeline, x, y, z, push) end
+
+---Came with abi 0.1.34: a mod whose mod.json asks for an older abi cannot use it.
+---Writes matrices into the open frame and answers their address on the GPU, read until the frame
+---ends: a table of numbers, 12 a matrix (three rows of four), or a string of bytes, 48 a matrix.
+---No bound on their count but 16 MiB at once. The address goes into a program's push constants
+---as two 32-bit words, low first (a string of bytes).
+---@param matrices number[]|string
+---@return number|nil address
+---@return string|nil reason
+function render.BonePalette(matrices) end
 
 ---@class wxl.ModInfo
 ---@field id string
