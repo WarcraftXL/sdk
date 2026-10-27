@@ -3609,6 +3609,7 @@ namespace wxl::lua::shims
             lua_pop(L, 1);
             style.feather     = FieldNumber(L, index, "feather", 0.0f, where);
             style.radial_fade = FieldNumber(L, index, "radial_fade", 0.0f, where);
+            style.occluded_alpha = FieldNumber(L, index, "occluded_alpha", 0.0f, where);
             return true;
         }
 
@@ -3702,7 +3703,7 @@ namespace wxl::lua::shims
             stats.struct_size       = sizeof stats;
             const wxl_result result = api->stats(&stats);
             if (result != WXL_OK) return PushResultFailure(L, result);
-            lua_createtable(L, 0, 14);
+            lua_createtable(L, 0, 16);
             const auto field = [&](const char* name, double value) {
                 lua_pushnumber(L, value);
                 lua_setfield(L, -2, name);
@@ -3721,6 +3722,8 @@ namespace wxl::lua::shims
             field("textures", stats.textures);
             field("textures_loading", stats.textures_loading);
             field("shadows", stats.shadows);
+            field("occluded", stats.occluded);
+            field("reused", stats.reused);
             return 1;
         }
 

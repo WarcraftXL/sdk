@@ -707,7 +707,7 @@ namespace
                 "shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, "
                 "texture: string|table?, texture_right: number?, texture_bottom: number?, uv: \"fit\"|\"tile\"|\"world\"?, "
                 "uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, "
-                "blend: \"alpha\"|\"add\"|\"modulate\"?, feather: number?, radial_fade: number?}";
+                "blend: \"alpha\"|\"add\"|\"modulate\"?, feather: number?, radial_fade: number?, occluded_alpha: number?}";
             const std::string about =
                 "---`shape.kind` says which fields it reads: line `points` (`closed`, `on_ground`); circle `center`, `radius`;\n"
                 "---ring and `inner`; sector and `facing`, `angle` (radians), `inner`; rectangle `center`, `size` (x along\n"
@@ -722,7 +722,9 @@ namespace
                 "---A ground shape's inside takes a `texture` (a BLP path, or {path, right, bottom} as wxl.texture.Make\n"
                 "---answers), laid by `uv` \"fit\", \"tile\" or \"world\" (`uv_size`, `uv_rotation`, `uv_offset`), tinted by\n"
                 "---`fill_color` (or `color`) and `fill_alpha`, put on the ground by `blend` \"alpha\", \"add\" or \"modulate\",\n"
-                "---faded at its border over `feather` yards and from its centre by `radial_fade` (0 to 1).\n";
+                "---faded at its border over `feather` yards and from its centre by `radial_fade` (0 to 1).\n"
+                "---Since abi 0.1.39: a box's faces and a cylinder's side and ends take the same look, each face in its own\n"
+                "---frame; `occluded_alpha` (0 to 1) draws what the scene hides of the shape at that part of its opacity.\n";
             if (name == "Draw")
                 return "---Draws a shape in the next frame of the world only: call it each frame for what follows the\n"
                        "---frame. nil, \"invalid\" for a shape refused (logged under `draw`, saying why).\n" + about +
@@ -750,7 +752,7 @@ namespace
                        "function " + owner + ".Clear() end\n\n";
             if (name == "Stats")
                 return "---What the last frame of the world drew and what it cost (every mod's shapes).\n"
-                       "---@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer, textured: integer, textures: integer, textures_loading: integer, shadows: integer}|nil stats\n"
+                       "---@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer, textured: integer, textures: integer, textures_loading: integer, shadows: integer, occluded: integer, reused: integer}|nil stats\n"
                        "---@return string|nil reason\n"
                        "function " + owner + ".Stats() end\n\n";
         }

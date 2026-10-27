@@ -87,7 +87,22 @@
 // leaves the ground as it is, the picture's colour darkens it, and the opacity says how much).
 // `feather` (yards) fades the inside out towards its border, `radial_fade` (0 to 1) from the centre
 // outwards over that part of the radius (1: from the centre itself). Any of these on a shape with
-// no texture draws its plain inside so. Volumes ignore them.
+// no texture draws its plain inside so.
+//
+// From abi 0.1.39 a box's faces and a cylinder's side and ends take the same look, each face in
+// its own frame: the picture's top towards the box's top (the top and bottom faces': towards its
+// facing; a cylinder's side: the picture once around it, its seam behind its facing). FIT and TILE
+// lay one picture over each face; WORLD lays `uv_size` yards a picture along each face's axes from
+// the world's origin, so that faces of boxes side by side join. `feather` fades each face out
+// towards its edges (a cylinder's side towards its ends), `radial_fade` from each face's middle. A
+// sphere's inside stays plain. Changing only the look of a kept shape (set_style: its texture's
+// frame, `uv_offset` each frame to scroll it, its colour) builds nothing again.
+//
+// `occluded_alpha` (abi 0.1.39, 0 to 1) shows what the scene hides of a shape tested against the
+// depth (WXL_DRAW_DEPTH_TESTED): the shape is drawn twice, first where the scene stands in front of
+// it at this part of its opacity (a selection box going under the ground, a line behind a wall),
+// then where it is seen as usual. 0 (the default) draws only what is seen. Lines, ground shapes and
+// volumes alike.
 //
 // --- Lifetimes ---------------------------------------------------------------------------------
 //
@@ -234,10 +249,15 @@ typedef struct wxl_draw_style
     uint32_t    blend;           ///< wxl_draw_blend: how the inside goes onto the ground
     float       feather;         ///< yards over which the inside fades out towards its border; 0 for none
     float       radial_fade;     ///< 0 to 1: the part of the radius over which the inside fades out; 0 for none
+    // abi 0.1.39
+    float       occluded_alpha;  ///< 0 to 1: what the scene hides of the shape drawn at this part of its opacity; 0 for none
+    uint32_t    reserved0;       ///< 0; keeps this size apart from abi 0.1.38's on 64-bit, whose padding ends where this field does
 } wxl_draw_style;
 
 /// The size of a wxl_draw_style before abi 0.1.38, which a runtime still takes.
 #define WXL_DRAW_STYLE_SIZE_0136 ((uint32_t)offsetof(wxl_draw_style, flags))
+/// The size of a wxl_draw_style of abi 0.1.38, which a runtime still takes.
+#define WXL_DRAW_STYLE_SIZE_0138 ((uint32_t)offsetof(wxl_draw_style, occluded_alpha))
 
 /// What the runtime drew in the last frame of the world, and what it cost.
 typedef struct wxl_draw_stats
@@ -258,6 +278,9 @@ typedef struct wxl_draw_stats
     uint32_t textures;         ///< textures held for shapes, loaded or not
     uint32_t textures_loading; ///< of those, still loading
     uint32_t shadows;          ///< shapes whose lines the last frame drew a shadow under
+    // abi 0.1.39
+    uint32_t occluded;         ///< shapes the last frame drew where the scene hides them too (occluded_alpha)
+    uint32_t reused;           ///< immediate shapes the last frame drew without building them again (as the frame before)
 } wxl_draw_stats;
 
 typedef struct wxl_draw_api

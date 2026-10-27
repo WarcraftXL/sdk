@@ -263,6 +263,12 @@ namespace wxl
             radial_fade = part;
             return *this;
         }
+        /// What the scene hides of the shape drawn at @p opacity of its own (abi 0.1.39).
+        DrawStyle& Occluded(float opacity)
+        {
+            occluded_alpha = opacity;
+            return *this;
+        }
     };
 
     /**

@@ -4100,8 +4100,10 @@ function draw.UnsupportedReason() end
 ---answers), laid by `uv` "fit", "tile" or "world" (`uv_size`, `uv_rotation`, `uv_offset`), tinted by
 ---`fill_color` (or `color`) and `fill_alpha`, put on the ground by `blend` "alpha", "add" or "modulate",
 ---faded at its border over `feather` yards and from its centre by `radial_fade` (0 to 1).
+---Since abi 0.1.39: a box's faces and a cylinder's side and ends take the same look, each face in its own
+---frame; `occluded_alpha` (0 to 1) draws what the scene hides of the shape at that part of its opacity.
 ---@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder", center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
----@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?}
+---@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?, occluded_alpha: number?}
 ---@return true|nil ok
 ---@return string|nil reason
 function draw.Draw(shape, style) end
@@ -4122,8 +4124,10 @@ function draw.Draw(shape, style) end
 ---answers), laid by `uv` "fit", "tile" or "world" (`uv_size`, `uv_rotation`, `uv_offset`), tinted by
 ---`fill_color` (or `color`) and `fill_alpha`, put on the ground by `blend` "alpha", "add" or "modulate",
 ---faded at its border over `feather` yards and from its centre by `radial_fade` (0 to 1).
+---Since abi 0.1.39: a box's faces and a cylinder's side and ends take the same look, each face in its own
+---frame; `occluded_alpha` (0 to 1) draws what the scene hides of the shape at that part of its opacity.
 ---@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder", center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
----@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?}
+---@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?, occluded_alpha: number?}
 ---@param duration? number
 ---@return wxl.Shape|nil shape
 ---@return string|nil reason
@@ -4138,7 +4142,7 @@ function draw.Update(self, shape) end
 
 ---The kept shape's look, from a table as Draw's.
 ---@param self wxl.Shape
----@param style {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?}
+---@param style {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?, occluded_alpha: number?}
 ---@return true|nil ok
 ---@return string|nil reason
 function draw.SetStyle(self, style) end
@@ -4147,7 +4151,7 @@ function draw.SetStyle(self, style) end
 function draw.Clear() end
 
 ---What the last frame of the world drew and what it cost (every mod's shapes).
----@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer, textured: integer, textures: integer, textures_loading: integer, shadows: integer}|nil stats
+---@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer, textured: integer, textures: integer, textures_loading: integer, shadows: integer, occluded: integer, reused: integer}|nil stats
 ---@return string|nil reason
 function draw.Stats() end
 
