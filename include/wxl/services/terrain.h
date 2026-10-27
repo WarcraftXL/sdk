@@ -71,8 +71,9 @@
 // (WXL_TERRAIN_LAYER_PASS_ROW) says which draw it is (x: 1 in the second) and whether the chunk has
 // extra layers (y). The second draw's colour is blended by the alpha the program writes. Paths
 // without that draw (the fixed-function single pass, a layer a pass) draw the client's four; so
-// does a chunk whose four come from two map chunks that do not answer the same extra layers, or
-// whose layer 0 is a reflection.
+// does a chunk whose layer 0 is a reflection. A chunk the client draws with its neighbour (maps
+// with big alpha) has both halves' layers put together by texture, their alphas added, a half
+// without a layer reading 0 for it; past four together, the four covering the most are drawn.
 //
 // A layer and a chunk also carry the map's WDT (abi 0.1.44), read when the map loads: its MPHD
 // flags say what the map's ADTs hold (retail: 0x80 adt_has_height_texturing, the height blend). The
