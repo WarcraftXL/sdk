@@ -296,8 +296,10 @@ typedef struct wxl_terrain_extra_layers
     uint32_t                count; ///< 0 to WXL_TERRAIN_EXTRA_LAYERS: layers 4 to 3 + count
     wxl_terrain_extra_layer layer[WXL_TERRAIN_EXTRA_LAYERS];
     /// Their alpha maps, WXL_TERRAIN_ALPHA_SIZE square, row by row from the chunk's north-west
-    /// corner (as MCAL), four bytes a texel: layer 4's, 5's, 6's, 7's, each laid over the layers
-    /// below it as the client lays its own (lerp(below, layer, alpha)).
+    /// corner (as MCAL), four bytes a texel: layer 4's, 5's, 6's, 7's, read as the map's own: on a
+    /// map with big alpha (MPHD 0x4, and so every map flagged 0x80) the eight layers' alphas add up
+    /// and layer 0 has what they leave, as retail; on any other each lies over the layers below it
+    /// (lerp(below, layer, alpha)).
     uint8_t alpha[WXL_TERRAIN_ALPHA_SIZE * WXL_TERRAIN_ALPHA_SIZE * 4];
 } wxl_terrain_extra_layers;
 
