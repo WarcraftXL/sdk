@@ -70,7 +70,9 @@ namespace wxl
         /// The calling mod's layer provider (abi 0.1.42): @p fn is told of each texture layer as
         /// the client makes it and answers its look; null takes it off.
         /// @p flags (abi 0.1.43): WXL_TERRAIN_LAYER_PARAMS_EVERY_DRAW, or 0.
-        static wxl_result SetLayerProvider(wxl_terrain_layer_fn fn, void* user = nullptr, uint32_t flags = 0)
+        /// @p chunk_fn (abi 0.1.44): a chunk's layers past the client's four, or null.
+        static wxl_result SetLayerProvider(wxl_terrain_layer_fn fn, void* user = nullptr, uint32_t flags = 0,
+                                           wxl_terrain_chunk_fn chunk_fn = nullptr)
         {
             const wxl_terrain_api* api = Raw();
             if (!detail::Carries(api, &wxl_terrain_api::set_layer_provider)) return WXL_E_UNSUPPORTED;
@@ -80,6 +82,7 @@ namespace wxl
             provider.fn          = fn;
             provider.user        = user;
             provider.flags       = flags;
+            provider.chunk_fn    = chunk_fn;
             return api->set_layer_provider(&provider);
         }
 

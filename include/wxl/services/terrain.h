@@ -53,6 +53,33 @@
 // so its programs never read another chunk's. The client's own programs read neither: a stock
 // chunk is drawn as before.
 //
+// Since abi 0.1.44 a provider may also answer a chunk's layers past the client's four (its
+// chunk_fn): the client holds four layers a chunk and draws the first four of a chunk naming more.
+// A chunk with layers past its four is drawn, on the vertex-program single-pass path, in two draws
+// of the same pixel program:
+//
+//   first   as the client draws it: its four layers on samplers 0 to 3, its alpha maps on 4
+//   second  alpha-blended over the first (source alpha, inverse source alpha; depth tested, not
+//           written): layers 4 to 7 on samplers 0 to 3, at texture coordinates 0 to 3 (their own
+//           scales; an extra layer is drawn without its animation)
+//
+// In both draws the program sees every layer: the alpha maps of layers 4 to 7 on sampler
+// WXL_TERRAIN_EXTRA_ALPHA_SAMPLER (red to alpha), layer k's numbers in c(32 + k) for k to 7, the
+// extra textures of layers 4 and 5 on WXL_TERRAIN_EXTRA_SAMPLER and the next, and each layer's
+// texture coordinates as a function of the alpha maps' own (WXL_TERRAIN_LAYER_COORD_ROW + k: u =
+// alpha u * x + z, v = alpha v * y + w), so it can weigh all eight in either draw. The pass row
+// (WXL_TERRAIN_LAYER_PASS_ROW) says which draw it is (x: 1 in the second) and whether the chunk has
+// extra layers (y). The second draw's colour is blended by the alpha the program writes. Paths
+// without that draw (the fixed-function single pass, a layer a pass) draw the client's four; so
+// does a chunk whose four come from two map chunks that do not answer the same extra layers, or
+// whose layer 0 is a reflection.
+//
+// A layer and a chunk also carry the map's WDT (abi 0.1.44), read when the map loads: its MPHD
+// flags say what the map's ADTs hold (retail: 0x80 adt_has_height_texturing, the height blend). The
+// client of 3.3.5a reads uncompressed alpha maps of 4096 bytes only under 0x4 (adt_has_big_alpha),
+// where retail reads them so under 0x4 or 0x80: a map loaded with 0x80 and without 0x4 is given 0x4
+// as it loads, so its alpha maps are read as retail reads them.
+//
 // --- Editing ----------------------------------------------------------------------------------
 //
 //   set_heights  sets vertices to absolute heights, many at once
@@ -192,6 +219,10 @@ typedef struct wxl_terrain_layer
     const void* file;      ///< the ADT's bytes as the client read them (a whole file: MVER, MHDR, ...)
     uint32_t    file_size;
     uint32_t    reserved;  ///< 0
+    // --- abi 0.1.44 (read when struct_size reaches past them)
+    const void* map_file;      ///< the map's WDT as the runtime read it when the map loaded (MVER, MPHD, MAIN, ...); null for none
+    uint32_t    map_file_size;
+    uint32_t    reserved2;     ///< 0
 } wxl_terrain_layer;
 
 /// A layer provider's answer, as the runtime hands it (the previous provider's answer, or the
@@ -210,9 +241,69 @@ typedef struct wxl_terrain_layer_look
 /// The pixel constant of layer 0's numbers in those programs; layer k's is this + k.
 #define WXL_TERRAIN_LAYER_PARAM_ROW 32u
 
+/// The sampler of the alpha maps of layers 4 to 7 (abi 0.1.44), red to alpha.
+#define WXL_TERRAIN_EXTRA_ALPHA_SAMPLER 9u
+/// The sampler of layer 4's extra texture; layer 5's is the next. Layers 6 and 7 have none: the
+/// single-pass programs' sixteen samplers hold no more.
+#define WXL_TERRAIN_EXTRA_SAMPLER 10u
+/// The pixel constant of layer 0's texture coordinates as a function of the alpha maps'; layer k's
+/// is this + k, for k to 7.
+#define WXL_TERRAIN_LAYER_COORD_ROW 41u
+/// The pixel constant saying which draw it is (x: 0 first, 1 second) and whether the chunk has
+/// layers past its four (y: 1).
+#define WXL_TERRAIN_LAYER_PASS_ROW 40u
+/// Extra layers a chunk: layers 4 to 7.
+#define WXL_TERRAIN_EXTRA_LAYERS 4u
+/// The side of a chunk's alpha map, in texels.
+#define WXL_TERRAIN_ALPHA_SIZE 64u
+
 /// wxl_terrain_layer_provider.flags (abi 0.1.43): the layers' numbers are written at every
 /// single-pass draw of every chunk, zeros for a layer that has none.
 #define WXL_TERRAIN_LAYER_PARAMS_EVERY_DRAW 0x1u
+
+/// A map chunk whose client layers are made, what a provider's chunk_fn is told (abi 0.1.44).
+/// Valid during the call only.
+typedef struct wxl_terrain_chunk
+{
+    uint32_t    struct_size;
+    int32_t     tile_x;      ///< the ADT's tile
+    int32_t     tile_y;
+    int32_t     chunk_x;     ///< the map chunk, as wxl.terrain names it
+    int32_t     chunk_y;
+    uint32_t    layers;      ///< the client's layers on it: 4 (a chunk with fewer has no extra layers)
+    uint32_t    texture[4];  ///< their MTEX textures, in order
+    const void* file;        ///< the root ADT's bytes
+    uint32_t    file_size;
+    const void* map_file;    ///< the map's WDT, as wxl_terrain_layer's
+    uint32_t    map_file_size;
+    uint32_t    reserved;    ///< 0
+} wxl_terrain_chunk;
+
+/// One layer past the client's four.
+typedef struct wxl_terrain_extra_layer
+{
+    const char* texture;        ///< its texture file (a BLP path); copied
+    const char* extra_texture;  ///< as a look's; null for none (layers 6 and 7: never bound)
+    float       texture_scale;  ///< as a look's
+    float       params[4];      ///< as a look's
+    uint32_t    flags;          ///< its MCLY flags
+} wxl_terrain_extra_layer;
+
+/// A chunk_fn's answer: the chunk's layers past its four, and their alpha maps.
+typedef struct wxl_terrain_extra_layers
+{
+    uint32_t                struct_size;
+    uint32_t                count; ///< 0 to WXL_TERRAIN_EXTRA_LAYERS: layers 4 to 3 + count
+    wxl_terrain_extra_layer layer[WXL_TERRAIN_EXTRA_LAYERS];
+    /// Their alpha maps, WXL_TERRAIN_ALPHA_SIZE square, row by row from the chunk's north-west
+    /// corner (as MCAL), four bytes a texel: layer 4's, 5's, 6's, 7's, each laid over the layers
+    /// below it as the client lays its own (lerp(below, layer, alpha)).
+    uint8_t alpha[WXL_TERRAIN_ALPHA_SIZE * WXL_TERRAIN_ALPHA_SIZE * 4];
+} wxl_terrain_extra_layers;
+
+/// Called on the main thread when a chunk's four client layers are made, while a provider with a
+/// chunk_fn is set; it fills @p out (count 0 leaves the chunk as the client draws it).
+typedef void(WXL_CALL* wxl_terrain_chunk_fn)(void* user, const wxl_terrain_chunk* chunk, wxl_terrain_extra_layers* out);
 
 /// Called on the main thread for each layer the client makes, while a provider is set.
 typedef void(WXL_CALL* wxl_terrain_layer_fn)(void* user, const wxl_terrain_layer* layer, wxl_terrain_layer_look* look);
@@ -225,6 +316,8 @@ typedef struct wxl_terrain_layer_provider
     void*                user;
     // --- abi 0.1.43 (read when struct_size reaches past it)
     uint32_t             flags; ///< WXL_TERRAIN_LAYER_PARAMS_EVERY_DRAW, or 0
+    // --- abi 0.1.44
+    wxl_terrain_chunk_fn chunk_fn; ///< a chunk's layers past the client's four; null for none
 } wxl_terrain_layer_provider;
 
 typedef struct wxl_terrain_api
