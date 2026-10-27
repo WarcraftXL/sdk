@@ -262,6 +262,13 @@ namespace wxl::host
         return std::string();
     }
 
+    const Manifest* ModHost::ManifestOf(ModToken token) const
+    {
+        if (const LoadedMod* mod = ModOf(token)) return &mod->manifest;
+        if (token != 0 && token == loaded_.size() + 1) return loadingManifest_;
+        return nullptr;
+    }
+
     bool ModHost::BuiltAbiOf(ModToken token, AbiVersion& out) const
     {
         if (const LoadedMod* mod = ModOf(token))
@@ -453,17 +460,20 @@ namespace wxl::host
         // Names the mod in what its query and load do, before it is in loaded_.
         struct Loading
         {
-            std::string& id;
-            bool&        abiKnown;
-            bool&        disabled;
+            std::string&     id;
+            bool&            abiKnown;
+            bool&            disabled;
+            const Manifest*& manifest;
             ~Loading()
             {
                 id.clear();
                 abiKnown = false;
                 disabled = false;
+                manifest = nullptr;
             }
-        } loading{loadingId_, loadingAbiKnown_, loadingDisabledSet_};
-        loadingId_ = manifest.id;
+        } loading{loadingId_, loadingAbiKnown_, loadingDisabledSet_, loadingManifest_};
+        loadingId_       = manifest.id;
+        loadingManifest_ = &manifest;
 
         // The first mod code to run, and by contract side-effect free.
         QueryCall query{binary.Entries().query, nullptr};
@@ -546,7 +556,8 @@ namespace wxl::host
             Refuse(problem.id, problem.directory_name, problem.directory, Verdict::Refuse,
                    problem.message);
 
-        const LoadOrder order = OrderByLoadAfter(found.mods);
+        LoadOrder order = OrderByLoadAfter(found.mods);
+        opcodes_        = DeclareOpcodes(order);
         for (const DiscoveryProblem& problem : order.excluded)
             Refuse(problem.id, problem.directory_name, problem.directory, Verdict::Refuse,
                    problem.message);

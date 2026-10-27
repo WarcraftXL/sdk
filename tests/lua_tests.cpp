@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "fake_services.hpp"
+#include "wxl/services/net.hpp"
 #include "wxl/objects/fields.hpp"
 #include "wxl/host/event_bus.hpp"
 #include "wxl/host/log.hpp"
@@ -3105,6 +3106,146 @@ print("stats " .. stats.textures .. " " .. stats.resident .. " " .. stats.byte_l
             Check(sink.Has("[wxl.tex-a] stats 3 2 67108864"), "Stats answers a table");
             host.Shutdown();
         }
+        if (g_failures) sink.Dump();
+    }
+
+    Section("opcodes of a mod's own in Lua");
+    {
+        using wxltest::FakeNet;
+        const fs::path mods = MakeTree(scratch, "net", binary, fs::path());
+        WriteFile(mods / "pinger" / "mod.json",
+                  LuaManifest("wxl.pinger", "\"net\": { \"opcodes\": [ \"0x521-0x526\" ] }"));
+        WriteFile(mods / "pinger" / "init.lua", R"(
+local net = wxl.net
+print("claim " .. tostring(net.Claim(0x521)) .. " " .. tostring(net.Claim(0x522)) .. " " ..
+      tostring(net.Claim(0x523)) .. " " .. tostring(net.Claim(0x524)) .. " " .. tostring(net.Claim(0x522)))
+print("outside " .. tostring(select(2, net.Claim(0x530))))
+print("stock " .. tostring(select(2, net.Claim(0x100))))
+print("unclaimed " .. tostring(select(2, net.SetHandler(0x525, function() end))))
+net.SetHandler(0x522, function(r, op)
+    local seq, x, name, guid = r:U32(), r:F32(), r:String(), r:PackedGuid()
+    print("got " .. string.format("0x%X", op) .. " " .. seq .. " " .. x .. " " .. name .. " " .. guid .. " " ..
+          tostring(r:AtEnd()))
+end)
+net.SetHandler(0x523, function(r) r:U32() r:U32() end)
+print("compressed " .. tostring(net.SetCompressed(0x522, 0x524)))
+print("early " .. tostring(select(2, net.Send(0x521, net.Writer():U32(1)))) .. " " .. tostring(net.Heard()))
+local z = net.Deflate("abcabcabc")
+print("zip " .. tostring(net.Inflate(z)))
+local w = net.Writer(4)
+w:U32(1):U8(2)
+print("full " .. tostring(w:Ok()) .. " " .. w:Size() .. " " .. tostring(select(2, net.Send(0x521, w))))
+print("state " .. net.State() .. " " .. string.format("0x%X", net.ReservedOpcodeLimit()) .. " " .. net.MaxSend())
+local r = net.Reader("\1\0")
+print("short " .. r:U32() .. " " .. tostring(r:Ok()))
+wxl.script.RegisterFunction("NetPing", function()
+    print("ping " .. tostring(net.Send(0x521, net.Writer():U16(0x1234):String("hi"):PackedGuid("0x0000000000000F00"))) ..
+          " " .. tostring(net.Heard()))
+end)
+)");
+        WriteFile(mods / "thief" / "mod.json", LuaManifest("wxl.thief", "\"loadAfter\": [ \"wxl.pinger\" ]"));
+        WriteFile(mods / "thief" / "init.lua", R"(
+print("held " .. tostring(select(2, wxl.net.Claim(0x522))) .. " declared " .. tostring(select(2, wxl.net.Claim(0x525))) ..
+      " free " .. tostring(wxl.net.Claim(0x600)))
+print("not mine " .. tostring(select(2, wxl.net.Send(0x522, "x"))) .. " " .. tostring(select(2, wxl.net.Release(0x522))))
+)");
+        WriteFile(mods / "twin" / "mod.json",
+                  LuaManifest("wxl.twin", "\"net\": { \"opcodes\": [ \"0x526\" ] }, \"loadAfter\": [ \"wxl.pinger\" ]"));
+        WriteFile(mods / "twin" / "init.lua", "print('twin ran')\n");
+
+        FakeNet::Claims().clear();
+        wxltest::FakeScript::Live() = WXL_SCRIPT_CONTEXT_GAME;
+        wxltest::FakeScript::Functions().clear();
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_SCRIPT_SERVICE, WXL_SCRIPT_SERVICE_VERSION, wxltest::FakeScript::Table()});
+        config.services.push_back(PublishedService{WXL_NET_SERVICE, WXL_NET_SERVICE_VERSION, FakeNet::Table()});
+        ModHost host(std::move(config));
+        host.LoadAll();
+        host.Stage(WXL_STAGE_READY);
+        FakeNet::Connect();
+
+        Check(sink.Has("[wxl.pinger] claim true true true true true"), "a mod claims the numbers its mod.json declares, again too");
+        Check(sink.Has("[wxl.pinger] outside invalid") && sink.Has("0x530 is not among them"),
+              "a number outside its declared ones is refused, saying so");
+        Check(sink.Has("[wxl.pinger] stock invalid") && sink.Has("one of the client's own numbers"),
+              "a number of the client's own is refused without \"stock\"");
+        Check(sink.Has("[wxl.pinger] unclaimed invalid"), "a handler for a number not claimed is refused");
+        Check(sink.Has("[wxl.pinger] compressed true"), "a compressed number pairs with a plain one");
+        Check(sink.Has("[wxl.pinger] early failed false"), "nothing is sent before the server speaks");
+        Check(sink.Has("[wxl.pinger] zip abcabcabc"), "Deflate and Inflate go round");
+        Check(sink.Has("[wxl.pinger] full false 4 invalid"), "a writer past its limit fails, and is not sent");
+        Check(sink.Has("[wxl.pinger] state authenticated 0x520 10000"), "the state, the limit and the largest body read");
+        Check(sink.Has("[wxl.pinger] short 0 false"), "a short read answers 0 and fails the reader");
+        Check(sink.Has("[wxl.thief] held invalid declared invalid free true") && sink.Has("0x522 is claimed by wxl.pinger") &&
+                  sink.Has("0x525 is declared by wxl.pinger"),
+              "another mod's number is refused, held or declared, and the log names its mod");
+        Check(sink.Has("[wxl.thief] not mine invalid not_found"), "nor can it send or release one");
+        Check(!sink.Has("twin ran") && sink.Has("declares opcode 0x526, which wxl.pinger declares"),
+              "a mod declaring a number another declared first does not load");
+
+        wxl::ByteWriter message;
+        message.U32(77).F32(0.5f).String("dig").PackedGuid(0x0000000000000F00ull);
+        const std::string bytes(reinterpret_cast<const char*>(message.Data()), message.Size());
+        Check(FakeNet::Deliver(0x522, bytes) && sink.Has("[wxl.pinger] got 0x522 77 0.5 dig 0x0000000000000F00 true"),
+              "a message reaches the mod's function as a reader over its body");
+        std::string packed(4, '\0');
+        const uint32_t want = static_cast<uint32_t>(bytes.size());
+        std::memcpy(&packed[0], &want, 4);
+        packed += FakeNet::DeflateStored(bytes.data(), bytes.size());
+        sink.lines.clear();
+        Check(FakeNet::Deliver(0x524, packed) && sink.Has("[wxl.pinger] got 0x522 77"),
+              "a compressed message is inflated and handed to the plain number's function");
+        Check(FakeNet::Deliver(0x523, std::string("\1\2\3", 3)) && sink.Has("malformed 0x523 from the server"),
+              "a handler that reads past the end is logged as malformed");
+        FakeNet::Deliver(0x523, std::string("\1\2\3", 3));
+        Check(sink.Count("malformed 0x523") == 1, "once per number");
+
+        wxl_script_call ping = ScriptCallOf({});
+        wxltest::FakeScript::Invoke("NetPing", ping);
+        Check(sink.Has("[wxl.pinger] ping true true") && FakeNet::Sent().back().first == 0x521 &&
+                  FakeNet::Bodies().back() == std::string("\x34\x12hi\0\x02\x0F", 7),
+              "once the server spoke, the mod sends its body as it wrote it");
+        FakeNet::Connect();
+        sink.lines.clear();
+        wxl_script_call again = ScriptCallOf({});
+        wxltest::FakeScript::Invoke("NetPing", again);
+        Check(sink.Has("[wxl.pinger] ping nil false"), "and a new connection closes its gate again");
+
+        host.Shutdown();
+        Check(FakeNet::Claimed().empty(), "every number goes back when the mods go");
+        if (g_failures) sink.Dump();
+    }
+
+    Section("the net-echo example");
+    {
+        using wxltest::FakeNet;
+        const fs::path mods = MakeTree(scratch, "net-echo", binary, fs::path());
+        fs::copy(example.parent_path() / "net-echo", mods / "net-echo", fs::copy_options::recursive);
+        FakeNet::Claims().clear();
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_NET_SERVICE, WXL_NET_SERVICE_VERSION, FakeNet::Table()});
+        ModHost host(std::move(config));
+        host.LoadAll();
+        host.Stage(WXL_STAGE_READY);
+        FakeNet::Connect();
+        const size_t          before = FakeNet::Sent().size();
+        const wxl_update_args tick{6.0f};
+        host.Raise(WXL_EV_Update, &tick);
+        Check(FakeNet::Claimed().count(0x521) && FakeNet::Claimed().count(0x522) && FakeNet::Sent().size() == before,
+              "the example claims its two numbers and sends nothing before the server's hello");
+        wxl::ByteWriter hello;
+        hello.U32(0).U32(0).String("");
+        FakeNet::Deliver(0x522, std::string(reinterpret_cast<const char*>(hello.Data()), hello.Size()));
+        host.Raise(WXL_EV_Update, &tick);
+        Check(sink.Has("[wxl.net-echo] the server knows the echo") && FakeNet::Sent().size() == before + 1 &&
+                  FakeNet::Sent().back().first == 0x521,
+              "after the hello it pings");
+        const std::string ping = FakeNet::Bodies().back();
+        FakeNet::Deliver(0x522, ping);
+        Check(sink.Has("[wxl.net-echo] echo 1: \"ping 1\" in"), "and times the echo");
+        host.Shutdown();
         if (g_failures) sink.Dump();
     }
 

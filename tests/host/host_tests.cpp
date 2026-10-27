@@ -722,6 +722,30 @@ int main(int argc, char** argv)
                       &message),
               "an unknown field is refused");
         Check(Contains(message, "line 7"), "and its line is named");
+        {
+            Manifest    net;
+            std::string error;
+            Check(ParseManifest(ManifestText("wxl.x", "\"net\": { \"opcodes\": [ \"0x521-0x52A\", 1400, \"0x600\" ] }"),
+                                net, error) &&
+                      net.net.opcodes.size() == 3 && net.net.opcodes[0].first == 0x521 &&
+                      net.net.opcodes[0].last == 0x52A && net.net.opcodes[1].first == 1400 &&
+                      net.net.Declares(0x525) && net.net.Declares(0x600) && !net.net.Declares(0x52B) && !net.net.stock,
+                  "net.opcodes reads ranges, numbers and hex strings");
+            Check(ParseManifest(ManifestText("wxl.x", "\"net\": { \"stock\": true, \"opcodes\": [ \"0x12E\" ] }"), net,
+                                error) &&
+                      net.net.stock && net.net.Declares(0x12E),
+                  "a client's own number is declared with stock");
+        }
+        Check(Rejects(ManifestText("wxl.x", "\"net\": { \"opcodes\": [ \"0x12E\" ] }"), "one of the client's own numbers"),
+              "a client's own number without stock is refused");
+        Check(Rejects(ManifestText("wxl.x", "\"net\": { \"opcodes\": [ \"0x52A-0x521\" ] }"), "whose first number is the lower"),
+              "a backwards range is refused");
+        Check(Rejects(ManifestText("wxl.x", "\"net\": { \"opcodes\": [ \"0x10000\" ] }"), "net.opcodes[0]"),
+              "a number past 0xFFFF is refused");
+        Check(Rejects(ManifestText("wxl.x", "\"net\": { \"opcodes\": [ \"0x521-0x525\", \"0x525\" ] }"), "overlaps"),
+              "overlapping entries are refused");
+        Check(Rejects(ManifestText("wxl.x", "\"net\": { \"port\": 1 }"), "unknown field 'port'"),
+              "an unknown field of net is refused");
         Check(Rejects("[]", "must be an object"), "a non-object document is refused");
         Check(Rejects("{ \"id\": }", "line 1"), "a JSON error carries its line");
     }
@@ -772,6 +796,28 @@ int main(int argc, char** argv)
         std::vector<ModCandidate> self;
         self.push_back(Candidate("s", "wxl.s", {"wxl.s"}));
         Check(OrderByLoadAfter(self).excluded.size() == 1, "a mod loading after itself is a cycle");
+
+        std::vector<ModCandidate> speakers;
+        speakers.push_back(Candidate("a", "wxl.first"));
+        speakers.back().manifest.net.opcodes.push_back(OpcodeRange{0x521, 0x530});
+        speakers.push_back(Candidate("b", "wxl.second"));
+        speakers.back().manifest.net.opcodes.push_back(OpcodeRange{0x540, 0x540});
+        speakers.back().manifest.net.opcodes.push_back(OpcodeRange{0x52F, 0x531});
+        speakers.push_back(Candidate("c", "wxl.script"));
+        speakers.back().manifest.binaries.clear();
+        speakers.back().manifest.lua = "init.lua";
+        speakers.back().manifest.net.opcodes.push_back(OpcodeRange{0x531, 0x532});
+        LoadOrder             spoken   = OrderByLoadAfter(speakers);
+        const OpcodeDeclarations declared = DeclareOpcodes(spoken);
+        Check(Ids(spoken.ordered) == "wxl.first wxl.script" && spoken.excluded.size() == 1 &&
+                  spoken.excluded[0].id == "wxl.second" &&
+                  Contains(spoken.excluded[0].message, "declares opcode 0x52F, which wxl.first declares"),
+              "a mod declaring a number an earlier one declared is taken out, naming the number and the mod");
+        const DeclaredOpcodes* first  = declared.Find(0x525);
+        const DeclaredOpcodes* script = declared.Find(0x532);
+        Check(first && first->mod == "wxl.first" && first->served_by == "wxl.first" && script &&
+                  script->mod == "wxl.script" && script->served_by == "wxl.lua" && !declared.Find(0x540),
+              "the rest are kept with their mod, a script mod's served by wxl.lua; the excluded one's are not");
     }
 
     Section("discovery");

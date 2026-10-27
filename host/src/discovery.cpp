@@ -4,6 +4,7 @@
 #include "wxl/host/discovery.hpp"
 
 #include <algorithm>
+#include <cstdio>
 #include <set>
 #include <unordered_map>
 #include <utility>
@@ -213,5 +214,57 @@ namespace wxl::host
             result.excluded.push_back(std::move(problem));
         }
         return result;
+    }
+
+    const DeclaredOpcodes* OpcodeDeclarations::Find(uint32_t opcode) const
+    {
+        for (const DeclaredOpcodes& run : runs)
+            if (opcode >= run.range.first && opcode <= run.range.last) return &run;
+        return nullptr;
+    }
+
+    OpcodeDeclarations DeclareOpcodes(LoadOrder& order)
+    {
+        OpcodeDeclarations declared;
+        std::vector<ModCandidate> kept;
+        kept.reserve(order.ordered.size());
+        for (ModCandidate& candidate : order.ordered)
+        {
+            const Manifest&        manifest = candidate.manifest;
+            const DeclaredOpcodes* clash    = nullptr;
+            uint32_t               number   = 0;
+            for (const OpcodeRange& range : manifest.net.opcodes)
+            {
+                for (const DeclaredOpcodes& run : declared.runs)
+                {
+                    if (range.first > run.range.last || run.range.first > range.last) continue;
+                    clash  = &run;
+                    number = std::max(range.first, run.range.first);
+                    break;
+                }
+                if (clash) break;
+            }
+            if (clash)
+            {
+                char text[16];
+                std::snprintf(text, sizeof text, "0x%X", static_cast<unsigned>(number));
+                DiscoveryProblem problem;
+                problem.directory_name = candidate.directory_name;
+                problem.directory      = candidate.directory;
+                problem.id             = manifest.id;
+                problem.message        = std::string("its mod.json declares opcode ") + text + ", which " +
+                                  clash->mod +
+                                  " declares and loads first; two mods cannot answer the same message. "
+                                  "Give one of them other numbers in 'net.opcodes'";
+                order.excluded.push_back(std::move(problem));
+                continue;
+            }
+            const std::string served = manifest.lua.empty() ? manifest.id : std::string(kScriptRuntimeId);
+            for (const OpcodeRange& range : manifest.net.opcodes)
+                declared.runs.push_back(DeclaredOpcodes{range, manifest.id, served});
+            kept.push_back(std::move(candidate));
+        }
+        order.ordered = std::move(kept);
+        return declared;
     }
 } // namespace wxl::host

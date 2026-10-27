@@ -62,6 +62,36 @@ namespace wxl::host
      * loads after one of them.
      */
     LoadOrder OrderByLoadAfter(const std::vector<ModCandidate>& mods);
+    /// The mod id of the runtime that runs script mods: their opcodes are claimed through it.
+    constexpr const char* kScriptRuntimeId = "wxl.lua";
+
+    /// A run of opcode numbers a manifest declares, and whose they are.
+    struct DeclaredOpcodes
+    {
+        OpcodeRange range;
+        std::string mod;       ///< the manifest's id
+        std::string served_by; ///< the loaded mod that claims them at run time: the mod itself,
+                               ///< or wxl.lua for a script mod
+    };
+
+    /// Every opcode number the manifests of a load order declare.
+    struct OpcodeDeclarations
+    {
+        std::vector<DeclaredOpcodes> runs;
+
+        /// The run holding @p opcode, or null when no manifest declares it.
+        const DeclaredOpcodes* Find(uint32_t opcode) const;
+    };
+
+    /**
+     * @brief Collects the opcode numbers each candidate's manifest declares, in load order, and
+     *        takes out every candidate that declares a number an earlier one already holds.
+     *
+     * Read before any code of a mod runs: two mods that would answer the same message cannot
+     * both load, and the one that loads first keeps it. The host and wxl.lua run it over the same
+     * order, so both take out the same mods.
+     */
+    OpcodeDeclarations DeclareOpcodes(LoadOrder& order);
 } // namespace wxl::host
 
 #endif // WXL_HOST_DISCOVERY_HPP

@@ -237,6 +237,16 @@ the right (beams: soft to their sides, a masked picture shimmering up them, fadi
 as you look along them); `Stats` must count particles alive and drawn, and an empty burst must be
 refused.
 
+Phase 30 checks opcodes of a mod's own (abi 0.1.41), on both clients, without a server module:
+the self test's mod.json declares 0xFF00-0xFF03, which no server answers. In the world the state
+must be `authenticated`, the limit 0x520, the largest body 10000 bytes, and there must be a
+connection. Declared numbers claim; one outside the declared range, one of the client's own
+(0x12E) and one past 0xFFFF must be refused. A handler and a compressed pairing are set; since the
+server never sent one of these numbers, `Heard` must be false and `Send` refused with `failed`
+(the send gate: nothing reaches the server, which would close the connection). A writer and a
+reader must go round, a read past the end fail the reader, `Deflate` and `Inflate` go round, and
+`Release` give a number back once. The connection must stay up through the phase.
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the

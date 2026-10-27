@@ -246,7 +246,12 @@ namespace wxl::lua
 
         std::vector<host::ModCandidate> candidates = host::Discover(directory).mods;
         AddBareFolders(directory, candidates);
-        const host::LoadOrder order = host::OrderByLoadAfter(candidates);
+        host::LoadOrder order = host::OrderByLoadAfter(candidates);
+        // The host takes out the same mods, in the same order, and logs why.
+        opcodes_ = host::DeclareOpcodes(order);
+        for (const host::DiscoveryProblem& problem : order.excluded)
+            if (problem.message.rfind("its mod.json declares opcode", 0) == 0)
+                Log(WXL_LOG_WARN, "not loading " + problem.id + ": " + problem.message);
         for (const host::ModCandidate& candidate : order.ordered)
         {
             if (candidate.manifest.lua.empty()) continue;

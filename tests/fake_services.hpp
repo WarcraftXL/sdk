@@ -9,6 +9,7 @@
 #ifndef WXL_TEST_FAKE_SERVICES_HPP
 #define WXL_TEST_FAKE_SERVICES_HPP
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <cstring>
@@ -2665,13 +2666,30 @@ namespace wxltest
     };
 
     // --- wxl.net ----------------------------------------------------------------------------
+    //
+    // The runtime's net in small: claims, handlers, compressed numbers, the send gate. Deliver
+    // plays the server's part; its zlib is stored blocks only, which the real one also reads.
 
     struct FakeNet
     {
-        static std::set<uint32_t>& Claimed()
+        struct Claim
         {
-            static std::set<uint32_t> claimed;
-            return claimed;
+            wxl_net_handler_fn handler = nullptr;
+            void*              user    = nullptr;
+            uint32_t           plain   = 0;
+        };
+
+        static std::map<uint32_t, Claim>& Claims()
+        {
+            static std::map<uint32_t, Claim> claims;
+            return claims;
+        }
+
+        static std::set<uint32_t> Claimed()
+        {
+            std::set<uint32_t> numbers;
+            for (const auto& [opcode, claim] : Claims()) numbers.insert(opcode);
+            return numbers;
         }
 
         static int& Releases()
@@ -2680,34 +2698,190 @@ namespace wxltest
             return releases;
         }
 
+        /// What was sent: the opcode and the body's size.
         static std::vector<std::pair<uint32_t, uint32_t>>& Sent()
         {
             static std::vector<std::pair<uint32_t, uint32_t>> sent;
             return sent;
         }
 
+        /// The bodies, beside Sent().
+        static std::vector<std::string>& Bodies()
+        {
+            static std::vector<std::string> bodies;
+            return bodies;
+        }
+
+        static uint32_t& ConnectionNumber()
+        {
+            static uint32_t connection = 1;
+            return connection;
+        }
+
+        static bool& HeardFlag()
+        {
+            static bool heard = false;
+            return heard;
+        }
+
+        /// A new connection: the gate closes until the server speaks.
+        static void Connect()
+        {
+            ++ConnectionNumber();
+            HeardFlag() = false;
+        }
+
+        /// A message of the server's: true when a claim took it.
+        static bool Deliver(uint32_t opcode, const std::string& body)
+        {
+            const auto held = Claims().find(opcode);
+            if (held == Claims().end()) return false;
+            HeardFlag()              = true;
+            const uint32_t   plain   = held->second.plain;
+            std::string      bytes   = body;
+            if (plain)
+            {
+                uint32_t want = 0;
+                if (body.size() < 4) return true;
+                std::memcpy(&want, body.data(), 4);
+                if (!InflateStored(body.data() + 4, body.size() - 4, bytes) || bytes.size() != want) return true;
+            }
+            const auto target = Claims().find(plain ? plain : opcode);
+            if (target == Claims().end() || !target->second.handler) return true;
+            target->second.handler(target->second.user, plain ? plain : opcode, bytes.empty() ? nullptr : bytes.data(),
+                                   static_cast<uint32_t>(bytes.size()));
+            return true;
+        }
+
+        static uint32_t Adler(const uint8_t* data, size_t size)
+        {
+            uint32_t a = 1, b = 0;
+            for (size_t i = 0; i < size; ++i)
+            {
+                a = (a + data[i]) % 65521u;
+                b = (b + a) % 65521u;
+            }
+            return (b << 16) | a;
+        }
+
+        /// A zlib stream of stored blocks.
+        static std::string DeflateStored(const void* data, size_t size)
+        {
+            const uint8_t* at = static_cast<const uint8_t*>(data);
+            std::string    out("\x78\x01", 2);
+            size_t         done = 0;
+            do
+            {
+                const size_t n    = std::min<size_t>(size - done, 65535);
+                const bool   last = done + n == size;
+                out.push_back(static_cast<char>(last ? 1 : 0));
+                out.push_back(static_cast<char>(n & 0xFF));
+                out.push_back(static_cast<char>(n >> 8));
+                out.push_back(static_cast<char>(~n & 0xFF));
+                out.push_back(static_cast<char>((~n >> 8) & 0xFF));
+                out.append(reinterpret_cast<const char*>(at + done), n);
+                done += n;
+            } while (done < size);
+            const uint32_t adler = Adler(at, size);
+            for (int i = 3; i >= 0; --i) out.push_back(static_cast<char>(adler >> (8 * i)));
+            return out;
+        }
+
+        static bool InflateStored(const char* data, size_t size, std::string& out)
+        {
+            out.clear();
+            const uint8_t* at = reinterpret_cast<const uint8_t*>(data);
+            if (size < 6 || at[0] != 0x78) return false;
+            size_t pos = 2;
+            for (;;)
+            {
+                if (pos + 5 > size || (at[pos] & 6) != 0) return false;
+                const bool   last = at[pos] & 1;
+                const size_t n    = at[pos + 1] | (at[pos + 2] << 8);
+                pos += 5;
+                if (pos + n > size) return false;
+                out.append(reinterpret_cast<const char*>(at + pos), n);
+                pos += n;
+                if (last) break;
+            }
+            return pos + 4 == size;
+        }
+
         static uint32_t WXL_CALL State() { return WXL_NET_AUTHENTICATED; }
 
-        static wxl_result WXL_CALL Send(uint32_t opcode, const void*, uint32_t size)
+        static wxl_result WXL_CALL Send(uint32_t opcode, const void* data, uint32_t size)
         {
+            if (opcode > WXL_NET_OPCODE_MAX || size > WXL_NET_MAX_SEND || !Claims().count(opcode)) return WXL_E_INVALID;
+            if (opcode > WXL_NET_STOCK_LIMIT && !HeardFlag()) return WXL_E_FAILED;
             Sent().emplace_back(opcode, size);
+            Bodies().emplace_back(static_cast<const char*>(data), data ? size : 0);
             return WXL_OK;
         }
 
-        static wxl_result WXL_CALL Claim(uint32_t opcode)
+        static wxl_result WXL_CALL ClaimOpcode(uint32_t opcode)
         {
-            if (Claimed().count(opcode)) return WXL_E_INVALID;
-            Claimed().insert(opcode);
+            if (opcode > WXL_NET_OPCODE_MAX || Claims().count(opcode)) return WXL_E_INVALID;
+            Claims()[opcode] = Claim{};
             return WXL_OK;
         }
 
         static wxl_result WXL_CALL Release(uint32_t opcode)
         {
             ++Releases();
-            return Claimed().erase(opcode) ? WXL_OK : WXL_E_NOT_FOUND;
+            if (!Claims().erase(opcode)) return WXL_E_NOT_FOUND;
+            for (auto& [number, claim] : Claims())
+                if (claim.plain == opcode) claim.plain = 0;
+            return WXL_OK;
         }
 
-        static uint32_t WXL_CALL ReservedLimit() { return 0x51F; }
+        static uint32_t WXL_CALL ReservedLimit() { return WXL_NET_STOCK_LIMIT; }
+
+        static wxl_result WXL_CALL SetHandler(uint32_t opcode, wxl_net_handler_fn handler, void* user)
+        {
+            const auto held = Claims().find(opcode);
+            if (held == Claims().end()) return WXL_E_INVALID;
+            held->second.handler = handler;
+            held->second.user    = user;
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL SetCompressed(uint32_t opcode, uint32_t compressed)
+        {
+            if (!Claims().count(opcode)) return WXL_E_INVALID;
+            if (!compressed) return WXL_OK;
+            const auto packed = Claims().find(compressed);
+            if (packed == Claims().end() || compressed == opcode) return WXL_E_INVALID;
+            packed->second.plain = opcode;
+            return WXL_OK;
+        }
+
+        static uint32_t WXL_CALL MaxSend() { return WXL_NET_MAX_SEND; }
+        static uint32_t WXL_CALL Connection() { return ConnectionNumber(); }
+        static wxl_bool WXL_CALL Heard() { return HeardFlag() ? WXL_TRUE : WXL_FALSE; }
+
+        static wxl_result Give(const std::string& bytes, void* buffer, uint64_t capacity, uint64_t* out)
+        {
+            *out = bytes.size();
+            if (bytes.size() > capacity) return WXL_E_INVALID;
+            if (!bytes.empty()) std::memcpy(buffer, bytes.data(), bytes.size());
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL Deflate(const void* data, uint32_t size, void* buffer, uint64_t capacity, uint64_t* out)
+        {
+            return Give(DeflateStored(data, size), buffer, capacity, out);
+        }
+
+        static wxl_result WXL_CALL Inflate(const void* data, uint32_t size, void* buffer, uint64_t capacity, uint64_t* out)
+        {
+            std::string bytes;
+            if (!InflateStored(static_cast<const char*>(data), size, bytes))
+            {
+                *out = 0;
+                return WXL_E_INVALID;
+            }
+            return Give(bytes, buffer, capacity, out);
+        }
 
         static const wxl_net_api* Table()
         {
@@ -2716,9 +2890,16 @@ namespace wxltest
                 t.struct_size           = sizeof(wxl_net_api);
                 t.state                 = &State;
                 t.send                  = &Send;
-                t.claim_opcode          = &Claim;
+                t.claim_opcode          = &ClaimOpcode;
                 t.release_opcode        = &Release;
                 t.reserved_opcode_limit = &ReservedLimit;
+                t.set_handler           = &SetHandler;
+                t.set_compressed        = &SetCompressed;
+                t.max_send              = &MaxSend;
+                t.connection            = &Connection;
+                t.heard                 = &Heard;
+                t.deflate               = &Deflate;
+                t.inflate               = &Inflate;
                 return t;
             }();
             return &api;

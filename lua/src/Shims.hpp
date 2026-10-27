@@ -99,6 +99,18 @@
 //
 // They are let go when the mod is disabled or its state closes.
 //
+// wxl.net's keep the opcode numbers each Lua mod claims, which the host sees as wxl.lua's:
+//
+//   wxl.net.Claim(op), .Release(op)                    a number, held by one Lua mod; another's
+//                                                      claim of it is refused and logged
+//   wxl.net.SetHandler(op, fn), .SetCompressed(op, z)  fn(reader, op) for its messages
+//   wxl.net.Send(op, body), .Heard()                   the send gate, kept for each Lua mod
+//   wxl.net.State()                                    the state's name
+//   wxl.net.Reader(bytes), .Writer([limit])            the module's own: bounded readers and
+//                                                      writers of message bodies
+//
+// A mod that goes gives its numbers back.
+//
 // wxl.render's take tables, files of the mod's folder and push constants as numbers:
 //
 //   wxl.render.CreatePipeline(desc)                    a Pipeline from a table: kind, name,
@@ -133,6 +145,10 @@ namespace wxl::lua
         /// The function serving a shim row (`service`, `Name`), or null when none is written.
         /// It takes the ScriptMod as its first upvalue.
         lua_CFunction Find(std::string_view service, std::string_view name);
+
+        /// Adds what a module has besides its rows to the table at the top of the stack:
+        /// wxl.net's Reader and Writer.
+        void AddExtras(lua_State* L, std::string_view service);
 
         /// Starts replaying registrations at each new script context. Called once, by the runtime.
         void Start();

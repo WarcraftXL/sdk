@@ -82,6 +82,8 @@
 //       mod hands wxl.storage; no script reaches a row taking one
 //   hash_fn wxl_file_hash_fn  relay_endpoint const wxl_relay_endpoint*
 //   relay_reply wxl_relay_reply_fn: a callback; a script hands a function, which its shim keeps
+//   net_handler wxl_net_handler_fn: what wxl.net hands a claimed number's messages to; a script
+//       hands a function, which its shim keeps
 //   a resource: its ctype
 //   opt<K> the C parameters of K, a parameter a script may leave out: it is then K's zero (0
 //       for a number), which the row's doc says. Every other parameter a script must give, and
@@ -143,6 +145,7 @@
 #include "wxl/services/m2.h"
 #include "wxl/services/m2file.h"
 #include "wxl/services/relay.h"
+#include "wxl/services/net.h"
 #include "wxl/objects/object.hpp"
 #include "wxl/services/script.h"
 #include "wxl/services/storage.h"
@@ -186,6 +189,7 @@ namespace wxl::api
         struct hash_fn {};
         struct relay_endpoint {};
         struct relay_reply {};
+        struct net_handler {};
         struct f32 {};
         struct vec3_in {};
         struct i16_out {};
@@ -312,6 +316,7 @@ namespace wxl::api
     template <> struct Param<kind::hash_fn> { using C = List<wxl_file_hash_fn>; };
     template <> struct Param<kind::relay_endpoint> { using C = List<const wxl_relay_endpoint*>; };
     template <> struct Param<kind::relay_reply> { using C = List<wxl_relay_reply_fn>; };
+    template <> struct Param<kind::net_handler> { using C = List<wxl_net_handler_fn>; };
     template <> struct Param<kind::f32> { using C = List<float>; };
     template <> struct Param<kind::vec3_in> { using C = List<const wxl_vec3*>; };
     template <> struct Param<kind::i16_out> { using C = List<int16_t*>; };

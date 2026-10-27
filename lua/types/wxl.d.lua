@@ -4284,6 +4284,225 @@ function animation.Playing(unit) end
 ---@return string|nil reason
 function animation.Current(unit) end
 
+---wxl.net. Messages of the mod's own on the world connection: opcode numbers it claims, receives and sends.
+---Came with abi 0.1.41: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.net
+local net = {}
+
+---Where the client is with the world server: "offline", "connecting", "connected" (the
+---socket is up) or "authenticated" (the server accepted the session: messages flow).
+---@return "offline"|"connecting"|"connected"|"authenticated"|nil state
+---@return string|nil reason
+function net.State() end
+
+---Sends a message of a number this mod claimed to the server: `body` is a wxl.net.Writer or a
+---string of bytes, at most MaxSend() bytes. nil, "failed" while not authenticated, and until
+---the server has sent this mod one of its numbers on this connection (Heard()): a server that
+---does not know a number closes the connection. nil, "busy" past 64 messages of a number in a
+---second.
+---@param opcode integer
+---@param body? wxl.net.Writer|string
+---@return true|nil ok
+---@return string|nil reason
+function net.Send(opcode, body) end
+
+---Claims an opcode number for this mod: the server's messages of it stop at the mod (its
+---function, once SetHandler gives one), and the mod may send it. Refused (nil, "invalid", and a
+---line in the log saying why) for a number above 0xFFFF, one of the client's own (up to 0x520)
+---unless mod.json says "net": { "stock": true }, one another mod claimed or declares, or
+---one outside the numbers this mod's mod.json lists in "net": { "opcodes": [...] }.
+---Given back when the mod is disabled, reloads or unloads.
+---@param opcode integer from 0x521
+---@return true|nil ok
+---@return string|nil reason
+function net.Claim(opcode) end
+
+---Gives a claimed number back, its function and its compressed number with it.
+---@param opcode integer
+---@return true|nil ok
+---@return string|nil reason
+function net.Release(opcode) end
+
+---The highest number the client and its servers use, 0x520: a mod's own start above it.
+---@return integer|nil
+---@return string|nil reason
+function net.ReservedOpcodeLimit() end
+
+---Sets the function a claimed number's messages are handed to, on the main thread:
+---`fn(reader, opcode)`, the reader over the message's body. A reader left read past its end
+---is logged once per number as malformed. nil takes the function away; the messages still stop.
+---@param opcode integer
+---@param fn? fun(reader: wxl.net.Reader, opcode: integer)
+---@return true|nil ok
+---@return string|nil reason
+function net.SetHandler(opcode, fn) end
+
+---Makes `compressed`, a second number this mod claimed, the compressed form of `opcode`: its
+---messages are a u32 size and a zlib stream, as the client's own compressed opcodes are; the
+---runtime inflates them and hands them to `opcode`'s function as `opcode` messages. 0 undoes it.
+---@param opcode integer
+---@param compressed integer
+---@return true|nil ok
+---@return string|nil reason
+function net.SetCompressed(opcode, compressed) end
+
+---The largest body Send takes, in bytes.
+---@return integer|nil
+---@return string|nil reason
+function net.MaxSend() end
+
+---The world connection, counted: 0 while there is none, a new number each time one comes up.
+---@return integer|nil
+---@return string|nil reason
+function net.Connection() end
+
+---Whether this mod may send on this connection: the server has sent it one of its numbers
+---since the connection came up.
+---@return boolean heard
+function net.Heard() end
+
+---Compresses a string of bytes into a zlib stream.
+---@param data string the bytes, as a string
+---@return string|nil bytes
+---@return string|nil reason
+function net.Deflate(data) end
+
+---Inflates a zlib stream into the bytes it holds.
+---@param data string the bytes, as a string
+---@return string|nil bytes
+---@return string|nil reason
+function net.Inflate(data) end
+
+---A reader over a string of bytes, as a handler is handed one.
+---@param bytes string
+---@return wxl.net.Reader reader
+function net.Reader(bytes) end
+
+---An empty message body, refusing to grow past MaxSend() bytes, or past `limit`.
+---@param limit? integer
+---@return wxl.net.Writer writer
+function net.Writer(limit) end
+
+---Reads a message's body, little-endian. A read past the end answers 0 ("" for strings) and
+---leaves the reader failed: read the whole message, then check Ok().
+---@class wxl.net.Reader
+local NetReader = {}
+---@return number
+function NetReader:U8() end
+---@return number
+function NetReader:U16() end
+---@return number
+function NetReader:U32() end
+---@return number
+function NetReader:U64() end
+---@return number
+function NetReader:I8() end
+---@return number
+function NetReader:I16() end
+---@return number
+function NetReader:I32() end
+---@return number
+function NetReader:I64() end
+---@return number
+function NetReader:F32() end
+---@return number
+function NetReader:F64() end
+---@return boolean
+function NetReader:Bool() end
+---Eight bytes as a guid, "0x" and sixteen hex digits.
+---@return string
+function NetReader:Guid() end
+---A guid as the server packs one: a mask byte, then the bytes it marks.
+---@return string
+function NetReader:PackedGuid() end
+---Three floats.
+---@return wxl.Vec3
+function NetReader:Vec3() end
+---A string ended by a zero byte, at most `max` bytes before it (4096).
+---@param max? integer
+---@return string
+function NetReader:String(max) end
+---@param count integer
+---@return string
+function NetReader:Bytes(count) end
+---@param count integer
+---@return wxl.net.Reader self
+function NetReader:Skip(count) end
+---@return boolean
+function NetReader:Ok() end
+---Whether every byte was read, and nothing past.
+---@return boolean
+function NetReader:AtEnd() end
+---@return integer
+function NetReader:Remaining() end
+---@return integer
+function NetReader:Position() end
+---@return integer
+function NetReader:Size() end
+---The whole body.
+---@return string
+function NetReader:Data() end
+
+---Writes a message's body, little-endian; each call answers the writer, to chain. A write past
+---the limit is dropped and leaves the writer failed: Send refuses it.
+---@class wxl.net.Writer
+local NetWriter = {}
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:U8(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:U16(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:U32(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:U64(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:I8(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:I16(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:I32(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:I64(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:F32(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:F64(value) end
+---@param value boolean
+---@return wxl.net.Writer self
+function NetWriter:Bool(value) end
+---@param guid string|integer
+---@return wxl.net.Writer self
+function NetWriter:Guid(guid) end
+---@param guid string|integer
+---@return wxl.net.Writer self
+function NetWriter:PackedGuid(guid) end
+---@param v wxl.Vec3
+---@return wxl.net.Writer self
+function NetWriter:Vec3(v) end
+---The text and a zero byte.
+---@param text string
+---@return wxl.net.Writer self
+function NetWriter:String(text) end
+---@param bytes string
+---@return wxl.net.Writer self
+function NetWriter:Bytes(bytes) end
+---@return boolean
+function NetWriter:Ok() end
+---@return integer
+function NetWriter:Size() end
+---@return string
+function NetWriter:Data() end
+
 ---@class wxl.ModInfo
 ---@field id string
 ---@field name string
@@ -4371,6 +4590,7 @@ function object.Unwatch(type, name) end
 ---@field terrain wxl.terrain
 ---@field draw wxl.draw
 ---@field animation wxl.animation
+---@field net wxl.net
 ---@field events table<wxl.Family, string[]> every family's events, as On<Event>
 wxl = {}
 

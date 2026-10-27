@@ -209,7 +209,7 @@ Beyond events, a runtime publishes services, and a mod asks for the ones it need
 | `wxl.storage` | archives and files, folders, providers and bytes a mod adds to them, content hashes, overrides, reloads | yes |
 | `wxl.relay` | services mods publish for each other, answered later on the main thread | yes |
 | `wxl.data` | the client's databases, served from a mod's files | yes |
-| `wxl.net` | messages to and from the server | yes; no runtime publishes it yet |
+| `wxl.net` | opcode numbers of the mod's own on the world connection: claimed, received through a handler (compressed ones inflated), sent once the server has spoken | yes |
 | `wxl.ui` | frames and the interface | yes; no runtime publishes it yet |
 | `wxl.point` | functions of the engine: run code before, instead of or after them, those the stock client inlined included (`wxl/deinlined.def`) | yes; one that exists on one runtime only says so |
 | `wxl.m2file` | a parsed model file's arrays, read and pointed the runtime's way, for a mod that teaches the client a model format | yes |

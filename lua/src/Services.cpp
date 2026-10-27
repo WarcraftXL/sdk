@@ -29,6 +29,7 @@ namespace wxl::lua
         case WXL_OK: return "ok";
         case WXL_E_UNSUPPORTED: return "unsupported";
         case WXL_E_PENDING: return "pending";
+        case WXL_E_BUSY: return "busy";
         case WXL_E_VERSION: return "version";
         case WXL_E_INVALID: return "invalid";
         case WXL_E_NOT_FOUND: return "not_found";
@@ -1272,6 +1273,7 @@ namespace wxl::lua
                 }
                 lua_setfield(L, -2, row.name);
             }
+            shims::AddExtras(L, service.id);
             RefuseNames(L, refused);
             lua_setfield(L, -2, service.id);
         }
