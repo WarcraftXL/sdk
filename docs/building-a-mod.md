@@ -1964,6 +1964,32 @@ where there is none they lie flat at `center.z`, and `.Flat()` keeps them there 
 lines)` (constant on screen, 0.5 to `WXL_DRAW_MAX_WIDTH`), `.OnTop()` (seen through walls; by
 default walls and units hide a shape), `.Pulse(seconds)`, `.Fade(in, out)`.
 
+**Soft lines and shadows** (abi `0.1.38`). `.Softness(pixels)` fades the lines' edges;
+`.LineAlpha(start, end)` takes a line's opacity from its first point to its last, and
+`DrawShape::PointAlphas(alphas)` sets it point by point; `.Shadow(rgb, opacity, x, y, soft)` draws a
+shadow under the lines (by default black at 0.6, 1.5 pixels right and down, 1 pixel soft): the
+shape's lines drawn once more, under every line.
+
+**Pictures on the ground** (abi `0.1.38`). A ground shape's inside takes a texture the client loads
+(`.Texture(path, right, bottom)`: a BLP path, or `wxl::TextureService::Make`'s path with its
+`right` and `bottom`), drawn once loaded; `.FillColor(rgb)` tints it apart from the lines.
+`.Uv(WXL_DRAW_UV_FIT | _TILE | _WORLD, size_x, size_y, rotation, offset_x, offset_y)` lays it: once
+over the shape's bounds, repeated in the shape's frame, or in the world's frame (sizes in yards,
+the top to the north, so shapes side by side join). `.Blend(WXL_DRAW_BLEND_ALPHA | _ADD |
+_MODULATE)`: over the ground, added as light, or multiplied into it (a stain, a scorch, a score mark).
+`.Feather(yards)` fades the inside towards its border, `.RadialFade(part)` from its centre out.
+
+```cpp
+// Cracks multiplied into the ground under a pickaxe hit, soft at their border, for 30 seconds.
+wxl::DrawService::Add(wxl::DrawShape::Circle(hit, 1.5f),
+                      wxl::DrawStyle(0xFFFFFF, 0.0f).Fill(0.9f).Texture("SPELLS\\CrackedGround.blp")
+                          .Blend(WXL_DRAW_BLEND_MODULATE).Feather(0.4f), 30.0f);
+```
+
+A C mod sets the fields of `wxl_draw_style` past `fade_out` (and `point_alphas` of
+`wxl_draw_shape`); every one left at 0 changes nothing, and a struct whose `struct_size` stops at
+`fade_out` (`WXL_DRAW_STYLE_SIZE_0136`) is still taken as the look it had.
+
 **Lifetimes.** `Draw` is for one frame; `Add(shape, style, duration)` keeps a shape and answers a
 handle (`WXL_HANDLE_NONE` when refused): `Update`, `Move`, `SetStyle`, `SetDuration`, `Attach`
 (offsets from the object's position, turned with it under `WXL_DRAW_ATTACH_TURN`; the shape goes
@@ -1979,7 +2005,9 @@ mod, `WXL_DRAW_MAX_POINTS` points, `WXL_DRAW_MAX_EXTENT` yards from the centre,
 `WXL_DRAW_MAX_GRID_LINES` lines, `WXL_DRAW_MAX_SHAPE_VERTICES` vertices a shape: past these the call
 answers `WXL_E_INVALID` and the log says why under the tag `draw`, once per mod and call. All mods
 together draw `WXL_DRAW_MAX_FRAME_VERTICES` a frame; past it, shapes are left out (counted in
-`Stats().left_out`, logged once a second). `Stats()` also answers the CPU's cost of the last frame.
+`Stats().left_out`, logged once a second). `Stats()` also answers the CPU's cost of the last frame,
+and since abi `0.1.38` the insides drawn as surfaces (`textured`), the textures held and still
+loading, and the shadows drawn.
 
 ### Animations on units: `wxl.animation`
 

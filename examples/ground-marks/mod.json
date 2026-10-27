@@ -3,8 +3,8 @@
   "id": "wxl.ground-marks",
   "name": "Ground marks",
   "version": "1.0.0",
-  "abi": "0.1.36",
-  "description": "A Lua mod: a ring under the target and a cone in front of it that follow it, and a grid on the ground where the camera looks, drawn with wxl.draw.",
+  "abi": "0.1.38",
+  "description": "A Lua mod: a spell ring under the target and a cone in front of it that follow it, and a grid scored into the ground where the camera looks, drawn with wxl.draw.",
   "lua": "init.lua",
   "requires": [
     { "service": "wxl.draw", "version": 1 }

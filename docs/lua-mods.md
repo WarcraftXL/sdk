@@ -1851,6 +1851,53 @@ lines), `fill_alpha` (the inside's, 0 for none), `width` (the lines' width in pi
 ground hide it; `"on_top"`: seen through them), `pulse` (seconds a beat of the opacity), and for a
 kept shape `fade_in` and `fade_out` (seconds). Leave it out for white lines 2 pixels wide.
 
+**Soft lines, fades along them, shadows** (abi `0.1.38`). `softness` (pixels) fades a line's edges
+over that many pixels. `alpha_start` and `alpha_end` take a line's opacity from its first point to
+its last along its length, and a line's `alphas` (one opacity per point, in the shape) set it point
+by point. `shadow_alpha` draws a shadow under the lines: black unless `shadow_color` says, moved by
+`shadow_offset` (`{ x, y }` pixels right and down, `{ 1.5, 1.5 }` when left out), a stroke
+`shadow_softness` pixels wider than the line (1 when left out) whose edges fade as much. A shadow
+costs the shape's lines drawn once more.
+
+```lua
+-- A digging grid: soft gold lines over a light shadow, its cells darkening the dirt.
+wxl.draw.Draw({ kind = "grid", center = at, length = 6, width = 6, spacing = 1 },
+              { color = 0xE8C060, alpha = 0.85, width = 1.5, softness = 1, shadow_alpha = 0.45,
+                fill_alpha = 0.25, fill_color = 0x605040, blend = "modulate", feather = 0.5 })
+```
+
+**Pictures on the ground** (abi `0.1.38`). The inside of a circle, a ring, a sector, a rectangle,
+a polygon or a grid takes a `texture`: any picture the game loads (a `.blp` of its archives, as
+`"SPELLS\\CrackedGround.blp"`), or what `wxl.texture.Make` answers (`texture = { wxl.texture.Make(...) }`
+keeps its path and the part of the texture its picture fills). The inside is drawn once the picture
+has loaded, nothing before. The picture is multiplied by `fill_color` (by `color` when left out)
+and by `fill_alpha`. How it lies:
+
+| | |
+|---|---|
+| `uv = "fit"` (the default) | once over the shape's bounds, its top towards the shape's `facing`; `uv_size` 0.5 makes it half as big |
+| `uv = "tile"` | the same frame, repeated: `uv_size` 0.25 repeats it four times across |
+| `uv = "world"` | in the world's own frame, its top to the north, `uv_size` yards a picture: shapes side by side join, and the picture stays still as a shape moves |
+| `uv_rotation`, `uv_offset` | the picture turned (radians, counter-clockwise from above) and moved (`{ x, y }` in pictures) |
+
+`blend` puts the inside on the ground: `"alpha"` over it (the default), `"add"` as light (a glowing
+spell circle), `"modulate"` multiplied into it: white leaves the ground as it is and the picture's
+colour darkens it, as a stain, a scorch or a mark scored into the dirt (`fill_alpha` says how much).
+`feather` (yards) fades the inside out towards its border, `radial_fade` (0 to 1) from its centre
+outwards over that part of the radius (1: from the centre itself). They work with or without a
+picture. Pictures that suit the ground among the game's own:
+
+| Picture | What it is |
+|---|---|
+| `SPELLS\CrackedGround.blp` | cracked earth |
+| `TILESET\BURNINGSTEPPS\BurningSteppsAshCracks.blp`, `TILESET\Ashenvale\AshenvaleRockCracked.blp` | cracks in ash, in rock (tiling) |
+| `TILESET\AlteracMtns\AlteracDirtBase.blp`, `TILESET\Ashenvale\AshenvaleDirt.blp` | dirt (tiling) |
+| `DUNGEONS\TEXTURES\UNDEAD_SHIP\BURNMARK.BLP`, `TILESET\BURNINGSTEPPS\BurningSteppsCharcoal01.blp` | a burn mark, charred ground |
+| `textures\BloodSplats\BloodSplatRed01.blp`, `textures\ShadowBlob.blp`, `textures\Footsteps\BaseFootprint.blp` | a splat, a soft shadow, a footprint |
+| `SPELLS\T_VFX_HERO_CIRCLE.BLP`, `SPELLS\T_VFX_RING_FF.BLP`, `SPELLS\CIRCLE.BLP` | spell targeting circles and rings |
+| `SPELLS\Reticle_128.blp`, `SPELLS\TEXTURES\Reticle_BrightGround.blp`, `textures\UnitSelectTexture.blp` | the game's reticles, its selection circle |
+| `SPELLS\AURARUNE256.BLP`, `SPELLS\Holy_Rune_128.blp`, `SPELLS\TELEPORTTARGET.BLP` | runes on the ground |
+
 **For a frame, or kept.** `Draw` draws the shape in the next frame of the world only: call it each
 frame for what follows the frame, there is nothing to remove. `Add(shape, style, duration)` keeps
 it and answers a `wxl.Shape`, for `duration` seconds or until removed:
@@ -1874,7 +1921,9 @@ and the spell's own effects play over it.
 call answers `nil, "invalid"` with a line in the log under `draw` saying which. All mods together
 draw up to 524288 vertices a frame; past that, shapes are left out of the frame and the log says so
 once a second. `wxl.draw.Stats()` answers what the last frame drew and what it cost on the CPU
-(`build_microseconds`): a few tens of microseconds for a grid, a cone and a ring.
+(`build_microseconds`): a few tens of microseconds for a grid, a cone and a ring; since abi
+`0.1.38` also `textured` (insides drawn with a picture, a feather, a fade or a blend),
+`textures` and `textures_loading` (pictures held, still loading) and `shadows`.
 
 The interface's own Lua (an add-on, a FrameXML file) has `WxlDraw(shape, style)`, the same tables
 as `Draw`, for the next frame of the world: call it from an `OnUpdate`.
@@ -2400,6 +2449,7 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.terrain.SetHeights(heights)`, `.Reset(chunk_x, chunk_y)`, `.ResetAll()`, `.Stats()` | `true`: vertices set to heights, all or none (`{ chunk_x, chunk_y, index, height }` each), or this mod's edits taken off; what the service holds (abi `0.1.35`) |
 | `wxl.draw.Draw(shape, style)` | `true`: a shape drawn by the next frame only: a line, a circle, a ring, a sector, a rectangle, a polygon or a grid on the ground, a box, a sphere or a cylinder; see [Shapes in the world](#shapes-in-the-world-wxldraw) (abi `0.1.36`) |
 | `wxl.draw.Add(shape, style, duration)`, `.Update(shape, t)`, `.SetStyle(shape, t)`, `.Clear()`, `.Stats()` | a kept `wxl.Shape` (`shape:Move(center, facing)`, `:SetDuration(seconds)`, `:Attach(object, flags)`, `:Detach()`, `:Remove()`); what the last frame drew (abi `0.1.36`) |
+| `wxl.draw` style `texture`, `uv`, `blend`, `feather`, `radial_fade`, `softness`, `alpha_start`, `shadow_alpha`, shape `alphas` | pictures on the ground, soft and shadowed lines; see [Shapes in the world](#shapes-in-the-world-wxldraw) (abi `0.1.38`) |
 | `wxl.animation.Play(unit, anim_id, flags, speed)`, `.Stop(unit)` | `true`: an AnimationData animation played on a unit as the game plays an emote, once or looped, or this mod's stopped; see [Animations on units](#animations-on-units-wxlanimation) (abi `0.1.37`) |
 | `wxl.animation.Playing(unit)`, `.Current(unit)` | the id a mod plays on a unit, or `nil`; the id its model shows now (abi `0.1.37`) |
 | `wxl.render.Supported()`, `.UnsupportedReason()` | whether the render service drives the client's device, and why not (abi `0.1.33`) |
