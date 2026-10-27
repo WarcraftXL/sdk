@@ -2844,6 +2844,18 @@ print("textured " .. tostring(wxl.draw.Draw({ kind = "circle", radius = 4 },
                                               blend = "modulate", feather = 1, radial_fade = 0.5, shadow_offset = { x = -2, y = 3 } })))
 print("xray " .. tostring(wxl.draw.Draw({ kind = "box", size = { 2, 2, 4 } }, { fill_alpha = 0.3, texture = "x.blp", occluded_alpha = 0.35 })))
 print("blend " .. tostring(select(2, pcall(wxl.draw.Draw, { kind = "circle", radius = 1 }, { blend = "screen" }))))
+print("emit " .. tostring(wxl.draw.Emit({ spawn = "disc", center = { 1, 2, 3 }, extent = { 1.5, 0, 0 }, burst = 12, speed = { 3, 6 }, life = 0.5,
+                                         gravity = 19.29, ground = "bounce", restitution = 0.35, friction = 0.5 },
+                                       { texture = "dust.blp", frames = { 4, 2 }, blend = "add", softness = 0.3,
+                                         keys = { { t = 0, size = 0.6, color = 0x8A7A60, alpha = 0.5 }, { t = 1, size = 2.5, alpha = 0 } } })))
+local fountain = wxl.draw.AddEmitter({ center = { 4, 5, 6 }, rate = 30, attractor = { 4, 5, 6 }, attraction = 8, attract_radius = 0.2 })
+print("emitter " .. tostring(fountain ~= nil) .. " " .. tostring(fountain:Burst(5)) .. " " .. tostring(fountain:Place({ x = 7, y = 8, z = 9 }, 0.5)) .. " " ..
+      tostring(wxl.draw.UpdateEmitter(fountain, { spawn = "box", extent = { 1, 1, 1 } })) .. " " ..
+      tostring(wxl.draw.SetEmitterStyle(fountain, { mode = "stretched", stretch = 0.05 })))
+print("spawn " .. tostring(select(2, pcall(wxl.draw.Emit, { spawn = "cube" }))))
+print("particles " .. wxl.draw.Stats().particles)
+print("beam " .. tostring(wxl.draw.Draw({ kind = "beam", points = { { 0, 0, 0 }, { 0, 0, 10 } }, widths = { 0.8, 2.2 }, alphas = { 0.9, 0 } },
+                                       { fill_alpha = 1, mask = true, texture = "ray.blp", texture_blur = 1.5, feather = 1 })))
 print("alphas " .. tostring(select(2, pcall(wxl.draw.Draw, { kind = "line", points = { { 0, 0, 0 }, { 1, 0, 0 } }, alphas = { 1 } }))))
 )");
 
@@ -2895,6 +2907,26 @@ print("alphas " .. tostring(select(2, pcall(wxl.draw.Draw, { kind = "line", poin
             bool xray = false;
             for (const auto& c : calls) xray = xray || (c.kind == WXL_DRAW_BOX && std::fabs(c.style.occluded_alpha - 0.35f) < 1e-6f && c.texture == "x.blp");
             Check(sink.Has("[wxl.shapes] xray true") && xray, "a textured box's occluded_alpha reaches the service (abi 0.1.39)");
+            Check(sink.Has("[wxl.shapes] emit true") && sink.Has("[wxl.shapes] emitter true true true true true"),
+                  "Emit and AddEmitter take tables; an Emitter's methods and functions reach it (abi 0.1.40)");
+            Check(sink.Has("'spawn' must be one of \"point\""), "an unknown spawn is an error listing the spawns");
+            Check(sink.Has("[wxl.shapes] particles 321"), "Stats answers the particles alive");
+            bool emitTable = false, keptTable = false;
+            for (const auto& c : calls)
+            {
+                emitTable = emitTable || (c.what == "emit" && c.emitter.spawn == WXL_DRAW_SPAWN_DISC && c.emitter.extent.x == 1.5f && c.emitter.burst == 12 &&
+                                          c.emitter.speed_min == 3.0f && c.emitter.speed_max == 6.0f && c.emitter.life_min == 0.5f &&
+                                          c.emitter.ground == WXL_DRAW_GROUND_BOUNCE && c.texture == "dust.blp" && c.particles.frames_x == 4 &&
+                                          c.particles.frames_y == 2 && c.particles.blend == WXL_DRAW_BLEND_ADD && c.particles.key_count == 2 &&
+                                          c.particles.keys[1].size == 2.5f && c.particles.keys[1].color == 0xFFFFFFu);
+                keptTable = keptTable || (c.what == "add_emitter" && c.emitter.rate == 30.0f && c.emitter.attraction == 8.0f && !c.looked);
+            }
+            Check(emitTable && keptTable, "the emitter's and the look's tables reach the service as given");
+            bool beamTable = false;
+            for (const auto& c : calls)
+                beamTable = beamTable || (c.kind == WXL_DRAW_BEAM && c.points.size() == 2 && c.alphas.size() == 2 && (c.style.flags & WXL_DRAW_STYLE_MASK) &&
+                                          c.style.texture_blur == 1.5f);
+            Check(sink.Has("[wxl.shapes] beam true") && beamTable, "a beam's table, its mask and blur reach the service");
             FakeView::DrawCalls().clear();
             host.Shutdown();
         }

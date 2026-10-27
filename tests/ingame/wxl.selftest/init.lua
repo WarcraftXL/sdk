@@ -2682,12 +2682,63 @@ step(function()
         local tooFar, whyFar = dr.Draw(sel, { fill_alpha = 1, occluded_alpha = 2 })
         result("an occluded opacity past 1 is refused", tooFar == nil, tostring(whyFar))
     end
+    -- abi 0.1.40: particles. Clods thrown up beside the box that bounce and settle, a dust puff, and
+    -- a stream of golden sparks following the player, added as light; a masked crack glowing white.
+    if wxl.runtime.abi_feature >= 40 then
+        local at = ahead(12, -4)
+        local ok, why = dr.Emit({ center = up(at, 0.1), burst = 16, spread = 0.7, speed = { 3, 6 }, life = { 1.2, 1.8 },
+                                  size = { 0.15, 0.3 }, spin = { -6, 6 }, gravity = 19.29, ground = "bounce", restitution = 0.35,
+                                  friction = 0.6 },
+                                { texture = "SPELLS\\CrackedGround.blp", mask = true, softness = 0.15,
+                                  keys = { { t = 0, size = 1, color = 0x6B5235, alpha = 1 }, { t = 1, size = 0.6, color = 0x5A4430, alpha = 0 } } })
+        result("Emit throws clods that bounce", ok == true, tostring(why))
+        dr.Emit({ spawn = "disc", center = at, extent = { x = 0.4, y = 0, z = 0 }, burst = 10, spread = 1.2, speed = { 0.4, 1.2 },
+                  life = 0.5, size = { 0.5, 0.9 }, drag = 2.5 },
+                { softness = 0.4, keys = { { t = 0, size = 0.6, color = 0x9A8A70, alpha = 0.45 }, { t = 1, size = 2.6, color = 0x8A7A60, alpha = 0 } } })
+        local sparks, whySparks = dr.AddEmitter({ center = { x = 0, y = 0, z = 1 }, rate = 40, spread = 0.5, speed = { 1, 2 }, life = 0.8,
+                                                  size = { 0.08, 0.15 }, gravity = 4 },
+                                                { blend = "add", mode = "stretched", stretch = 0.05,
+                                                  keys = { { t = 0, color = 0xFFD070, alpha = 1 }, { t = 1, size = 0.3, color = 0xFF6020, alpha = 0 } } })
+        result("AddEmitter keeps a stream of sparks", sparks ~= nil, tostring(whySparks))
+        if sparks then
+            result("it follows the player", sparks:Follow(me, 1) == true)
+            looks.sparks = sparks
+        end
+        add("a crack glowing white (mask)", { kind = "circle", center = ahead(9, -12), radius = 1.5 },
+            { alpha = 0, fill_alpha = 1, color = 0xFFFFFF, texture = "SPELLS\\CrackedGround.blp", mask = true, blend = "add", texture_blur = 1,
+              radial_fade = 0.5 })
+        local bad, whyBad = dr.Emit({ burst = 0 })
+        result("an empty burst is refused", bad == nil, tostring(whyBad))
+        -- Golden rays fanning up out of the ground, soft to their sides, a shimmer scrolling along them.
+        local base = ahead(14, 6)
+        local rays = {}
+        for i = 1, 6 do
+            local a  = f + (i - 3.5) * 0.35
+            local to = { x = base.x + 3 * math.cos(a), y = base.y + 3 * math.sin(a), z = base.z + 9 }
+            local ray = add("a golden ray " .. i, { kind = "beam", points = { base, to }, widths = { 0.8, 2.2 }, alphas = { 0.9, 0 } },
+                            { alpha = 0, fill_alpha = 1, fill_color = 0xFFD070, blend = "add", feather = 1,
+                              texture = "SPELLS\\TEXTURES\\Beam_WebGlowWhite.blp", mask = true, uv = "tile", uv_size = { 1, 0.3 } })
+            rays[#rays + 1] = ray
+        end
+        local shimmer = 0
+        looks.shimmer = Observe("RenderScript", "OnFrameBegin", function()
+            shimmer = (shimmer + 0.006) % 1
+            for i, ray in ipairs(rays) do
+                dr.SetStyle(ray, { alpha = 0, fill_alpha = 1, fill_color = 0xFFD070, blend = "add", feather = 1, fade_out = 1,
+                                   texture = "SPELLS\\TEXTURES\\Beam_WebGlowWhite.blp", mask = true, uv = "tile", uv_size = { 1, 0.3 },
+                                   uv_offset = { 0, shimmer + i * 0.17 } })
+            end
+        end)
+    end
     print("look: for ten seconds then fading, in front of you: left a pale blue spell ring glowing on the ground, middle cracks" ..
           " darkening the ground with a soft border, right a charred patch fading out from its middle; further on a 6 x 6 grid of" ..
           " soft gold lines with a light shadow down and right over a darkened inside; on your left a white line on the ground" ..
           " fading in from its start, shadowed; further on (abi 0.1.39) a gold box half sunk in the ground, its faces" ..
           " a ring picture scrolling sideways, its buried half seen faintly through the ground, and on your left a green line" ..
-          " dipping under the ground, seen faintly where it is under; the same under Direct3D 9 and Vulkan")
+          " dipping under the ground, seen faintly where it is under; (abi 0.1.40) clods of earth thrown up near the box," ..
+          " bouncing once and settling, a dust puff spreading and fading, golden sparks streaming from you as you move," ..
+          " a crack on your left glowing white and soft, and six golden rays fanning up out of the ground on your right," ..
+          " soft to their sides, shimmering upwards, fading at their tops and as you look along them; the same under Direct3D 9 and Vulkan")
     wait(2.5)
 end)
 
@@ -2702,6 +2753,13 @@ step(function()
         result("the box and the line are drawn through the ground too", stats ~= nil and stats.occluded >= 2,
                stats and tostring(stats.occluded) or "no stats")
     end
+    if wxl.runtime.abi_feature >= 40 and looks.sparks then
+        result("the sparks are alive and drawn", stats ~= nil and stats.particles > 0 and stats.particle_draws >= 1 and stats.emitters >= 1,
+               stats and string.format("%d alive, %d draws, %d emitters", stats.particles, stats.particle_draws, stats.emitters) or "no stats")
+        if stats then
+            print(string.format("NOTE wxl.draw's particles: %d alive, %.0f us on the CPU", stats.particles, stats.particle_microseconds))
+        end
+    end
     if stats then
         print(string.format("NOTE wxl.draw's last frame with textures: %d shapes, %d vertices, %.0f us on the CPU", stats.drawn,
                             stats.vertices, stats.build_microseconds))
@@ -2715,6 +2773,14 @@ step(function()
     if looks.scroll then
         Unobserve(looks.scroll)
         looks.scroll = nil
+    end
+    if looks.sparks then
+        looks.sparks:Stop()
+        looks.sparks = nil
+    end
+    if looks.shimmer then
+        Unobserve(looks.shimmer)
+        looks.shimmer = nil
     end
     dr.Clear()
     looks.kept = {}

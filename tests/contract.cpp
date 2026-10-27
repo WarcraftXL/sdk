@@ -1785,6 +1785,56 @@ int main()
         constexpr size_t old38 = (offsetof(wxl_draw_style, occluded_alpha) + alignof(wxl_draw_style) - 1) / alignof(wxl_draw_style) * alignof(wxl_draw_style);
         Check(WXL_DRAW_STYLE_SIZE_0138 > WXL_DRAW_STYLE_SIZE_0136 && sizeof(wxl_draw_style) > old38,
               "the styles of abi 0.1.38 are a prefix of today's, and smaller");
+
+        // abi 0.1.40: particles.
+        FakeView::DrawCalls().clear();
+        using wxl::DrawEmitter;
+        using wxl::DrawParticles;
+        Check(DrawService::Emit(DrawEmitter::Point(wxl_vec3{1, 2, 3}).Burst(12).Cone(wxl_vec3{0, 0, 1}, 0.6f).Speed(3, 6).Gravity(19.29f)
+                                    .Bounce(0.35f, 0.5f).Life(0.8f, 1.2f).Size(0.12f, 0.25f),
+                                DrawParticles().Texture("SPELLS\\Dust.blp").Frames(4, 2, 12.0f).Key(0, 1, 0x806040, 1).Key(1, 0.5f, 0x806040, 0)
+                                    .Softness(0.3f)) == WXL_OK,
+              "Emit takes a burst of bouncing clods and their look");
+        const wxl_handle puff = DrawService::AddEmitter(DrawEmitter::Disc(wxl_vec3{4, 5, 6}, 1.5f).Rate(40.0f, 0.5f).Attract(wxl_vec3{4, 5, 6}, 8.0f, 0.2f),
+                                                        DrawParticles().Blend(WXL_DRAW_BLEND_ADD).Occluded(0.3f));
+        Check(puff != WXL_HANDLE_NONE, "AddEmitter answers a handle");
+        Check(DrawService::Burst(puff, 5) == WXL_OK && DrawService::Place(puff, wxl_vec3{7, 8, 9}, 0.5f) == WXL_OK &&
+                  DrawService::Follow(puff, wxl::Unit(wxltest::FakeObjects::kBoar), WXL_DRAW_ATTACH_TURN) == WXL_OK &&
+                  DrawService::UpdateEmitter(puff, DrawEmitter::Box(wxl_vec3{}, wxl_vec3{1, 1, 1})) == WXL_OK &&
+                  DrawService::SetEmitterStyle(puff, DrawParticles().Stretched(0.05f)) == WXL_OK,
+              "Burst, Place, Follow, UpdateEmitter and SetEmitterStyle reach the emitter");
+        DrawService::Stop(puff);
+        const auto& emitted = FakeView::DrawCalls();
+        Check(emitted.size() == 8, "every particle call reached the service once");
+        if (emitted.size() == 8)
+        {
+            const wxl_draw_emitter&   e = emitted[0].emitter;
+            const wxl_draw_particles& p = emitted[0].particles;
+            Check(e.burst == 12 && e.ground == WXL_DRAW_GROUND_BOUNCE && e.restitution == 0.35f && e.speed_max == 6.0f && e.gravity == 19.29f &&
+                      e.struct_size == sizeof(wxl_draw_emitter),
+                  "the burst as built");
+            Check(emitted[0].texture == "SPELLS\\Dust.blp" && p.frames_x == 4 && p.frames_y == 2 && p.key_count == 2 && p.keys[1].alpha == 0.0f &&
+                      p.keys[0].color == 0x806040u && p.softness == 0.3f,
+                  "its look as built");
+            Check(emitted[1].emitter.spawn == WXL_DRAW_SPAWN_DISC && emitted[1].emitter.rate == 40.0f && emitted[1].emitter.attraction == 8.0f &&
+                      emitted[1].particles.blend == WXL_DRAW_BLEND_ADD && emitted[1].particles.occluded_alpha == 0.3f,
+                  "the kept emitter as built");
+            Check(emitted[2].count == 5 && emitted[3].center.y == 8.0f && emitted[4].attach == WXL_DRAW_ATTACH_TURN &&
+                      emitted[5].emitter.spawn == WXL_DRAW_SPAWN_BOX && emitted[6].particles.mode == WXL_DRAW_BILLBOARD_STRETCHED &&
+                      emitted[7].what == "stop",
+                  "each change as given");
+        }
+        FakeView::DrawCalls().clear();
+        const std::vector<wxl_vec3> ends = {{0, 0, 0}, {2, 3, 12}};
+        Check(DrawService::Draw(DrawShape::Beam(ends, 0.8f, 2.2f), DrawStyle(0xFFFFFF, 0.0f).Fill(1.0f).Mask().TextureBlur(1.5f).Feather(1.0f)) == WXL_OK,
+              "a beam, masked and blurred");
+        Check(FakeView::DrawCalls().size() == 1 && FakeView::DrawCalls()[0].kind == WXL_DRAW_BEAM && FakeView::DrawCalls()[0].points.size() == 2 &&
+                  (FakeView::DrawCalls()[0].style.flags & WXL_DRAW_STYLE_MASK) && FakeView::DrawCalls()[0].style.texture_blur == 1.5f,
+              "its ends, its mask and its blur as built");
+        Check(WXL_DRAW_STYLE_SIZE_0139 > WXL_DRAW_STYLE_SIZE_0138 && sizeof(wxl_draw_style) > WXL_DRAW_STYLE_SIZE_0139 + 4,
+              "the styles of abi 0.1.39 are a prefix of today's, and smaller");
+        const auto withParticles = DrawService::Stats();
+        Check(withParticles && withParticles.Value().particles == 321, "Stats answers the particles alive");
     }
 
     Section("animations played on units");

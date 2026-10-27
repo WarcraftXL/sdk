@@ -229,7 +229,13 @@ shadows drawn (the CPU's cost is printed as a NOTE); a blend that is none must b
 (`SPELLS\T_VFX_RING_FF.BLP`, added as light) scrolling sideways (`SetStyle` with a new `uv_offset`
 each frame), and a green line dipping under the ground on the left: their buried parts must show
 faintly through the ground (`occluded_alpha`), and `Stats` must count both as drawn through it; an
-occluded opacity past 1 must be refused.
+occluded opacity past 1 must be refused. From abi 0.1.40 it throws clods of earth near the box
+(they bounce once and settle), a dust puff (soft, spreading, gone in half a second) and a stream of
+golden sparks following the player (stretched along their speed, added as light), and lays a crack
+glowing white on the left (`mask`, `texture_blur`) and six golden rays fanning up out of the ground on
+the right (beams: soft to their sides, a masked picture shimmering up them, fading at their tops and
+as you look along them); `Stats` must count particles alive and drawn, and an empty burst must be
+refused.
 
 ## Building it
 

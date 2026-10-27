@@ -1017,7 +1017,76 @@ namespace wxltest
             uint32_t              attach = 0;
             std::vector<float>    alphas;  ///< the shape's point_alphas, copied
             std::string           texture; ///< the style's texture, copied
+            wxl_draw_emitter      emitter{};
+            wxl_draw_particles    particles{};
+            bool                  looked = false;
+            uint32_t              count = 0;
         };
+        static void DrawEmitterInto(DrawCall& call, const wxl_draw_emitter* e, const wxl_draw_particles* p)
+        {
+            if (e) call.emitter = *e;
+            call.looked = p != nullptr;
+            if (p)
+            {
+                call.particles = *p;
+                if (p->texture) call.texture = p->texture;
+                call.particles.texture = nullptr;
+            }
+        }
+        static wxl_result WXL_CALL DrawEmit(const wxl_draw_emitter* e, const wxl_draw_particles* p)
+        {
+            if (!e || e->struct_size < sizeof *e || e->burst > WXL_DRAW_MAX_BURST) return WXL_E_INVALID;
+            DrawCall call{"emit"};
+            DrawEmitterInto(call, e, p);
+            DrawCalls().push_back(call);
+            return WXL_OK;
+        }
+        static wxl_handle WXL_CALL DrawAddEmitter(const wxl_draw_emitter* e, const wxl_draw_particles* p)
+        {
+            if (!e || e->struct_size < sizeof *e || e->burst > WXL_DRAW_MAX_BURST) return WXL_HANDLE_NONE;
+            DrawCall call{"add_emitter", ++DrawNext()};
+            DrawEmitterInto(call, e, p);
+            DrawCalls().push_back(call);
+            return call.handle;
+        }
+        static wxl_result WXL_CALL DrawUpdateEmitter(wxl_handle h, const wxl_draw_emitter* e)
+        {
+            DrawCall call{"update_emitter", h};
+            DrawEmitterInto(call, e, nullptr);
+            DrawCalls().push_back(call);
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL DrawSetEmitterStyle(wxl_handle h, const wxl_draw_particles* p)
+        {
+            DrawCall call{"set_emitter_style", h};
+            DrawEmitterInto(call, nullptr, p);
+            DrawCalls().push_back(call);
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL DrawBurst(wxl_handle h, uint32_t count)
+        {
+            DrawCall call{"burst", h};
+            call.count = count;
+            DrawCalls().push_back(call);
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL DrawPlace(wxl_handle h, wxl_vec3 center, float facing)
+        {
+            DrawCall call{"place", h};
+            call.center = center;
+            call.facing = facing;
+            DrawCalls().push_back(call);
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL DrawFollow(wxl_handle h, wxl_handle target, uint32_t flags)
+        {
+            DrawCall call{"follow", h};
+            call.target = target;
+            call.attach = flags;
+            DrawCalls().push_back(call);
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static void WXL_CALL DrawStop(wxl_handle h) { DrawCalls().push_back(DrawCall{"stop", h}); }
         static std::vector<DrawCall>& DrawCalls()
         {
             static std::vector<DrawCall> calls;
@@ -1120,7 +1189,11 @@ namespace wxltest
             out->shapes   = 3;
             out->vertices = 1234;
             out->frames   = 7;
-            if (out->struct_size >= sizeof *out) out->textured = 2;
+            if (out->struct_size >= sizeof *out)
+            {
+                out->textured  = 2;
+                out->particles = 321;
+            }
             return WXL_OK;
         }
         // wxl.animation: every call kept; one play per unit; the model shows EmoteWork.
@@ -1216,6 +1289,14 @@ namespace wxltest
                 t.remove             = &DrawRemove;
                 t.clear              = &DrawClear;
                 t.stats              = &DrawStats;
+                t.emit               = &DrawEmit;
+                t.add_emitter        = &DrawAddEmitter;
+                t.update_emitter     = &DrawUpdateEmitter;
+                t.set_emitter_style  = &DrawSetEmitterStyle;
+                t.burst              = &DrawBurst;
+                t.place              = &DrawPlace;
+                t.follow             = &DrawFollow;
+                t.stop               = &DrawStop;
                 return t;
             }();
             return &api;
