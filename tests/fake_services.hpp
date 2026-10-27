@@ -1002,8 +1002,9 @@ namespace wxltest
         }
         static wxl_result WXL_CALL TerrainSetTileProvider(const wxl_terrain_tile_provider* p)
         {
-            if (p && (p->struct_size < sizeof *p || !p->fn)) return WXL_E_INVALID;
-            TileProvider() = p ? *p : wxl_terrain_tile_provider{};
+            if (p && (p->struct_size < offsetof(wxl_terrain_tile_provider, name_fn) || !p->fn)) return WXL_E_INVALID;
+            TileProvider() = wxl_terrain_tile_provider{};
+            if (p) std::memcpy(&TileProvider(), p, p->struct_size < sizeof *p ? p->struct_size : sizeof *p);
             return WXL_OK;
         }
         static float LayerAsked(uint32_t texture)

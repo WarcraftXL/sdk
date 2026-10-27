@@ -1749,6 +1749,20 @@ int main()
         Check(files.size[WXL_TERRAIN_TILE_TEX0] == 4 && files.data[WXL_TERRAIN_TILE_OBJ0] == nullptr && WXL_TERRAIN_TILE_FILES == 3u,
               "a tile's answer: the files it has by kind, none for the others");
         Check(TerrainService::SetTileProvider(nullptr) == WXL_OK && !FakeView::TileProvider().fn, "and null takes it off");
+        // abi 0.1.46: files named by FileDataID.
+        Check(TerrainService::SetTileProvider([](void*, const wxl_terrain_tile*, wxl_terrain_tile_files*) {}, nullptr,
+                                              [](void*, uint32_t id, char* out, uint32_t capacity) -> wxl_bool {
+                                                  if (id != 189077 || capacity < 24) return WXL_FALSE;
+                                                  std::strcpy(out, "tileset\\grass.blp");
+                                                  return WXL_TRUE;
+                                              }) == WXL_OK &&
+                  FakeView::TileProvider().name_fn != nullptr,
+              "SetTileProvider passes its name function");
+        char named[32] = {};
+        Check(FakeView::TileProvider().name_fn(nullptr, 189077, named, sizeof named) == WXL_TRUE && std::string(named) == "tileset\\grass.blp" &&
+                  FakeView::TileProvider().name_fn(nullptr, 1, named, sizeof named) == WXL_FALSE,
+              "a FileDataID it knows is named, one it does not is refused");
+        TerrainService::SetTileProvider(nullptr);
         const auto& calls = FakeView::TerrainCalls();
         Check(calls.size() == 3 && calls[0].layer == 0 && calls[0].heights.size() == 2 && calls[0].heights[1].index == 9 &&
                   calls[1].what == "reset" && calls[1].layer == 3 && calls[1].chunk_y == 512 && calls[2].what == "reset_all",
