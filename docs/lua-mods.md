@@ -1173,6 +1173,62 @@ answered (`false, "not_found"`), a caller that goes has its requests cancelled -
 optional `cancelled(request)` function is told -- and nothing is handed to a mod that went.
 `wxl.relay.Cancel(request)` takes one back by hand. The module came with abi `0.1.23`.
 
+### Messages of your own: `wxl.net`
+
+A mod that talks to a module of the server gives each of its actions an opcode number of its own,
+as the game does (`CMSG_CAST_SPELL` one way, `SMSG_CAST_FAILED` the other), and the client carries
+the messages like any other. The client's own numbers end at `0x520`: a mod's start at `0x521`.
+List yours in `mod.json`, so that two mods cannot take the same ones:
+
+```json
+"net": { "opcodes": [ "0x521-0x52A" ] }
+```
+
+```lua
+local net = wxl.net
+net.Claim(0x521)                 -- what we send: a ping
+net.Claim(0x522)                 -- what the server sends: its echo
+net.SetHandler(0x522, function(r, opcode)
+    local seq, text = r:U32(), r:String()
+    if not r:Ok() then return end                    -- the message was shorter than expected
+    print("echo " .. seq .. ": " .. text)
+end)
+
+-- Later, once the server has spoken:
+local ok, why = net.Send(0x521, net.Writer():U32(seq):String("hello"))
+```
+
+**Readers and writers.** A handler is handed a reader over the message's body: `U8`, `U16`,
+`U32`, `U64`, `I8` to `I64`, `F32`, `F64` (all little-endian, as the game's), `Bool`, `Guid` and
+`PackedGuid` (a guid as the server packs one, answered as `"0x..."` text), `Vec3`, `String` (ended
+by a zero byte), `Bytes(n)`, `Skip(n)`. A read past the end answers 0 and leaves the reader failed:
+read the whole message, then check `r:Ok()` once. A handler that leaves it failed is logged once per
+number as `malformed 0x522 from the server`. `net.Writer()` writes the same kinds, each call
+answering the writer; it refuses to grow past `net.MaxSend()` (10000 bytes) and `Send` refuses a
+failed writer. `net.Reader(bytes)` reads any string.
+
+**The send gate.** A world server closes the connection when it receives a number it has no
+handler for, so `Send` answers `nil, "failed"` until the server has sent this mod one of the
+numbers it claimed, on this connection. The server's module announces itself by its first message
+(rules, a hello); `net.Heard()` says whether it has. The gate closes when the connection goes and
+stays closed on the next one until the server speaks again. `Send` also answers `"failed"` while
+the session is not `"authenticated"` (`net.State()`), `"invalid"` for a number the mod has not
+claimed, and `"busy"` past 64 messages of one number in a second.
+
+**Compressed messages.** A large message can come compressed under a second number, as the
+game's `SMSG_COMPRESSED_UPDATE_OBJECT` does: a u32 size, then a zlib stream. Claim both and pair
+them: `net.SetCompressed(0x529, 0x52A)`; a `0x52A` is inflated and handed to `0x529`'s function as
+a `0x529`. `net.Deflate(bytes)` and `net.Inflate(stream)` are zlib for anything else.
+
+**Refusals.** `Claim` refuses, with a line in the log saying why: a number past 0xFFFF; one of
+the client's own unless `mod.json` says `"net": { "stock": true }` (for tools); a number another
+mod claimed, or another mod's `mod.json` declares (the log names it); a number outside the ones
+this mod's `mod.json` lists, when it lists some. Of two mods whose `mod.json` declare the same
+number, the second does not load. A server project keeps one table of its numbers, and each mod
+declares its own in its manifest. `MessageReceived` of `NetScript` still sees every message first,
+claimed or not. The numbers go back when the mod is disabled, reloads or unloads. See the
+[net-echo example](../examples/net-echo/). The module came with abi `0.1.41`.
+
 ### Textures from SVG and PNG: `wxl.texture`
 
 The game's interface reads BLP and TGA files only. `wxl.texture` (abi `0.1.30`) makes a texture of
@@ -2411,6 +2467,7 @@ built with, so it describes the events your `wxl.lua` knows.
 | `requires` | no | services the mod cannot run without, `{ "service": "wxl.object", "version": 1 }`. A runtime without one refuses the mod |
 | `optional` | no | services the mod uses when they are there; informational |
 | `loadAfter` | no | ids of mods to load before this one when they are present; a missing one is ignored |
+| `net` | no | `{ "opcodes": [ "0x521-0x52A", ... ], "stock": false }`: the opcode numbers the mod claims through `wxl.net` (numbers, `"0x521"`, ranges). A mod that lists numbers claims only those; a mod listing a number an earlier mod lists does not load. `stock` lets it claim the client's own numbers (up to `0x520`), for tools |
 | `description`, `authors`, `homepage` | no | for people reading the folder |
 
 A folder with an `init.lua` and no `mod.json` is a mod named after the folder, version `0.0.0`,
@@ -2568,6 +2625,9 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.render.Dispatch(pipeline, x, y, z, push)` | `true`: a compute pipeline run over x * y * z workgroups inside `OnRenderPoint`, between passes (abi `0.1.34`) |
 | `wxl.render.BonePalette(matrices)` | the address of matrices written into the frame, 12 numbers a matrix, read until the frame ends (abi `0.1.34`) |
 | `wxl.profile.GpuZoneBegin(name)`, `.GpuZoneEnd()` | a zone of the GPU's time around the mod's passes (abi `0.1.33`) |
+| `wxl.net.Claim(op)`, `.Release(op)`, `.SetHandler(op, fn)`, `.SetCompressed(op, compressed)` | `true`: an opcode number of the mod's, its messages handed to `fn(reader, opcode)`; see [Messages of your own](#messages-of-your-own-wxlnet) (abi `0.1.41`) |
+| `wxl.net.Send(op, body)`, `.Heard()`, `.State()`, `.Connection()` | `true`: a message sent, once the server spoke to the mod on this connection; whether it has; `"offline"` ... `"authenticated"`; the connection's number (abi `0.1.41`) |
+| `wxl.net.Writer([limit])`, `.Reader(bytes)`, `.Deflate(bytes)`, `.Inflate(stream)`, `.MaxSend()`, `.ReservedOpcodeLimit()` | a message body to write, one to read; zlib both ways; 10000; `0x520` (abi `0.1.41`) |
 
 ### Object methods
 

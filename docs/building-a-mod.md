@@ -1056,6 +1056,77 @@ may go with requests in flight: a service that goes fails what it had not answer
 function is told), and nothing is ever handed to a mod that went. All of this came with abi
 `0.1.23`.
 
+### Messages of your own: wxl.net
+
+A mod that talks to a module of the server gives each of its actions an opcode number of its own,
+as the game does, and the client carries the messages like any other: `wxl::NetOpcodes`
+(`wxl/services/net.hpp`, abi `0.1.41`) claims the numbers, hands the server's messages to your
+handlers through a bounds-checked `wxl::ByteReader`, and sends what a `wxl::ByteWriter` holds. The
+client's own numbers end at `0x520`; a mod's start at `0x521`. List yours in `mod.json`:
+
+```json
+"net": { "opcodes": [ "0x521-0x52A" ] }
+```
+
+```cpp
+#include "wxl/services/net.hpp"
+
+class Echo : public wxl::Mod
+{
+    wxl::NetOpcodes net_; // gives every number back when the mod goes
+
+    wxl_result OnLoad() override
+    {
+        net_.Claim(0x521);                                         // our ping
+        net_.Handle(0x522, [this](wxl::ByteReader& in) {           // the server's echo
+            const uint32_t         seq  = in.U32();
+            const std::string_view text = in.String();
+            if (!in.Ok()) return;                                  // shorter than expected
+            wxl::Log(WXL_LOG_INFO, "echo", "echo {}: {}", seq, text);
+        });
+        net_.Handle(0x529, [this](wxl::ByteReader& in) { OnSync(in); }, 0x52A); // 0x52A: compressed
+        return WXL_OK;
+    }
+
+    void Ping(uint32_t seq) { net_.Send(0x521, wxl::ByteWriter{}.U32(seq).String("hello")); }
+};
+```
+
+**Reading and writing.** `ByteReader` reads `U8` to `U64`, `I8` to `I64`, `F32`, `F64` (all
+little-endian, bit for bit), `Bool`, `PackedGuid` (as the server packs a guid), `Vec3`, `String`
+(ended by a zero byte, at most a length you give), `Bytes(n)` and `Skip(n)`. A read past the end
+answers 0 and leaves the reader failed: read the whole message, then check `Ok()` once. A handler
+that leaves its reader failed is logged once per number (`malformed 0x522 from the server`), one
+that throws is logged and the message dropped. `ByteWriter` writes the same kinds and refuses to
+grow past 10000 bytes (`WXL_NET_MAX_SEND`); a failed writer is not sent.
+
+**The send gate.** A world server closes the connection on a number it has no handler for, so
+`Send` answers `WXL_E_FAILED` until the server has sent this mod one of the numbers it claimed, on
+this connection: the server's module announces itself with its first message, and `Heard()` says
+whether it has. The gate closes when the connection goes, and stays closed on the next until the
+server speaks again. `Send` also answers `WXL_E_FAILED` while the session is not authenticated,
+`WXL_E_INVALID` for a number the mod has not claimed or a body over 10000 bytes, `WXL_E_BUSY` past
+64 messages of one number in a second (`WXL_NET_SEND_RATE`), and `WXL_E_UNSUPPORTED` off the main
+thread. Handlers run on the main thread.
+
+**Compressed messages.** A large message can come under a second number as a u32 size and a zlib
+stream, the way the game's `SMSG_COMPRESSED_UPDATE_OBJECT` does. `Handle(op, fn, compressed)`
+claims and pairs both: the runtime inflates the compressed one (at most 8 MB) and hands it to
+`fn` as an `op` message. `wxl::NetService{}.Deflate` and `.Inflate` are zlib for anything else.
+
+**Refusals.** A claim is refused (`WXL_E_INVALID`, with a line in the log saying why) for a number
+past 0xFFFF; one of the client's own without `"net": { "stock": true }` in `mod.json` (for tools);
+one another mod claimed or declares in its `mod.json` (the log names it); one outside the numbers
+the mod's own `mod.json` lists, when it lists some. Of two mods whose manifests declare the same
+number, the second is not loaded. `NetScript::OnMessageReceived` still sees every message first,
+claimed or not, and suppressing one there stops it before your handler.
+
+**On the wire.** The server writes a message as its size (2 bytes big-endian, or 3 with the high
+bit of the first set, past 0x7FFF bytes), the opcode as a u16 little-endian, then the body; the
+client sends its size (2 bytes big-endian), the opcode as a u32 little-endian, then the body. Only
+the size and the opcode are encrypted. Numbers above `0x51F` travel exactly as the game's own do:
+the runtime takes them before the client's dispatch, which has handlers for `0x51F` numbers only.
+
 ### Textures from SVG and PNG
 
 The game's interface reads BLP and TGA files only. `wxl::TextureService` (abi `0.1.30`) makes a

@@ -1,0 +1,13 @@
+{
+  "$schema": "../../schema/mod.json",
+  "id": "wxl.net-echo",
+  "name": "Net echo",
+  "version": "1.0.0",
+  "abi": "0.1.41",
+  "description": "A Lua mod speaking two opcodes of its own with a server module: a ping it sends, an echo it receives, and the round trip timed.",
+  "lua": "init.lua",
+  "net": { "opcodes": [ "0x521-0x522" ] },
+  "requires": [
+    { "service": "wxl.net", "version": 2 }
+  ]
+}
