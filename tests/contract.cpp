@@ -1061,6 +1061,7 @@ int main()
                                       wxltest::FakeView::SelectionCircleTable());
         host.Table()->publish_service(WXL_TEXTURE_SERVICE, WXL_TEXTURE_SERVICE_VERSION, wxltest::FakeView::TextureTable());
         host.Table()->publish_service(WXL_CVAR_SERVICE, WXL_CVAR_SERVICE_VERSION, wxltest::FakeView::CVarTable());
+        host.Table()->publish_service(WXL_TERRAIN_SERVICE, WXL_TERRAIN_SERVICE_VERSION, wxltest::FakeView::TerrainTable());
         host.Table()->publish_service(WXL_RENDER_SERVICE, WXL_RENDER_SERVICE_VERSION, wxltest::FakeRender::Table());
         host.Table()->publish_service(WXL_VK_SERVICE, WXL_VK_SERVICE_VERSION, wxltest::FakeRender::VkTable());
     }
@@ -1655,6 +1656,45 @@ int main()
                   FakeView::HighlightColors()[0] == 0xFFE03030u && calls[1].name == "highlight_clear" &&
                   calls[2].name == "highlight_clear_all",
               "with the object, its colour, its widths and its strength");
+    }
+
+    Section("the terrain");
+    {
+        using wxltest::FakeView;
+        using wxl::TerrainService;
+        FakeView::TerrainCalls().clear();
+        Check(TerrainService::Height(10.0f, 5.0f).value_or(0.0f) == 42.0f && TerrainService::Height(10.0f, 5.0f, true).value_or(0.0f) == 40.0f &&
+                  !TerrainService::Height(-10.0f, 5.0f),
+              "Height answers the ground, the original on request, nothing where there is none");
+        Check(TerrainService::Presence(1.0f, 1.0f) == WXL_TERRAIN_GROUND && TerrainService::Presence(-1.0f, 1.0f) == WXL_TERRAIN_NONE,
+              "Presence answers the enumeration");
+        const auto hit = TerrainService::Trace(wxl_vec3{1.0f, 2.0f, 50.0f}, wxl_vec3{1.0f, 2.0f, 0.0f});
+        Check(hit && hit->point.z == 42.0f && hit->normal.z == 1.0f && hit->chunk_x == 511 && hit->chunk_y == 511 &&
+                  !TerrainService::Trace(wxl_vec3{-1.0f, 0.0f, 0.0f}, wxl_vec3{-1.0f, 0.0f, -1.0f}),
+              "Trace hands the hit with its struct_size set, and nothing for a miss");
+        const auto place = TerrainService::Locate(0.0f, 0.0f);
+        Check(place && place->chunk_x == 512 && place->chunk_y == 512 && place->nearest == 0 && place->loaded == WXL_TRUE,
+              "Locate answers the chunk and the nearest vertex");
+        const std::vector<wxl_vec3> vertices = TerrainService::Vertices(512, 512);
+        Check(vertices.size() == 145 && vertices[0].x == wxl::terrain::ChunkCorner(512, 512).x && TerrainService::Vertices(-1, 0).empty(),
+              "Vertices answers the 145, none off the map");
+        const std::vector<wxl_terrain_vertex> brush = TerrainService::VerticesIn(0.0f, 0.0f, 3.0f);
+        bool                                  near  = !brush.empty();
+        for (const wxl_terrain_vertex& v : brush) near = near && v.x * v.x + v.y * v.y <= 9.001f && v.loaded == WXL_TRUE;
+        Check(near && brush.front().original_z == 40.0f, "VerticesIn answers the vertices of the circle, every one counted and written");
+        Check(TerrainService::SetHeights({{512, 512, 0, 41.0f}, {512, 512, 9, 41.5f}}) == WXL_OK &&
+                  TerrainService::SetHeights({{512, 512, 145, 41.0f}}, 7) == WXL_E_INVALID &&
+                  TerrainService::Reset(512, 512, 3) == WXL_OK && TerrainService::ResetAll() == WXL_OK,
+              "SetHeights, Reset and ResetAll pass their layer, 0 unless named");
+        const auto& calls = FakeView::TerrainCalls();
+        Check(calls.size() == 3 && calls[0].layer == 0 && calls[0].heights.size() == 2 && calls[0].heights[1].index == 9 &&
+                  calls[1].what == "reset" && calls[1].layer == 3 && calls[1].chunk_y == 512 && calls[2].what == "reset_all",
+              "every entry reaches the service as given");
+        const auto stats = TerrainService::Stats();
+        Check(stats && stats.Value().edited_chunks == 4 && stats.Value().last_microseconds == 12, "Stats answers the service's counts");
+        const auto at = wxl::terrain::Locate(-20.0f, 33.0f);
+        Check(at.on_map && wxl::terrain::Locate(-20.0f, 33.0f).chunk_x == TerrainService::Locate(-20.0f, 33.0f)->chunk_x,
+              "the grid's arithmetic and the service agree");
     }
 
     Section("console variables");

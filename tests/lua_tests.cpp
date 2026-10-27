@@ -2741,6 +2741,79 @@ print("b own " .. tostring(wxl.cvar.Register("cvB_name", "x")) .. " " .. tostrin
         if (g_failures) sink.Dump();
     }
 
+    Section("the terrain in Lua");
+    {
+        using wxltest::FakeView;
+        const fs::path mods = MakeTree(scratch, "terrain", binary, fs::path());
+        WriteFile(mods / "dig-a" / "mod.json", LuaManifest("wxl.dig-a"));
+        WriteFile(mods / "dig-a" / "init.lua", R"(
+print("height " .. wxl.terrain.Height(10, 5) .. " " .. wxl.terrain.Height(10, 5, true) .. " " .. tostring(wxl.terrain.Height(-1, 5)))
+print("presence " .. wxl.terrain.Presence(1, 1) .. " " .. wxl.terrain.Presence(-1, 1))
+local hit = wxl.terrain.Trace({ x = 1, y = 2, z = 50 }, { x = 1, y = 2, z = 0 })
+print("trace " .. hit.point.z .. " " .. hit.normal.z .. " " .. hit.chunk_x .. " " .. hit.chunk_y .. " " .. hit.fraction .. " " ..
+      tostring(wxl.terrain.Trace({ x = -1, y = 0, z = 0 }, { x = -1, y = 0, z = -1 })))
+local at = wxl.terrain.Locate(0, 0)
+print("locate " .. at.chunk_x .. " " .. at.chunk_y .. " " .. at.cell_row .. " " .. at.nearest .. " " .. tostring(at.loaded))
+local v = wxl.terrain.Vertices(at.chunk_x, at.chunk_y)
+print("vertices " .. #v .. " " .. v[1].z .. " " .. tostring(select(2, wxl.terrain.Vertices(-1, 0))))
+local region = wxl.terrain.VerticesIn(0, 0, 3)
+print("region " .. tostring(#region > 0) .. " " .. region[1].original_z .. " " .. tostring(region[1].loaded) .. " " ..
+      type(region[1].inner) .. " " .. tostring(#wxl.terrain.VerticesIn(0, 0, 0.001) == 1))
+print("set " .. tostring(wxl.terrain.SetHeights({ { chunk_x = 512, chunk_y = 512, index = 0, height = 41 },
+                                                  { chunk_x = 512, chunk_y = 512, index = 9, height = 41.5 } })))
+print("bad " .. tostring(select(2, wxl.terrain.SetHeights({ { chunk_x = 512, chunk_y = 512, index = 145, height = 1 } }))))
+print("shape " .. tostring(select(2, pcall(function() return wxl.terrain.SetHeights({ { chunk_x = 512, index = 0, height = 1 } }) end))))
+print("reset " .. tostring(wxl.terrain.Reset(512, 512)) .. " " .. tostring(wxl.terrain.ResetAll()))
+print("stats " .. wxl.terrain.Stats().edited_chunks)
+)");
+        WriteFile(mods / "dig-b" / "mod.json", LuaManifest("wxl.dig-b", "\"loadAfter\": [ \"wxl.dig-a\" ]"));
+        WriteFile(mods / "dig-b" / "init.lua", R"(
+print("b " .. tostring(wxl.terrain.SetHeights({ { chunk_x = 1, chunk_y = 2, index = 3, height = 4 } })))
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_TERRAIN_SERVICE, WXL_TERRAIN_SERVICE_VERSION, FakeView::TerrainTable()});
+        FakeView::TerrainCalls().clear();
+        uint32_t layerA = 0, layerB = 0;
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            Check(sink.Has("[wxl.dig-a] height 42 40 nil"), "Height answers a number, the original on request, nil for none");
+            Check(sink.Has("[wxl.dig-a] presence ground none"), "Presence answers a name");
+            Check(sink.Has("[wxl.dig-a] trace 42 1 511 511 0.5 nil"), "Trace answers a table, nil for a miss");
+            Check(sink.Has("[wxl.dig-a] locate 512 512 0 0 true"), "Locate answers a table");
+            Check(sink.Has("[wxl.dig-a] vertices 145 42 not_found"), "Vertices answers the 145 points, not_found for none");
+            Check(sink.Has("[wxl.dig-a] region true 40 true boolean true"), "VerticesIn answers a list of vertex tables");
+            Check(sink.Has("[wxl.dig-a] set true") && sink.Has("[wxl.dig-a] bad invalid"), "SetHeights answers true, or why not");
+            Check(sink.Has("[wxl.dig-a] shape") && sink.Has("entry 1 must be a table {chunk_x, chunk_y, index, height} of numbers; its chunk_y is nil"),
+                  "an entry without a field is an error naming it");
+            Check(sink.Has("[wxl.dig-a] reset true true") && sink.Has("[wxl.dig-a] stats 4"), "Reset, ResetAll and Stats answer");
+            Check(sink.Has("[wxl.dig-b] b true"), "a second Lua mod edits too");
+            const auto& calls = FakeView::TerrainCalls();
+            for (const auto& call : calls)
+            {
+                if (call.what != "set") continue;
+                if (!layerA) layerA = call.layer;
+                else if (call.layer != layerA) layerB = call.layer;
+            }
+            Check(layerA && layerB && layerA != layerB && calls[0].heights.size() == 2 && calls[0].heights[1].height == 41.5f,
+                  "each Lua mod edits in a layer of its own, its entries as given");
+            FakeView::TerrainCalls().clear();
+            host.Shutdown();
+        }
+        bool resetA = false, resetB = false;
+        for (const auto& call : FakeView::TerrainCalls())
+        {
+            if (call.what != "reset_all") continue;
+            resetA = resetA || call.layer == layerA;
+            resetB = resetB || call.layer == layerB;
+        }
+        Check(resetA && resetB, "a Lua mod's edits come off when it unloads");
+        if (g_failures) sink.Dump();
+    }
+
     Section("a rolled view and a pointer held off the centre in Lua");
     {
         using wxltest::FakeView;

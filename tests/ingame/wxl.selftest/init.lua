@@ -75,6 +75,11 @@
 --      of the selftest's own SPIR-V tints the frame after the world for two seconds, the four
 --      points of the frame come, a model batch is kept from ModelBatchDrawn, and a GPU zone is
 --      opened and closed around the tint.
+--  26. the ground: wxl.terrain answers the height under the player, the chunks loaded since the
+--      mod loaded were announced, then a brush of the vertices within three yards of a point six
+--      yards north (VerticesIn) is lowered three yards for two seconds: wxl.terrain's height and
+--      trace and the client's own ray test (wxl.world.Trace) meet the dip, the original height
+--      stays readable, and a reset gives the ground back.
 --
 -- Each check is one line in the log: PASS, FAIL, SKIP (what it needs is not there: a class
 -- without a cast-time spell, say) or NOTE (an event the server may not send). The chat box shows
@@ -2326,6 +2331,100 @@ step(function()
     compute.rows:DestroyPipeline()
     compute.buffer:DestroyBuffer()
     compute.fill, compute.rows, compute.buffer = nil, nil, nil
+end)
+
+-- Phase 26: the ground (wxl.terrain) ------------------------------------------------------------
+
+-- The chunks announced since the mod loaded: the world loads around the player before phase 1.
+local ground = { loaded = 0, unloaded = 0, edited = 0 }
+if wxl.runtime.Raises and wxl.runtime.Raises("WorldScript", "OnTerrainChunkLoaded") then
+    Observe("WorldScript", "OnTerrainChunkLoaded", function(map, x, y, edited)
+        ground.loaded = ground.loaded + 1
+        if edited then ground.edited = ground.edited + 1 end
+    end)
+    Observe("WorldScript", "OnTerrainChunkUnloaded", function() ground.unloaded = ground.unloaded + 1 end)
+end
+
+step(function()
+    print("phase 26: the ground (wxl.terrain)")
+    local tr = wxl.terrain
+    if not (tr and tr.SetHeights) then
+        result("wxl.terrain", false, "this runtime is older than abi 0.1.35")
+        return
+    end
+    result("TerrainChunkLoaded announced the chunks around the player (" .. ground.loaded .. " loaded, " ..
+           ground.unloaded .. " unloaded)", ground.loaded > 0)
+    local me = wxl.object.LocalPlayer()
+    local feet = me and me:Position()
+    if not feet then
+        skip("the ground", "no player in the world")
+        return
+    end
+    local presence = tr.Presence(feet.x, feet.y)
+    if presence ~= "ground" then
+        skip("the ground", "there is no ground under the player here (" .. tostring(presence) ..
+             "): a map without terrain, or a hole; stand outdoors on the ground")
+        return
+    end
+    local h = tr.Height(feet.x, feet.y)
+    if h and math.abs(h - feet.z) < 1 then
+        result("the ground's height under the player is where the player stands", true, string.format("%.2f", h))
+    else
+        print(string.format("NOTE the ground's height under the player is %.2f, the player at %.2f: standing on something else",
+                            h or -1, feet.z))
+    end
+    -- A brush in world space: every vertex within three yards of a point six yards north, each
+    -- lowered three yards; one vertex on a chunk's edge or not, VerticesIn names each once.
+    local cx, cy = feet.x + 6, feet.y
+    local brush = tr.VerticesIn(cx, cy, 3)
+    local edits, centre, seen, once = {}, nil, {}, true
+    for _, v in ipairs(brush) do
+        local key = string.format("%.2f %.2f", v.x, v.y)
+        once = once and not seen[key]
+        seen[key] = true
+        if v.loaded then
+            edits[#edits + 1] = { chunk_x = v.chunk_x, chunk_y = v.chunk_y, index = v.index, height = v.z - 3 }
+            if not centre or (v.x - cx) ^ 2 + (v.y - cy) ^ 2 < (centre.x - cx) ^ 2 + (centre.y - cy) ^ 2 then centre = v end
+        end
+    end
+    result("VerticesIn lists the brush's vertices, each once (" .. #brush .. ")", #brush >= 3 and once and centre ~= nil)
+    if not centre then return end
+    local v = centre
+    ground.v = v
+    local ok, why = tr.SetHeights(edits)
+    result("SetHeights lowers the brush three yards", ok == true, tostring(why))
+    local now, before = tr.Height(v.x, v.y), tr.Height(v.x, v.y, true)
+    result("the height there follows the edit", now ~= nil and math.abs(now - (v.z - 3)) < 0.05,
+           string.format("%.2f, expected %.2f", now or -1, v.z - 3))
+    result("and the original height stays readable", before ~= nil and math.abs(before - v.original_z) < 0.05,
+           string.format("%.2f", before or -1))
+    local again = tr.VerticesIn(v.x, v.y, 0.01)[1]
+    result("VerticesIn reads the edited height and the original", again ~= nil and math.abs(again.z - (v.z - 3)) < 0.05 and
+           math.abs(again.original_z - v.original_z) < 0.05)
+    local hit = tr.Trace({ x = v.x, y = v.y, z = v.z + 5 }, { x = v.x, y = v.y, z = v.z - 10 })
+    result("wxl.terrain.Trace meets the dip", hit ~= nil and math.abs(hit.point.z - (v.z - 3)) < 0.05 and hit.normal.z > 0,
+           hit and string.format("%.2f", hit.point.z) or "no hit")
+    local client = wxl.world.Trace({ x = v.x, y = v.y, z = v.z + 5 }, { x = v.x, y = v.y, z = v.z - 10 })
+    result("the client's own ray test (wxl.world.Trace) meets the dip", client ~= nil and math.abs(client.z - (v.z - 3)) < 0.1,
+           client and string.format("%.2f", client.z) or "no hit")
+    local stats = tr.Stats()
+    if stats then
+        print(string.format("NOTE the edit wrote %d vertices in %d chunks in %d us (longest so far %d us)", stats.last_vertices,
+                            stats.last_chunks, stats.last_microseconds, stats.max_microseconds))
+    end
+    print("look: a dip three yards deep and six wide, six yards north of you, for two seconds, its light on the slopes")
+    wait(2)
+end)
+
+step(function()
+    local v = ground.v
+    if not v then return end
+    local tr = wxl.terrain
+    result("ResetAll takes the brush off", tr.ResetAll() == true)
+    local now = tr.Height(v.x, v.y)
+    result("and the ground is back", now ~= nil and math.abs(now - v.z) < 0.05, string.format("%.2f", now or -1))
+    result("nothing is left to reset", select(2, tr.ResetAll()) == "not_found")
+    ground.v = nil
 end)
 
 -- The end ----------------------------------------------------------------------------------------

@@ -186,6 +186,17 @@ inside a pass is refused; then a palette of 300 matrices is written each frame f
 the pass reads the last row of the last matrix (the world green); a dispatch outside a point is
 refused.
 
+Phase 26 checks the ground (abi 0.1.35), on both clients. `TerrainChunkLoaded` must have been
+raised for the chunks around the player since the selftest loaded. Standing outdoors on the ground
+(the phase skips on a map without terrain, in a hole, or with no ground under the player), the
+height `wxl.terrain` answers under the player is where the player stands (a NOTE when the player
+stands on a building or a rock). The vertices within three yards of a point six yards north, as
+`VerticesIn` lists them (each once, whichever chunks they are on), are then lowered three yards
+for two seconds (watch it: a dip in the ground, lit on its slopes, the grass in it grown
+again): `wxl.terrain`'s height and trace and the client's own ray test (`wxl.world.Trace`, the
+camera's and the clicks' collision) must meet it, the original height must stay readable, and the
+edit's cost is printed as a NOTE. A reset gives the ground back, and nothing is left to reset.
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the

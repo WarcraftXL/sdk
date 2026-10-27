@@ -14,6 +14,11 @@ endif()
 
 add_test(NAME contract COMMAND wxl-contract)
 
+# The terrain's grid (wxl/terrain/grid.hpp) against the client's own arithmetic.
+add_executable(wxl-terrain-grid terrain_grid.cpp)
+target_link_libraries(wxl-terrain-grid PRIVATE wxl::sdk)
+add_test(NAME terrain-grid COMMAND wxl-terrain-grid)
+
 # wxl/services/imgui.hpp with Dear ImGui and ImPlot compiled in, as a mod builds it.
 add_executable(wxl-imgui-facade imgui_facade.cpp)
 target_link_libraries(wxl-imgui-facade PRIVATE wxl::sdk wxl::imgui)

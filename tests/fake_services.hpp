@@ -36,6 +36,8 @@
 #include "wxl/services/selectioncircle.h"
 #include "wxl/services/texture.h"
 #include "wxl/services/cvar.h"
+#include "wxl/services/terrain.h"
+#include "wxl/terrain/grid.hpp"
 #include "wxl/services/imgui.h"
 #include "wxl/services/data.h"
 #include "wxl/services/hook.h"
@@ -881,6 +883,117 @@ namespace wxltest
                 t.clear              = &HighlightClear;
                 t.clear_all          = &HighlightClearAll;
                 t.drawn              = &HighlightDrawn;
+                return t;
+            }();
+            return &api;
+        }
+
+        // wxl.terrain: ground flat at 42 yards over x >= 0, none west of it; every edit and reset
+        // kept whole, with its layer.
+        struct TerrainCall
+        {
+            std::string                     what;
+            uint32_t                        layer = 0;
+            std::vector<wxl_terrain_height> heights;
+            int32_t                         chunk_x = 0, chunk_y = 0;
+        };
+        static std::vector<TerrainCall>& TerrainCalls()
+        {
+            static std::vector<TerrainCall> calls;
+            return calls;
+        }
+        static wxl_bool WXL_CALL TerrainHeight(double x, double, wxl_bool original, double* out)
+        {
+            if (x < 0.0 || !out) return WXL_FALSE;
+            *out = original ? 40.0 : 42.0;
+            return WXL_TRUE;
+        }
+        static uint32_t WXL_CALL TerrainPresence(double x, double) { return x < 0.0 ? WXL_TERRAIN_NONE : WXL_TERRAIN_GROUND; }
+        static wxl_bool WXL_CALL TerrainTrace(wxl_vec3 start, wxl_vec3, wxl_terrain_hit* out)
+        {
+            if (start.x < 0.0f || !out || out->struct_size < sizeof *out) return WXL_FALSE;
+            out->point    = wxl_vec3{start.x, start.y, 42.0f};
+            out->normal   = wxl_vec3{0.0f, 0.0f, 1.0f};
+            const wxl::terrain::Locus at = wxl::terrain::Locate(start.x, start.y);
+            out->chunk_x  = at.chunk_x;
+            out->chunk_y  = at.chunk_y;
+            out->fraction = 0.5f;
+            return WXL_TRUE;
+        }
+        static wxl_bool WXL_CALL TerrainLocate(double x, double y, wxl_terrain_place* out)
+        {
+            const wxl::terrain::Locus at = wxl::terrain::Locate(static_cast<float>(x), static_cast<float>(y));
+            if (!at.on_map || !out) return WXL_FALSE;
+            out->chunk_x  = at.chunk_x;
+            out->chunk_y  = at.chunk_y;
+            out->cell_row = at.cell_row;
+            out->cell_col = at.cell_col;
+            out->nearest  = at.nearest;
+            out->loaded   = WXL_TRUE;
+            return WXL_TRUE;
+        }
+        static uint32_t WXL_CALL TerrainVertices(int32_t cx, int32_t cy, wxl_bool, wxl_vec3* out, uint32_t capacity)
+        {
+            if (!wxl::terrain::ChunkOnMap(cx, cy)) return 0;
+            for (uint32_t i = 0; out && i < capacity && i < WXL_TERRAIN_CHUNK_VERTICES; ++i)
+            {
+                const wxl::terrain::Point2 p = wxl::terrain::VertexPlane(cx, cy, i);
+                out[i]                       = wxl_vec3{p.x, p.y, 42.0f};
+            }
+            return WXL_TERRAIN_CHUNK_VERTICES;
+        }
+        static wxl_result WXL_CALL TerrainSetHeights(const wxl_terrain_height* heights, uint32_t count, uint32_t layer)
+        {
+            for (uint32_t i = 0; i < count; ++i)
+                if (heights[i].index >= WXL_TERRAIN_CHUNK_VERTICES) return WXL_E_INVALID;
+            TerrainCalls().push_back(TerrainCall{"set", layer, std::vector<wxl_terrain_height>(heights, heights + count), 0, 0});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL TerrainResetChunk(int32_t cx, int32_t cy, uint32_t layer)
+        {
+            TerrainCalls().push_back(TerrainCall{"reset", layer, {}, cx, cy});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL TerrainResetAll(uint32_t layer)
+        {
+            TerrainCalls().push_back(TerrainCall{"reset_all", layer, {}, 0, 0});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL TerrainStats(wxl_terrain_stats* out)
+        {
+            if (!out) return WXL_E_INVALID;
+            out->edited_chunks     = 4;
+            out->edits             = static_cast<uint64_t>(TerrainCalls().size());
+            out->last_microseconds = 12;
+            return WXL_OK;
+        }
+        static uint32_t WXL_CALL TerrainVerticesIn(double x, double y, double radius, wxl_terrain_vertex* out, uint32_t capacity)
+        {
+            uint32_t count = 0;
+            wxl::terrain::ForVerticesInCircle(static_cast<float>(x), static_cast<float>(y), static_cast<float>(radius),
+                                              [&](int32_t cx, int32_t cy, uint32_t i, wxl::terrain::Point2 p) {
+                if (out && count < capacity)
+                    out[count] = wxl_terrain_vertex{cx, cy, i, p.x, p.y, 42.0f, 40.0f,
+                                                    wxl::terrain::IsInner(i) ? WXL_TRUE : WXL_FALSE, WXL_TRUE};
+                ++count;
+            });
+            return count;
+        }
+        static const wxl_terrain_api* TerrainTable()
+        {
+            static const wxl_terrain_api api = [] {
+                wxl_terrain_api t{};
+                t.struct_size = sizeof t;
+                t.height      = &TerrainHeight;
+                t.presence    = &TerrainPresence;
+                t.trace       = &TerrainTrace;
+                t.locate      = &TerrainLocate;
+                t.vertices    = &TerrainVertices;
+                t.set_heights = &TerrainSetHeights;
+                t.reset_chunk = &TerrainResetChunk;
+                t.reset_all   = &TerrainResetAll;
+                t.stats       = &TerrainStats;
+                t.vertices_in = &TerrainVerticesIn;
                 return t;
             }();
             return &api;
