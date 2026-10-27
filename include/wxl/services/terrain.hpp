@@ -67,6 +67,20 @@ namespace wxl
         static constexpr const char* kName    = WXL_TERRAIN_SERVICE;
         static constexpr uint32_t    kVersion = WXL_TERRAIN_SERVICE_VERSION;
 
+        /// The calling mod's layer provider (abi 0.1.42): @p fn is told of each texture layer as
+        /// the client makes it and answers its look; null takes it off.
+        static wxl_result SetLayerProvider(wxl_terrain_layer_fn fn, void* user = nullptr)
+        {
+            const wxl_terrain_api* api = Raw();
+            if (!detail::Carries(api, &wxl_terrain_api::set_layer_provider)) return WXL_E_UNSUPPORTED;
+            if (!fn) return api->set_layer_provider(nullptr);
+            wxl_terrain_layer_provider provider{};
+            provider.struct_size = sizeof provider;
+            provider.fn          = fn;
+            provider.user        = user;
+            return api->set_layer_provider(&provider);
+        }
+
         /// The ground's height under a point; nothing where there is none (a hole, a chunk not
         /// loaded, no terrain), off the main thread or on a runtime without the service.
         static std::optional<float> Height(float x, float y, bool original = false)

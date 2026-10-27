@@ -69,6 +69,8 @@
 //   render_pass const wxl_render_pass*: what a wxl.render pass draws into; a script passes a table
 //   terrain_heights (const wxl_terrain_height*, uint32_t count): vertices of wxl.terrain set to
 //       heights; a script passes a list of {chunk_x, chunk_y, index, height}
+//   terrain_layer_provider const wxl_terrain_layer_provider*: what a native mod hands
+//       wxl.terrain's set_layer_provider
 //   draw_emitter const wxl_draw_emitter*  draw_particles const wxl_draw_particles*: wxl.draw's
 //       particles, where they come from and how they look; a table each, a wxl::DrawEmitter and a
 //       wxl::DrawParticles
@@ -201,6 +203,7 @@ namespace wxl::api
         struct draw_shape {};
         struct draw_style {};
         struct draw_emitter {};
+        struct terrain_layer_provider {};
         struct draw_particles {};
         struct draw_stats {};
         template <class K>
@@ -320,6 +323,7 @@ namespace wxl::api
     template <> struct Param<kind::draw_shape> { using C = List<const wxl_draw_shape*>; };
     template <> struct Param<kind::draw_style> { using C = List<const wxl_draw_style*>; };
     template <> struct Param<kind::draw_emitter> { using C = List<const wxl_draw_emitter*>; };
+    template <> struct Param<kind::terrain_layer_provider> { using C = List<const wxl_terrain_layer_provider*>; };
     template <> struct Param<kind::draw_particles> { using C = List<const wxl_draw_particles*>; };
     template <class R>
     struct Param<R, std::enable_if_t<IsResource<R>::value>>

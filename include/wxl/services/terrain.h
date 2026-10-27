@@ -27,6 +27,21 @@
 // The client's own ray tests (wxl.world's trace, its camera, its clicks) and its walking see the
 // edited ground too: they read the same heights.
 //
+// --- Layers (abi 0.1.42) --------------------------------------------------------------------------
+//
+//   set_layer_provider  a mod is told of each texture layer as the client makes it, with the bytes
+//                       of the ADT it comes from, and answers the layer's look: how many times
+//                       larger its texture is drawn than the client's own tiling (8 repeats a
+//                       chunk, one every 4.17 yards). What a mod reading newer ADT data (MTXF,
+//                       MTXP: wxl.modern-adt) uses for retail's per-texture scale.
+//
+// The runtime draws the layer at that scale on every path the client draws terrain with (its
+// vertex programs, single pass and a layer a pass, and its fixed-function texture matrices),
+// through the client's own constants and matrices, so the same under Direct3D 9 and the Vulkan
+// renderer; an animated layer keeps its speed in yards. A layer no provider answers, or answered
+// 1, is drawn exactly as the client draws it. The answer is taken when the layer is made (when its
+// chunk is loaded): a provider set later sees the chunks loaded after it.
+//
 // --- Editing ----------------------------------------------------------------------------------
 //
 //   set_heights  sets vertices to absolute heights, many at once
@@ -151,6 +166,42 @@ typedef struct wxl_terrain_stats
     uint32_t max_microseconds; ///< the longest edit so far
 } wxl_terrain_stats;
 
+/// A texture layer of the ground as the client makes it (CMapRenderChunk::CreateLayer), what a layer
+/// provider is told. Valid during the call only.
+typedef struct wxl_terrain_layer
+{
+    uint32_t    struct_size;
+    int32_t     tile_x;    ///< the ADT's tile: its column on the map (0 to 63)
+    int32_t     tile_y;    ///< and its row
+    int32_t     chunk_x;   ///< the chunk the layer is drawn on, as wxl.terrain names it (0 to 1023); -1 unknown
+    int32_t     chunk_y;
+    uint32_t    layer;     ///< its place among the chunk's layers, 0 to 3
+    uint32_t    texture;   ///< its texture: an index into the ADT's MTEX
+    uint32_t    flags;     ///< its MCLY flags
+    const void* file;      ///< the ADT's bytes as the client read them (a whole file: MVER, MHDR, ...)
+    uint32_t    file_size;
+    uint32_t    reserved;  ///< 0
+} wxl_terrain_layer;
+
+/// A layer provider's answer, as the runtime hands it (the previous provider's answer, or the
+/// client's own look).
+typedef struct wxl_terrain_layer_look
+{
+    uint32_t struct_size;
+    float    texture_scale; ///< how many times larger the texture is drawn than the client's own tiling: 1 as the client, 4 a picture over four times the yards; 1/64 to 1024
+} wxl_terrain_layer_look;
+
+/// Called on the main thread for each layer the client makes, while a provider is set.
+typedef void(WXL_CALL* wxl_terrain_layer_fn)(void* user, const wxl_terrain_layer* layer, wxl_terrain_layer_look* look);
+
+/// What set_layer_provider takes.
+typedef struct wxl_terrain_layer_provider
+{
+    uint32_t             struct_size;
+    wxl_terrain_layer_fn fn;
+    void*                user;
+} wxl_terrain_layer_provider;
+
 typedef struct wxl_terrain_api
 {
     uint32_t struct_size;
@@ -236,6 +287,15 @@ typedef struct wxl_terrain_api
      *         map, a radius out of range, off the main thread, or with no ground loaded
      */
     uint32_t(WXL_CALL* vertices_in)(double x, double y, double radius, wxl_terrain_vertex* out, uint32_t capacity);
+
+    /**
+     * @brief The calling mod's layer provider (abi 0.1.42): told of each texture layer as the
+     *        client makes it, it answers its look (wxl_terrain_layer_look). One per mod; a new one
+     *        replaces it; null takes it off, and it goes when the mod is disabled or unloads.
+     *        Several mods' providers are called in the order they were set, each seeing the look
+     *        the one before left. WXL_E_INVALID off the main thread or for a provider without fn.
+     */
+    wxl_result(WXL_CALL* set_layer_provider)(const wxl_terrain_layer_provider* provider);
 } wxl_terrain_api;
 
 #ifdef __cplusplus
