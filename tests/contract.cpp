@@ -1731,6 +1731,24 @@ int main()
         Check(extras.count == 2 && extras.alpha[3] == 200 && sizeof extras.alpha == 64 * 64 * 4,
               "a chunk's answer: its extra layers and their 64 x 64 alpha maps, four a texel");
         Check(TerrainService::SetLayerProvider(nullptr) == WXL_OK, "and null takes it off");
+        // abi 0.1.45: a tile's split files.
+        Check(TerrainService::SetTileProvider([](void*, const wxl_terrain_tile* tile, wxl_terrain_tile_files* out) {
+                  static const char tex0[] = "REVM";
+                  if (tile->tile_x != 32) return;
+                  out->data[WXL_TERRAIN_TILE_TEX0] = tex0;
+                  out->size[WXL_TERRAIN_TILE_TEX0] = 4;
+              }) == WXL_OK &&
+                  FakeView::TileProvider().fn != nullptr && FakeView::TileProvider().struct_size == sizeof(wxl_terrain_tile_provider),
+              "SetTileProvider passes its function");
+        wxl_terrain_tile tile{};
+        tile.struct_size = sizeof tile;
+        tile.tile_x      = 32;
+        wxl_terrain_tile_files files{};
+        files.struct_size = sizeof files;
+        FakeView::TileProvider().fn(nullptr, &tile, &files);
+        Check(files.size[WXL_TERRAIN_TILE_TEX0] == 4 && files.data[WXL_TERRAIN_TILE_OBJ0] == nullptr && WXL_TERRAIN_TILE_FILES == 3u,
+              "a tile's answer: the files it has by kind, none for the others");
+        Check(TerrainService::SetTileProvider(nullptr) == WXL_OK && !FakeView::TileProvider().fn, "and null takes it off");
         const auto& calls = FakeView::TerrainCalls();
         Check(calls.size() == 3 && calls[0].layer == 0 && calls[0].heights.size() == 2 && calls[0].heights[1].index == 9 &&
                   calls[1].what == "reset" && calls[1].layer == 3 && calls[1].chunk_y == 512 && calls[2].what == "reset_all",

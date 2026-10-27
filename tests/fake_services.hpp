@@ -994,6 +994,18 @@ namespace wxltest
             TerrainProvider() = p ? *p : wxl_terrain_layer_provider{};
             return WXL_OK;
         }
+        // The tile provider set last (abi 0.1.45).
+        static wxl_terrain_tile_provider& TileProvider()
+        {
+            static wxl_terrain_tile_provider provider{};
+            return provider;
+        }
+        static wxl_result WXL_CALL TerrainSetTileProvider(const wxl_terrain_tile_provider* p)
+        {
+            if (p && (p->struct_size < sizeof *p || !p->fn)) return WXL_E_INVALID;
+            TileProvider() = p ? *p : wxl_terrain_tile_provider{};
+            return WXL_OK;
+        }
         static float LayerAsked(uint32_t texture)
         {
             const wxl_terrain_layer_provider& p = TerrainProvider();
@@ -1029,6 +1041,7 @@ namespace wxltest
                 t.stats       = &TerrainStats;
                 t.vertices_in = &TerrainVerticesIn;
                 t.set_layer_provider = &TerrainSetLayerProvider;
+                t.set_tile_provider  = &TerrainSetTileProvider;
                 return t;
             }();
             return &api;
