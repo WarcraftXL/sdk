@@ -1322,6 +1322,10 @@
 ---arrives as its number.
 ---@alias wxl.DrawDepth "tested"|"on_top"
 
+---A wxl_animation_end value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.AnimationEnd "finished"|"interrupted"|"stopped"|"replaced"|"gone"
+
 -- The script families. A function defined on one of these tables as On<Event> is
 -- subscribed when the entry file has run and called with the event's parameters;
 -- on an event that can be answered its return values are taken, as Override
@@ -1389,6 +1393,7 @@ RenderScript = {}
 ---@field OnUnitAuraRefreshed fun(self: ObjectScript, unit: wxl.Object|nil, unit_guid: wxl.Guid, slot: integer, spell_id: integer, caster: wxl.Object|nil, caster_guid: wxl.Guid, stacks: integer, previous_stacks: integer, level: integer, flags: integer, harmful: boolean, duration: integer, remaining: integer)
 ---@field OnUnitMountChanged fun(self: ObjectScript, unit: wxl.Object|nil, unit_guid: wxl.Guid, previous_display_id: integer, display_id: integer)
 ---@field OnAppearanceChanged fun(self: ObjectScript, change: wxl.AppearanceChange|integer, wearer: lightuserdata|nil, model: lightuserdata|nil, race_id: integer, sex_id: integer, item_slot: integer, display_id: integer, npc: boolean)
+---@field OnUnitAnimationEnded fun(self: ObjectScript, unit: wxl.Object|nil, anim_id: integer, reason: wxl.AnimationEnd|integer, looped: boolean)
 ObjectScript = {}
 
 ---@class AssetScript
@@ -1680,6 +1685,7 @@ SocialScript = {}
 ---@overload fun(family: "WorldScript", method: "OnTerrainChunkLoaded", handler: fun(map_id: integer, chunk_x: integer, chunk_y: integer, edited: boolean)): integer
 ---@overload fun(family: "WorldScript", method: "OnTerrainChunkUnloaded", handler: fun(map_id: integer, chunk_x: integer, chunk_y: integer, edited: boolean)): integer
 ---@overload fun(family: "WorldScript", method: "OnTerrainEditsCleared", handler: fun(map_id: integer, chunks: integer)): integer
+---@overload fun(family: "ObjectScript", method: "OnUnitAnimationEnded", handler: fun(unit: wxl.Object|nil, anim_id: integer, reason: wxl.AnimationEnd|integer, looped: boolean)): integer
 ---@param family wxl.Family
 ---@param method string
 ---@param handler function
@@ -4123,6 +4129,45 @@ function draw.Clear() end
 ---@return string|nil reason
 function draw.Stats() end
 
+---wxl.animation. An animation of the game played on a unit through the client's own animation of units, seen on this client only. Main thread only.
+---Came with abi 0.1.37: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.animation
+local animation = {}
+
+---Plays an AnimationData animation on a unit as the game plays an emote, seen on this client only:
+---the whole body standing, the upper body over the legs' run while it moves. `flags`: loop 1 (again
+---at each end until Stop), no_blend 2 (no blend from the pose it leaves), override 4 (a loop played
+---again whenever the game replaced it, death excepted; a one-shot ignores it), exact 8 (no fallback to the model's nearest
+---animation); 0 or nil plays it once, blended, yielding to the game. `speed`: 1 (or nil) its own.
+---Kept until it ends (OnUnitAnimationEnded), Stop, or the mod disabled, reloaded or unloaded; nil,
+---"failed" when the client did not play it (its model loading, the unit dead).
+---@param unit wxl.Object
+---@param anim_id integer
+---@param flags? integer
+---@param speed? number
+---@return true|nil ok
+---@return string|nil reason
+function animation.Play(unit, anim_id, flags, speed) end
+
+---Ends this mod's animation on a unit; the game chooses the unit's animation again at once. nil,
+---"not_found" when this mod plays none on it.
+---@param unit wxl.Object
+---@return true|nil ok
+---@return string|nil reason
+function animation.Stop(unit) end
+
+---The animation a mod plays on a unit, as it was asked for; nil when none.
+---@param unit wxl.Object
+---@return integer|nil
+---@return string|nil reason
+function animation.Playing(unit) end
+
+---The animation the unit's model shows now (its upper body's when it plays one there), whoever chose it.
+---@param unit wxl.Object
+---@return integer|nil
+---@return string|nil reason
+function animation.Current(unit) end
+
 ---@class wxl.ModInfo
 ---@field id string
 ---@field name string
@@ -4209,6 +4254,7 @@ function object.Unwatch(type, name) end
 ---@field render wxl.render
 ---@field terrain wxl.terrain
 ---@field draw wxl.draw
+---@field animation wxl.animation
 ---@field events table<wxl.Family, string[]> every family's events, as On<Event>
 wxl = {}
 

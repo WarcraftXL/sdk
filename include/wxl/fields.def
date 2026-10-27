@@ -151,6 +151,14 @@ WXL_ARGS_FIELD(wxl_terrain_cleared_args, map_id, u32)  ///< the map being unload
 WXL_ARGS_FIELD(wxl_terrain_cleared_args, chunks, u32)  ///< the chunks that had edits, 0 for none
 WXL_ARGS_END(wxl_terrain_cleared_args)
 
+/// A mod's animation on a unit that ended (wxl.animation).
+WXL_ARGS(wxl_unit_animation_args)
+WXL_ARGS_FIELD(wxl_unit_animation_args, unit, handle)       ///< the unit, stale when it left view (`reason` gone)
+WXL_ARGS_FIELD(wxl_unit_animation_args, anim_id, u32)       ///< the animation as play was asked for it
+WXL_ARGS_ENUM(wxl_unit_animation_args, reason, wxl_animation_end)
+WXL_ARGS_FIELD(wxl_unit_animation_args, looped, bool)       ///< whether it was played with WXL_ANIMATION_LOOP
+WXL_ARGS_END(wxl_unit_animation_args)
+
 /// An object appearing, changing or leaving.
 WXL_ARGS(wxl_object_args)
 WXL_ARGS_FIELD(wxl_object_args, object, handle)

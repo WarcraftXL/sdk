@@ -676,6 +676,25 @@ namespace
                 return "---Gives back everything this mod changed on the game's circles.\n"
                        "function " + owner + ".ResetAll() end\n\n";
         }
+        if (std::strcmp(row.service, "animation") == 0)
+        {
+            if (name == "Play")
+                return "---Plays an AnimationData animation on a unit as the game plays an emote, seen on this client only:\n"
+                       "---the whole body standing, the upper body over the legs' run while it moves. `flags`: loop 1 (again\n"
+                       "---at each end until Stop), no_blend 2 (no blend from the pose it leaves), override 4 (a loop played\n"
+                       "---again whenever the game replaced it, death excepted; a one-shot ignores it), exact 8 (no fallback to the model's nearest\n"
+                       "---animation); 0 or nil plays it once, blended, yielding to the game. `speed`: 1 (or nil) its own.\n"
+                       "---Kept until it ends (OnUnitAnimationEnded), Stop, or the mod disabled, reloaded or unloaded; nil,\n"
+                       "---\"failed\" when the client did not play it (its model loading, the unit dead).\n"
+                       "---@param unit wxl.Object\n---@param anim_id integer\n---@param flags? integer\n---@param speed? number\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Play(unit, anim_id, flags, speed) end\n\n";
+            if (name == "Stop")
+                return "---Ends this mod's animation on a unit; the game chooses the unit's animation again at once. nil,\n"
+                       "---\"not_found\" when this mod plays none on it.\n"
+                       "---@param unit wxl.Object\n---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Stop(unit) end\n\n";
+        }
         if (std::strcmp(row.service, "draw") == 0)
         {
             const std::string shape =

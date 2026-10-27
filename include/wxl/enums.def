@@ -402,6 +402,15 @@ WXL_ENUM_VALUE(wxl_draw_depth, WXL_DRAW_DEPTH_TESTED, 0, tested) ///< walls, uni
 WXL_ENUM_VALUE(wxl_draw_depth, WXL_DRAW_DEPTH_ON_TOP, 1, on_top) ///< drawn over everything of the world
 WXL_ENUM_END(wxl_draw_depth)
 
+/// Why a mod's animation on a unit ended (wxl.animation, UnitAnimationEnded).
+WXL_ENUM(wxl_animation_end)
+WXL_ENUM_VALUE(wxl_animation_end, WXL_ANIMATION_END_FINISHED,    0, finished)    ///< a one-shot played its length
+WXL_ENUM_VALUE(wxl_animation_end, WXL_ANIMATION_END_INTERRUPTED, 1, interrupted) ///< the game replaced a one-shot before its end (a move, a cast, a hit, death)
+WXL_ENUM_VALUE(wxl_animation_end, WXL_ANIMATION_END_STOPPED,     2, stopped)     ///< its mod stopped it, or went (disabled, unloaded)
+WXL_ENUM_VALUE(wxl_animation_end, WXL_ANIMATION_END_REPLACED,    3, replaced)    ///< a play on the same unit took its place, of this mod or another
+WXL_ENUM_VALUE(wxl_animation_end, WXL_ANIMATION_END_GONE,        4, gone)        ///< the unit left view, or the world was left
+WXL_ENUM_END(wxl_animation_end)
+
 #ifdef WXL_ENUM_DEFAULTED
     #undef WXL_ENUM
     #undef WXL_ENUM_DEFAULTED

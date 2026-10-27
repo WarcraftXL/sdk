@@ -39,9 +39,13 @@
 // walking and falling, the camera's collision and the client's ray tests. A vertex on a chunk's
 // edge is the same ground as its neighbour's: setting it through either chunk sets both, so the
 // ground never cracks. A player standing still on ground that was lowered starts to fall, as the
-// client does when a transport leaves; ground raised under a standing player holds them at the
-// next step they take. Liquids keep their own surface, and map doodads (trees, rocks) stay where
-// the map placed them.
+// client does when a transport leaves. Ground raised over the feet of a player on it (standing or
+// walking, under any part of them) puts them on top: a rise up to a step's at once, as the
+// client's own step up does, a higher one at 8 yards a second; one standing still then lands
+// through the client's fall, so the server gets the movement messages the client sends for a
+// landing (MSG_MOVE_HEARTBEAT falling, MSG_MOVE_FALL_LAND), never a teleport. Nobody is lifted
+// through a roof, a floor of a building or anything else of the world above them. Liquids keep
+// their own surface, and map doodads (trees, rocks) stay where the map placed them.
 //
 // Edits belong to the mod that made them, in a layer of its choosing (`layer`, any number; a
 // native mod may keep its committed edits in one and a preview in another, and reset either

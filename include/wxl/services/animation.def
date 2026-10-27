@@ -1,0 +1,28 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.animation as data: one row per member of wxl_animation_api, in member order. The shapes and
+// their columns are described in wxl/services/rows.hpp.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including animation.def"
+#endif
+
+WXL_API_SERVICE(animation, WXL_ANIMATION_SERVICE, WXL_ANIMATION_SERVICE_VERSION, (0, 1, 37), open,
+                "An animation of the game played on a unit through the client's own animation of units, seen on this client only. Main thread only.")
+
+WXL_API(animation, play, Play, result, (object unit, u32 anim_id, opt<u32> flags, opt<f64> speed), shim, generated,
+        "Plays an AnimationData animation on a unit as the game plays an emote; flags: loop 1, no_blend 2, override 4 (loops only), exact 8 (0 or nil: once, blended, yielding to the game); speed 1 the animation's own (0 or nil: 1).")
+WXL_API(animation, stop, Stop, result, (object unit), shim, generated,
+        "Ends the mod's animation on a unit and hands the unit back to the game's own animation.")
+WXL_API(animation, playing, Playing, out<u32>, (object unit), generated, generated,
+        "The animation a mod plays on a unit, as it was asked for; nil when none.")
+WXL_API(animation, current, Current, out<u32>, (object unit), generated, generated,
+        "The animation the unit's model shows now (its upper body's when it plays one there), whoever chose it.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

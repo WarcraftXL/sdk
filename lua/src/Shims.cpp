@@ -40,6 +40,7 @@
 #include "wxl/services/storage.h"
 #include "wxl/services/terrain.h"
 #include "wxl/services/draw.h"
+#include "wxl/services/animation.h"
 
 namespace wxl::lua::shims
 {
@@ -1712,6 +1713,78 @@ namespace wxl::lua::shims
             return 1;
         }
 
+        // --- wxl.animation: the animations each Lua mod plays ------------------------------------
+
+        const wxl_animation_api* Animations() { return wxl::api::Table<wxl_animation_api>(); }
+
+        /// The unit a Lua mod plays an animation on: the runtime sees every one as wxl.lua's, one
+        /// per unit, so the last Lua mod to play on a unit holds it.
+        struct Played
+        {
+            ScriptMod* mod;
+            wxl_handle unit;
+        };
+        std::vector<Played> g_played;
+
+        uint32_t CheckU32(lua_State* L, int index, const char* name, uint32_t absent)
+        {
+            if (lua_isnoneornil(L, index)) return absent;
+            const lua_Number value = luaL_checknumber(L, index);
+            if (!(value >= 0.0) || value > 4294967295.0 || value != std::floor(value))
+                luaL_error(L, "wxl.animation.Play: '%s' (argument %d) takes a whole number from 0", name, index);
+            return static_cast<uint32_t>(value);
+        }
+
+        int L_AnimationPlay(lua_State* L)
+        {
+            ScriptMod&       mod   = Self(L);
+            const wxl_handle unit  = CheckObject(L, 1);
+            if (lua_isnoneornil(L, 2)) luaL_error(L, "wxl.animation.Play: 'anim_id' (argument 2) is missing; it takes an AnimationData id");
+            const uint32_t   anim  = CheckU32(L, 2, "anim_id", 0);
+            const uint32_t   flags = CheckU32(L, 3, "flags", 0);
+            const double     speed = lua_isnoneornil(L, 4) ? 0.0 : static_cast<double>(luaL_checknumber(L, 4));
+            const wxl_animation_api* api = Animations();
+            if (!api || !wxl::detail::Carries(api, &wxl_animation_api::play)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->play(unit, anim, flags, speed);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            const auto held = std::find_if(g_played.begin(), g_played.end(), [&](const Played& p) { return p.unit == unit; });
+            if (held != g_played.end())
+                held->mod = &mod;
+            else
+                g_played.push_back(Played{&mod, unit});
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_AnimationStop(lua_State* L)
+        {
+            ScriptMod&       mod  = Self(L);
+            const wxl_handle unit = CheckObject(L, 1);
+            const auto held = std::find_if(g_played.begin(), g_played.end(),
+                                           [&](const Played& p) { return p.mod == &mod && p.unit == unit; });
+            if (held == g_played.end()) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            g_played.erase(held);
+            const wxl_animation_api* api = Animations();
+            if (!api || !wxl::detail::Carries(api, &wxl_animation_api::stop)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->stop(unit);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// A Lua mod's animations end with it; one that ended by itself answers not found, which
+        /// is fine.
+        void StopAnimations(ScriptMod& mod)
+        {
+            const wxl_animation_api* api = Animations();
+            for (size_t i = g_played.size(); i-- > 0;)
+            {
+                if (g_played[i].mod != &mod) continue;
+                if (api && wxl::detail::Carries(api, &wxl_animation_api::stop)) api->stop(g_played[i].unit);
+                g_played.erase(g_played.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
+
         // --- wxl.highlight: the objects each Lua mod highlighted -------------------------------
 
         const wxl_highlight_api* Highlight() { return wxl::api::Table<wxl_highlight_api>(); }
@@ -2232,10 +2305,11 @@ namespace wxl::lua::shims
             }
         }
 
-        /// A mod's view, its hold on the pointer, its block of the mouse look, its heads, its
+        /// A mod's animations, its view, its hold on the pointer, its block of the mouse look, its heads, its
         /// highlights, its circles and its console variables go with it.
         void ReleaseViewAndPointer(ScriptMod& mod)
         {
+            StopAnimations(mod);
             ReleaseCVars(mod);
             ResetCircles(mod);
             ClearHighlights(mod);
@@ -3535,6 +3609,8 @@ namespace wxl::lua::shims
         if (service == "input" && name == "BlockMouseLook") return &L_BlockMouseLook;
         if (service == "pose" && name == "Head") return &L_Head;
         if (service == "pose" && name == "ReleaseHead") return &L_ReleaseHead;
+        if (service == "animation" && name == "Play") return &L_AnimationPlay;
+        if (service == "animation" && name == "Stop") return &L_AnimationStop;
         if (service == "highlight" && name == "Set") return &L_HighlightSet;
         if (service == "highlight" && name == "Clear") return &L_HighlightClear;
         if (service == "highlight" && name == "ClearAll") return &L_HighlightClearAll;

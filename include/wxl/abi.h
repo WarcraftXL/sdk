@@ -47,7 +47,7 @@
 
 #define WXL_ABI_VERSION_MAJOR   0
 #define WXL_ABI_VERSION_MINOR   1
-#define WXL_ABI_VERSION_FEATURE 36
+#define WXL_ABI_VERSION_FEATURE 37
 
 // --- Platform ------------------------------------------------------------------------------
 //

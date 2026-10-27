@@ -65,6 +65,9 @@
 //                                                       one Lua mod blocks it
 //   wxl.pose.Head(unit, yaw, pitch, smoothing)          a unit's head, the last Lua mod to turn
 //   wxl.pose.ReleaseHead(unit)                          it holding it
+//   wxl.animation.Play(unit, anim_id, flags, speed)    an animation on a unit, the last Lua mod to
+//   wxl.animation.Stop(unit)                            play one on it holding it; stopped when the
+//                                                       mod goes
 //   wxl.highlight.Set(target, color, outline, glow,    an object highlighted, the last Lua mod
 //                     glow_strength)                    to set it holding it; Clear, ClearAll take
 //   wxl.highlight.Clear(target), .ClearAll()            the mod's own off

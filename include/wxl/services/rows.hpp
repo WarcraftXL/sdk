@@ -129,6 +129,7 @@
 #include "wxl/services/texture.h"
 #include "wxl/services/cvar.h"
 #include "wxl/services/terrain.h"
+#include "wxl/services/animation.h"
 #include "wxl/services/draw.h"
 #include "wxl/services/render.h"
 #include "wxl/services/vk.h"
