@@ -3326,10 +3326,13 @@ namespace wxl::lua::shims
 
         const wxl_draw_api* Draw() { return wxl::api::Table<wxl_draw_api>(); }
 
-        constexpr const char* kDrawKinds[]  = {"line", "circle", "ring", "sector", "rectangle", "polygon", "grid", "box", "sphere", "cylinder"};
+        constexpr const char* kDrawKinds[]  = {"line", "circle", "ring", "sector", "rectangle", "polygon", "grid", "box", "sphere", "cylinder", "beam"};
         constexpr const char* kDrawDepths[] = {"tested", "on_top"};
         constexpr const char* kDrawUvs[]    = {"fit", "tile", "world"};
         constexpr const char* kDrawBlends[] = {"alpha", "add", "modulate"};
+        constexpr const char* kDrawSpawns[] = {"point", "disc", "box", "segment"};
+        constexpr const char* kDrawGrounds[] = {"none", "bounce", "settle"};
+        constexpr const char* kDrawModes[]  = {"camera", "ground", "stretched"};
 
         /// A point of a table {x, y, z} or {x, y, z} by position; false for anything else.
         bool ReadPoint(lua_State* L, int index, wxl_vec3& out)
@@ -3380,6 +3383,8 @@ namespace wxl::lua::shims
 
         /// A shape table into @p shape, its points into @p points and their opacities into @p alphas
         /// (which the shape points into).
+        bool FieldPair(lua_State* L, int index, const char* name, float& x, float& y, bool number_ok, const char* where);
+
         void ReadDrawShape(lua_State* L, int index, const char* where, wxl_draw_shape& shape, std::vector<wxl_vec3>& points,
                            std::vector<float>& alphas)
         {
@@ -3392,7 +3397,7 @@ namespace wxl::lua::shims
             if (lua_isnil(L, -1)) luaL_error(L, "%s: the shape has no 'kind'; it takes \"line\", \"circle\", \"ring\", \"sector\", "
                                                "\"rectangle\", \"polygon\", \"grid\", \"box\", \"sphere\" or \"cylinder\"", where);
             const std::string kindWhere = std::string(where) + ": the shape's 'kind'";
-            shape.kind = CheckNamed(L, lua_gettop(L), kDrawKinds, 10, 0, kindWhere.c_str());
+            shape.kind = CheckNamed(L, lua_gettop(L), kDrawKinds, 11, 0, kindWhere.c_str());
             lua_pop(L, 1);
             lua_getfield(L, index, "center");
             if (!lua_isnil(L, -1) && !ReadPoint(L, -1, shape.center))
@@ -3413,6 +3418,8 @@ namespace wxl::lua::shims
             shape.size.x = FieldNumber(L, index, "length", shape.size.x, where);
             shape.size.y = FieldNumber(L, index, "width", shape.size.y, where);
             shape.size.z = FieldNumber(L, index, "height", shape.size.z, where);
+            // A beam's widths at its two ends: a number or {start, end}.
+            FieldPair(L, index, "widths", shape.size.x, shape.size.y, true, where);
             if (FieldFlag(L, index, "flat", where)) shape.flags |= WXL_DRAW_FLAT;
             if (FieldFlag(L, index, "on_ground", where)) shape.flags |= WXL_DRAW_ON_GROUND;
             if (FieldFlag(L, index, "closed", where)) shape.flags |= WXL_DRAW_CLOSED;
@@ -3610,7 +3617,223 @@ namespace wxl::lua::shims
             style.feather     = FieldNumber(L, index, "feather", 0.0f, where);
             style.radial_fade = FieldNumber(L, index, "radial_fade", 0.0f, where);
             style.occluded_alpha = FieldNumber(L, index, "occluded_alpha", 0.0f, where);
+            if (FieldFlag(L, index, "mask", where)) style.flags |= WXL_DRAW_STYLE_MASK;
+            style.texture_blur = FieldNumber(L, index, "texture_blur", 0.0f, where);
             return true;
+        }
+
+        // --- wxl.draw's particles (abi 0.1.40) ------------------------------------------------------
+
+        /// A named choice of the table at @p index (a name of @p names, or its number); @p otherwise when nil.
+        uint32_t FieldNamed(lua_State* L, int index, const char* name, const char* const* names, uint32_t count, uint32_t otherwise,
+                            const char* where)
+        {
+            lua_getfield(L, index, name);
+            uint32_t value = otherwise;
+            if (!lua_isnil(L, -1))
+            {
+                const std::string what = std::string(where) + ": '" + name + "'";
+                value                  = CheckNamed(L, lua_gettop(L), names, count, 0, what.c_str());
+            }
+            lua_pop(L, 1);
+            return value;
+        }
+
+        /// A range field: a number (min = max) or {min, max}; false when nil.
+        bool FieldRange(lua_State* L, int index, const char* name, float& min, float& max, const char* where)
+        {
+            lua_getfield(L, index, name);
+            bool given = true;
+            if (lua_isnumber(L, -1)) min = max = static_cast<float>(lua_tonumber(L, -1));
+            else if (lua_istable(L, -1))
+            {
+                lua_rawgeti(L, -1, 1);
+                lua_rawgeti(L, -2, 2);
+                if (!lua_isnumber(L, -2) || !lua_isnumber(L, -1)) luaL_error(L, "%s: '%s' must be a number or {min, max}", where, name);
+                min = static_cast<float>(lua_tonumber(L, -2));
+                max = static_cast<float>(lua_tonumber(L, -1));
+                lua_pop(L, 2);
+            }
+            else if (lua_isnil(L, -1)) given = false;
+            else luaL_error(L, "%s: '%s' must be a number or {min, max}", where, name);
+            lua_pop(L, 1);
+            return given;
+        }
+
+        /// An emitter table into @p e (wxl::DrawEmitter's defaults for what it leaves out).
+        void ReadDrawEmitter(lua_State* L, int index, const char* where, wxl_draw_emitter& e)
+        {
+            if (!lua_istable(L, index))
+                luaL_error(L, "%s: the emitter (argument %d) must be a table {spawn = \"point\", center = {x, y, z}, burst = 10, ...}", where, index);
+            e             = wxl_draw_emitter{};
+            e.struct_size = sizeof e;
+            e.speed_min   = 1.0f;
+            e.speed_max   = 2.0f;
+            e.life_min = e.life_max = 1.0f;
+            e.size_min = e.size_max = 0.3f;
+            e.spawn = FieldNamed(L, index, "spawn", kDrawSpawns, 4, 0, where);
+            const auto point = [&](const char* name, wxl_vec3& out) {
+                lua_getfield(L, index, name);
+                if (!lua_isnil(L, -1) && !ReadPoint(L, -1, out)) luaL_error(L, "%s: the emitter's '%s' must be a point {x, y, z}", where, name);
+                lua_pop(L, 1);
+            };
+            point("center", e.center);
+            point("extent", e.extent);
+            point("direction", e.direction);
+            point("attractor", e.attractor);
+            e.facing = FieldNumber(L, index, "facing", 0.0f, where);
+            e.spread = FieldNumber(L, index, "spread", 0.0f, where);
+            const float burst = FieldNumber(L, index, "burst", 0.0f, where);
+            if (burst < 0.0f || burst > 4294967295.0f) luaL_error(L, "%s: the emitter's 'burst' must be a count", where);
+            e.burst    = static_cast<uint32_t>(burst);
+            e.rate     = FieldNumber(L, index, "rate", 0.0f, where);
+            e.duration = FieldNumber(L, index, "duration", 0.0f, where);
+            FieldRange(L, index, "speed", e.speed_min, e.speed_max, where);
+            FieldRange(L, index, "life", e.life_min, e.life_max, where);
+            FieldRange(L, index, "size", e.size_min, e.size_max, where);
+            FieldRange(L, index, "spin", e.spin_min, e.spin_max, where);
+            e.gravity        = FieldNumber(L, index, "gravity", 0.0f, where);
+            e.drag           = FieldNumber(L, index, "drag", 0.0f, where);
+            e.ground         = FieldNamed(L, index, "ground", kDrawGrounds, 3, 0, where);
+            e.restitution    = FieldNumber(L, index, "restitution", 0.0f, where);
+            e.friction       = FieldNumber(L, index, "friction", 0.0f, where);
+            e.attraction     = FieldNumber(L, index, "attraction", 0.0f, where);
+            e.attract_radius = FieldNumber(L, index, "attract_radius", 0.0f, where);
+            const float seed = FieldNumber(L, index, "seed", 0.0f, where);
+            e.seed           = seed > 0.0f ? static_cast<uint32_t>(seed) : 0u;
+        }
+
+        /// A look table (nil: the service's default) into @p p, its texture's path into @p texture.
+        bool ReadDrawParticles(lua_State* L, int index, const char* where, wxl_draw_particles& p, std::string& texture)
+        {
+            p             = wxl_draw_particles{};
+            p.struct_size = sizeof p;
+            if (lua_isnoneornil(L, index)) return false;
+            if (!lua_istable(L, index))
+                luaL_error(L, "%s: the look (argument %d) must be a table {mode = \"camera\", texture, keys = {...}, ...}", where, index);
+            p.mode  = FieldNamed(L, index, "mode", kDrawModes, 3, 0, where);
+            p.blend = FieldNamed(L, index, "blend", kDrawBlends, 3, 0, where);
+            p.depth = FieldNamed(L, index, "depth", kDrawDepths, 2, 0, where);
+            lua_getfield(L, index, "texture");
+            if (lua_type(L, -1) == LUA_TSTRING) texture = lua_tostring(L, -1);
+            else if (lua_istable(L, -1))
+            {
+                const int at = lua_gettop(L);
+                lua_rawgeti(L, at, 1);
+                lua_rawgeti(L, at, 2);
+                lua_rawgeti(L, at, 3);
+                if (lua_type(L, -3) != LUA_TSTRING)
+                    luaL_error(L, "%s: the look's 'texture' must be a path, or {path, right, bottom} as wxl.texture.Make answers", where);
+                texture          = lua_tostring(L, -3);
+                p.texture_right  = lua_isnumber(L, -2) ? static_cast<float>(lua_tonumber(L, -2)) : 0.0f;
+                p.texture_bottom = lua_isnumber(L, -1) ? static_cast<float>(lua_tonumber(L, -1)) : 0.0f;
+                lua_pop(L, 3);
+            }
+            else if (!lua_isnil(L, -1))
+                luaL_error(L, "%s: the look's 'texture' must be a path, or {path, right, bottom} as wxl.texture.Make answers", where);
+            lua_pop(L, 1);
+            if (!texture.empty()) p.texture = texture.c_str();
+            float fx = 0.0f, fy = 0.0f;
+            if (FieldPair(L, index, "frames", fx, fy, true, where))
+            {
+                p.frames_x = static_cast<uint32_t>(std::max(fx, 0.0f));
+                p.frames_y = static_cast<uint32_t>(std::max(fy, 0.0f));
+            }
+            p.frame_rate     = FieldNumber(L, index, "frame_rate", 0.0f, where);
+            p.occluded_alpha = FieldNumber(L, index, "occluded_alpha", 0.0f, where);
+            p.stretch        = FieldNumber(L, index, "stretch", 0.0f, where);
+            p.softness       = FieldNumber(L, index, "softness", 0.0f, where);
+            p.texture_blur   = FieldNumber(L, index, "texture_blur", 0.0f, where);
+            if (FieldFlag(L, index, "mask", where)) p.flags |= WXL_DRAW_PARTICLES_MASK;
+            lua_getfield(L, index, "keys");
+            if (!lua_isnil(L, -1))
+            {
+                if (!lua_istable(L, -1)) luaL_error(L, "%s: the look's 'keys' must be a list of {t, size, color, alpha}", where);
+                const int    list = lua_gettop(L);
+                const size_t n    = lua_objlen(L, list);
+                if (n > WXL_DRAW_MAX_PARTICLE_KEYS)
+                    luaL_error(L, "%s: the look has %d keys, more than a look may (%d)", where, static_cast<int>(n), static_cast<int>(WXL_DRAW_MAX_PARTICLE_KEYS));
+                for (size_t i = 0; i < n; ++i)
+                {
+                    lua_rawgeti(L, list, static_cast<int>(i + 1));
+                    if (!lua_istable(L, -1)) luaL_error(L, "%s: key %d must be a table {t, size, color, alpha}", where, static_cast<int>(i + 1));
+                    const int key = lua_gettop(L);
+                    wxl_draw_particle_key& k = p.keys[i];
+                    k.t     = FieldNumber(L, key, "t", 0.0f, where);
+                    k.size  = FieldNumber(L, key, "size", 1.0f, where);
+                    k.alpha = FieldNumber(L, key, "alpha", 1.0f, where);
+                    k.color = 0xFFFFFFu;
+                    FieldColor(L, key, "color", k.color, where);
+                    lua_pop(L, 1);
+                }
+                p.key_count = static_cast<uint32_t>(n);
+            }
+            lua_pop(L, 1);
+            return true;
+        }
+
+        int L_DrawEmit(lua_State* L)
+        {
+            wxl_draw_emitter   e{};
+            wxl_draw_particles p{};
+            std::string        texture;
+            ReadDrawEmitter(L, 1, "wxl.draw.Emit", e);
+            const bool          looked = ReadDrawParticles(L, 2, "wxl.draw.Emit", p, texture);
+            const wxl_draw_api* api    = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::emit)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->emit(&e, looked ? &p : nullptr);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_DrawAddEmitter(lua_State* L)
+        {
+            wxl_draw_emitter   e{};
+            wxl_draw_particles p{};
+            std::string        texture;
+            ReadDrawEmitter(L, 1, "wxl.draw.AddEmitter", e);
+            const bool          looked = ReadDrawParticles(L, 2, "wxl.draw.AddEmitter", p, texture);
+            const wxl_draw_api* api    = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::add_emitter)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_handle made = api->add_emitter(&e, looked ? &p : nullptr);
+            if (made == WXL_HANDLE_NONE) return PushResultFailure(L, WXL_E_INVALID);
+            PushDrawEmitter(L, made);
+            return 1;
+        }
+
+        wxl_handle CheckDrawEmitter(lua_State* L, const char* where)
+        {
+            const wxl_handle handle = ToDrawEmitter(L, 1);
+            if (handle == WXL_HANDLE_NONE) luaL_error(L, "%s: 'self' (argument 1) must be an Emitter wxl.draw.AddEmitter answered, not stopped", where);
+            return handle;
+        }
+
+        int L_DrawUpdateEmitter(lua_State* L)
+        {
+            const wxl_handle handle = CheckDrawEmitter(L, "wxl.draw.UpdateEmitter");
+            wxl_draw_emitter e{};
+            ReadDrawEmitter(L, 2, "wxl.draw.UpdateEmitter", e);
+            const wxl_draw_api* api = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::update_emitter)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->update_emitter(handle, &e);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_DrawSetEmitterStyle(lua_State* L)
+        {
+            const wxl_handle   handle = CheckDrawEmitter(L, "wxl.draw.SetEmitterStyle");
+            wxl_draw_particles p{};
+            std::string        texture;
+            const bool          looked = ReadDrawParticles(L, 2, "wxl.draw.SetEmitterStyle", p, texture);
+            const wxl_draw_api* api    = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::set_emitter_style)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set_emitter_style(handle, looked ? &p : nullptr);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
         }
 
         int L_DrawDraw(lua_State* L)
@@ -3692,6 +3915,7 @@ namespace wxl::lua::shims
         int L_DrawClear(lua_State* L)
         {
             CloseDrawShapes(L);
+            CloseDrawEmitters(L);
             return 0;
         }
 
@@ -3703,7 +3927,7 @@ namespace wxl::lua::shims
             stats.struct_size       = sizeof stats;
             const wxl_result result = api->stats(&stats);
             if (result != WXL_OK) return PushResultFailure(L, result);
-            lua_createtable(L, 0, 16);
+            lua_createtable(L, 0, 22);
             const auto field = [&](const char* name, double value) {
                 lua_pushnumber(L, value);
                 lua_setfield(L, -2, name);
@@ -3724,6 +3948,12 @@ namespace wxl::lua::shims
             field("shadows", stats.shadows);
             field("occluded", stats.occluded);
             field("reused", stats.reused);
+            field("particles", stats.particles);
+            field("particles_emitted", stats.particles_emitted);
+            field("particles_culled", stats.particles_culled);
+            field("particle_draws", stats.particle_draws);
+            field("emitters", stats.emitters);
+            field("particle_microseconds", stats.particle_microseconds);
             return 1;
         }
 
@@ -3791,6 +4021,10 @@ namespace wxl::lua::shims
         if (service == "draw" && name == "SetStyle") return &L_DrawSetStyle;
         if (service == "draw" && name == "Clear") return &L_DrawClear;
         if (service == "draw" && name == "Stats") return &L_DrawStats;
+        if (service == "draw" && name == "Emit") return &L_DrawEmit;
+        if (service == "draw" && name == "AddEmitter") return &L_DrawAddEmitter;
+        if (service == "draw" && name == "UpdateEmitter") return &L_DrawUpdateEmitter;
+        if (service == "draw" && name == "SetEmitterStyle") return &L_DrawSetEmitterStyle;
         if (service == "render" && name == "CreatePipeline") return &L_RenderCreatePipeline;
         if (service == "render" && name == "Begin") return &L_RenderBegin;
         if (service == "render" && name == "Draw") return &L_RenderDraw;

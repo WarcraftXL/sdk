@@ -32,6 +32,9 @@
 //   box        center, size (x along facing, y across, z up), facing, pitch, roll
 //   sphere     center, radius
 //   cylinder   center (its middle), radius, size.z (its height), facing, pitch, roll
+//   beam       points (2: where it starts, a, and where it ends, b), size.x its width at a and
+//              size.y at b (yards; 0: as at a), point_alphas its opacity at a and b (none: 1 to 0);
+//              abi 0.1.40
 //
 // The points of a line or a polygon are offsets from center: leave center at 0 to give them in
 // world coordinates, or set it to move the whole shape with `move`.
@@ -98,6 +101,19 @@
 // sphere's inside stays plain. Changing only the look of a kept shape (set_style: its texture's
 // frame, `uv_offset` each frame to scroll it, its colour) builds nothing again.
 //
+// A beam (abi 0.1.40) is a shaft of light, a spell's ray, a laser: a quad from a to b turned around
+// its own axis to face the camera each frame, so that it reads as a volume from any side. It is
+// drawn with the inside's look: `fill_alpha` and `fill_color`, its opacity going from a's to b's
+// along it; `feather` is the part of its half width over which it fades to its sides (1: soft all
+// across); a texture lies along it (FIT once from a to b, its top towards b; TILE repeated, uv_size
+// a part of its length; WORLD uv_size yards a picture), `uv_offset` scrolling it; mask, blend and
+// occluded_alpha as an inside's. It fades out where it nears the camera and as it is seen end-on.
+//
+// From abi 0.1.40, under WXL_DRAW_STYLE_MASK a texture gives the opacity alone and the colour is the
+// style's (fill_color, or color): a dark picture of cracks glows in any colour. `texture_blur`
+// blurs the picture, each step reading it at half its detail (its mip levels), alike on every device;
+// `feather` and `radial_fade` soften a textured inside's border as a plain one's.
+//
 // `occluded_alpha` (abi 0.1.39, 0 to 1) shows what the scene hides of a shape tested against the
 // depth (WXL_DRAW_DEPTH_TESTED): the shape is drawn twice, first where the scene stands in front of
 // it at this part of its opacity (a selection box going under the ground, a line behind a wall),
@@ -140,6 +156,31 @@
 // wxl.render's passes. The same vertices, the same programs and the same numbers on both: a mod
 // sees the same picture.
 //
+// --- Particles (abi 0.1.40) --------------------------------------------------------------------
+//
+// An emitter (wxl_draw_emitter) throws particles from a spawn shape (a point, a disc, a box, a
+// segment) along a cone (direction, spread), at speeds, lives, sizes and spins drawn between their
+// min and max; then gravity pulls them, drag slows them, the ground stops them (bounce: once,
+// with restitution and friction, then they settle; settle: they rest where they land and slide to a
+// stop), and an attractor (attraction > 0, yards/s^2 towards a point; < 0 pushes away) pulls them in,
+// taking them out within attract_radius. `emit` throws one burst and forgets it (dust, debris);
+// `add_emitter` keeps an emitter: a burst when it is added, and `rate` particles a second for
+// `duration` seconds (0: until stopped); `burst`, `place`, `follow`, `update_emitter`,
+// `set_emitter_style` change it, `stop` takes it off (its particles live out their lives). The
+// runtime simulates them on the CPU once a frame of the world.
+//
+// Their look (wxl_draw_particles): soft sprites facing the camera, lying flat on the ground, or
+// stretched along their velocity; a texture the client loads (wxl.texture's or the game's; a sprite
+// sheet of frames_x by frames_y frames played at frame_rate, or once over a life) or, with none, a
+// soft round blot; blended ALPHA (drawn far to near), ADD or MODULATE; over its life a particle's
+// size, colour and opacity follow up to WXL_DRAW_MAX_PARTICLE_KEYS keys (none: white, its own size,
+// fading out). `softness` fades a particle as it nears the ground, by its height above the terrain,
+// the same on every device. `occluded_alpha` as a shape's.
+//
+// Budgets: WXL_DRAW_MAX_PARTICLES alive in all, WXL_DRAW_MAX_MOD_PARTICLES a mod,
+// WXL_DRAW_MAX_EMITTERS emitters a mod (kept and thrown); what is past them is not thrown, and is
+// counted in stats().particles_culled.
+//
 // Main thread only: a call off it answers WXL_E_INVALID.
 
 #ifndef WXL_SERVICE_DRAW_H
@@ -173,6 +214,22 @@
 #define WXL_DRAW_MAX_SHADOW_OFFSET 15.0f
 /// The longest texture path, its terminating zero included.
 #define WXL_DRAW_MAX_TEXTURE_PATH 260u
+/// Particles alive at once, all mods together.
+#define WXL_DRAW_MAX_PARTICLES 65536u
+/// Particles alive at once of one mod.
+#define WXL_DRAW_MAX_MOD_PARTICLES 16384u
+/// Emitters a mod holds, kept and thrown.
+#define WXL_DRAW_MAX_EMITTERS 256u
+/// Particles a burst throws.
+#define WXL_DRAW_MAX_BURST 4096u
+/// Particles an emitter throws a second.
+#define WXL_DRAW_MAX_RATE 4096.0f
+/// The longest particle life, in seconds.
+#define WXL_DRAW_MAX_PARTICLE_LIFE 60.0f
+/// The largest particle, in yards.
+#define WXL_DRAW_MAX_PARTICLE_SIZE 50.0f
+/// Keys of a particle's life.
+#define WXL_DRAW_MAX_PARTICLE_KEYS 4u
 
 /// wxl_draw_shape.flags.
 #define WXL_DRAW_FLAT      0x1u ///< a ground shape lies flat at center.z, wherever the ground is
@@ -182,6 +239,10 @@
 /// wxl_draw_style.flags.
 #define WXL_DRAW_STYLE_FILL_COLOR 0x1u ///< the inside is drawn in fill_color, not color
 #define WXL_DRAW_STYLE_LINE_ALPHA 0x2u ///< a line's opacity goes from alpha_start to alpha_end along it
+#define WXL_DRAW_STYLE_MASK       0x4u ///< abi 0.1.40: the texture gives the opacity alone, the colour comes from the style
+
+/// wxl_draw_particles.flags (abi 0.1.40).
+#define WXL_DRAW_PARTICLES_MASK 0x1u ///< the texture gives the opacity alone, the colour comes from the keys
 
 /// attach's flags.
 #define WXL_DRAW_ATTACH_TURN 0x1u ///< offsets turn with the object's facing (and a shape's facing adds to it)
@@ -252,12 +313,77 @@ typedef struct wxl_draw_style
     // abi 0.1.39
     float       occluded_alpha;  ///< 0 to 1: what the scene hides of the shape drawn at this part of its opacity; 0 for none
     uint32_t    reserved0;       ///< 0; keeps this size apart from abi 0.1.38's on 64-bit, whose padding ends where this field does
+    // abi 0.1.40
+    float       texture_blur;    ///< the picture blurred: each step reads it at half the detail (0 to 8; 0 for none)
+    uint32_t    reserved1;       ///< 0; keeps this size apart from abi 0.1.39's on 64-bit
 } wxl_draw_style;
 
 /// The size of a wxl_draw_style before abi 0.1.38, which a runtime still takes.
 #define WXL_DRAW_STYLE_SIZE_0136 ((uint32_t)offsetof(wxl_draw_style, flags))
 /// The size of a wxl_draw_style of abi 0.1.38, which a runtime still takes.
 #define WXL_DRAW_STYLE_SIZE_0138 ((uint32_t)offsetof(wxl_draw_style, occluded_alpha))
+/// The size of a wxl_draw_style of abi 0.1.39, which a runtime still takes.
+#define WXL_DRAW_STYLE_SIZE_0139 ((uint32_t)offsetof(wxl_draw_style, texture_blur))
+
+/// A point of a particle's life: at `t` (0 to 1 of it), its size multiplied by `size`, its colour
+/// and opacity; between two keys they go in a line.
+typedef struct wxl_draw_particle_key
+{
+    float    t;
+    float    size;  ///< multiplies the particle's own size
+    uint32_t color; ///< 0xRRGGBB
+    float    alpha; ///< 0 to 1
+} wxl_draw_particle_key;
+
+/// Where particles come from and how they move (abi 0.1.40).
+typedef struct wxl_draw_emitter
+{
+    uint32_t struct_size;
+    uint32_t spawn;          ///< wxl_draw_spawn
+    wxl_vec3 center;         ///< world coordinates; offsets from an object it follows
+    wxl_vec3 extent;         ///< disc: x its radius; box: its sides; segment: the offset to its other end
+    float    facing;         ///< turns the disc, the box and the direction around z
+    wxl_vec3 direction;      ///< the cone's axis; (0, 0, 0) is up
+    float    spread;         ///< the cone's half angle in radians: 0 along the axis, pi every way
+    uint32_t burst;          ///< particles thrown at once (when added, or by emit)
+    float    rate;           ///< a kept emitter's particles a second
+    float    duration;       ///< a kept emitter's seconds of rate; 0: until stopped
+    float    speed_min, speed_max;   ///< yards a second
+    float    life_min, life_max;     ///< seconds
+    float    size_min, size_max;     ///< yards across
+    float    spin_min, spin_max;     ///< radians a second
+    float    gravity;        ///< yards/s^2 downwards
+    float    drag;           ///< the part of its speed a particle loses a second
+    uint32_t ground;         ///< wxl_draw_ground
+    float    restitution;    ///< the part of its fall a bounce gives back, 0 to 1
+    float    friction;       ///< the part of its speed along the ground lost at the bounce, and a second while it slides
+    wxl_vec3 attractor;      ///< a point particles are pulled towards (world coordinates)
+    float    attraction;     ///< yards/s^2 towards it; < 0 away; 0 for none
+    float    attract_radius; ///< particles nearer than this to it go
+    uint32_t seed;           ///< 0: a new one each time
+} wxl_draw_emitter;
+
+/// How particles look (abi 0.1.40).
+typedef struct wxl_draw_particles
+{
+    uint32_t              struct_size;
+    uint32_t              mode;           ///< wxl_draw_billboard
+    uint32_t              flags;          ///< WXL_DRAW_PARTICLES_MASK
+    float                 texture_blur;   ///< as a style's
+    const char*           texture;        ///< null or "": a soft round blot
+    float                 texture_right;  ///< the part of the texture its picture fills (0: 1)
+    float                 texture_bottom;
+    uint32_t              frames_x;       ///< a sprite sheet's columns (0 or 1: one picture)
+    uint32_t              frames_y;       ///< and rows
+    float                 frame_rate;     ///< frames a second; 0: the frames once over a life
+    uint32_t              blend;          ///< wxl_draw_blend
+    uint32_t              depth;          ///< wxl_draw_depth
+    float                 occluded_alpha; ///< as a shape's
+    float                 stretch;        ///< stretched: drawn this many seconds of its velocity long
+    float                 softness;       ///< yards above the ground over which a particle fades in; 0 for none
+    uint32_t              key_count;      ///< 0 to WXL_DRAW_MAX_PARTICLE_KEYS; 0: white, its size, fading out
+    wxl_draw_particle_key keys[WXL_DRAW_MAX_PARTICLE_KEYS];
+} wxl_draw_particles;
 
 /// What the runtime drew in the last frame of the world, and what it cost.
 typedef struct wxl_draw_stats
@@ -281,6 +407,13 @@ typedef struct wxl_draw_stats
     // abi 0.1.39
     uint32_t occluded;         ///< shapes the last frame drew where the scene hides them too (occluded_alpha)
     uint32_t reused;           ///< immediate shapes the last frame drew without building them again (as the frame before)
+    // abi 0.1.40
+    uint32_t particles;          ///< alive after the last frame
+    uint32_t particles_emitted;  ///< thrown in the last frame
+    uint32_t particles_culled;   ///< not thrown, past a budget, since the frame before
+    uint32_t particle_draws;     ///< draw calls of particles in the last frame
+    uint32_t emitters;           ///< emitters alive, kept and thrown
+    float    particle_microseconds; ///< the CPU's part of the last frame for particles: simulated, sorted, written
 } wxl_draw_stats;
 
 typedef struct wxl_draw_api
@@ -334,11 +467,39 @@ typedef struct wxl_draw_api
     /// The kept shape goes now.
     void(WXL_CALL* remove)(wxl_handle shape);
 
-    /// Every shape of the calling mod goes, kept and immediate.
+    /// Every shape of the calling mod goes, kept and immediate; from abi 0.1.40 its emitters and
+    /// their particles too.
     void(WXL_CALL* clear)(void);
 
     /// What the last frame drew and what it cost; set out->struct_size.
     wxl_result(WXL_CALL* stats)(wxl_draw_stats* out);
+
+    // abi 0.1.40: particles
+
+    /// One burst of `emitter->burst` particles, forgotten once they have lived.
+    wxl_result(WXL_CALL* emit)(const wxl_draw_emitter* emitter, const wxl_draw_particles* look);
+
+    /// A kept emitter: its burst now, then its rate; its handle, WXL_HANDLE_NONE when refused.
+    wxl_handle(WXL_CALL* add_emitter)(const wxl_draw_emitter* emitter, const wxl_draw_particles* look);
+
+    /// The emitter becomes another; the particles it threw keep how they move.
+    wxl_result(WXL_CALL* update_emitter)(wxl_handle emitter, const wxl_draw_emitter* desc);
+
+    /// Its particles' look, those alive included.
+    wxl_result(WXL_CALL* set_emitter_style)(wxl_handle emitter, const wxl_draw_particles* look);
+
+    /// Throws @p count more particles now.
+    wxl_result(WXL_CALL* burst)(wxl_handle emitter, uint32_t count);
+
+    /// Where it throws from, and its facing; it stops following an object.
+    wxl_result(WXL_CALL* place)(wxl_handle emitter, wxl_vec3 center, float facing);
+
+    /// It throws from a world object from now on (center an offset, turned under
+    /// WXL_DRAW_ATTACH_TURN); it stops when the object leaves view.
+    wxl_result(WXL_CALL* follow)(wxl_handle emitter, wxl_handle target, uint32_t flags);
+
+    /// It stops and goes; its particles live out their lives.
+    void(WXL_CALL* stop)(wxl_handle emitter);
 } wxl_draw_api;
 
 #ifdef __cplusplus

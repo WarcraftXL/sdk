@@ -1316,7 +1316,7 @@
 
 ---A wxl_draw_kind value, by name; a newer value than these headers know
 ---arrives as its number.
----@alias wxl.DrawKind "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder"
+---@alias wxl.DrawKind "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder"|"beam"
 
 ---A wxl_draw_depth value, by name; a newer value than these headers know
 ---arrives as its number.
@@ -1333,6 +1333,18 @@
 ---A wxl_draw_blend value, by name; a newer value than these headers know
 ---arrives as its number.
 ---@alias wxl.DrawBlend "alpha"|"add"|"modulate"
+
+---A wxl_draw_spawn value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.DrawSpawn "point"|"disc"|"box"|"segment"
+
+---A wxl_draw_ground value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.DrawGround "none"|"bounce"|"settle"
+
+---A wxl_draw_billboard value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.DrawBillboard "camera"|"ground"|"stretched"
 
 -- The script families. A function defined on one of these tables as On<Event> is
 -- subscribed when the entry file has run and called with the event's parameters;
@@ -2778,6 +2790,33 @@ function Shape:Detach() end
 ---The kept shape goes now; a Lua mod's go when it unloads.
 function Shape:Remove() end
 
+---A Emitter of wxl.draw.
+---@class wxl.Emitter
+local Emitter = {}
+
+---Throws count more particles now.
+---@param count integer
+---@return true|nil ok
+---@return string|nil reason
+function Emitter:Burst(count) end
+
+---Where it throws from, and its facing in radians; it stops following an object.
+---@param center wxl.Vec3
+---@param facing number
+---@return true|nil ok
+---@return string|nil reason
+function Emitter:Place(center, facing) end
+
+---It throws from a world object from now on: its center an offset from the object's position, turned with its facing when flags is 1 (ATTACH_TURN). It stops when the object leaves view.
+---@param target wxl.Object
+---@param flags? integer 0 when left out
+---@return true|nil ok
+---@return string|nil reason
+function Emitter:Follow(target, flags) end
+
+---It stops and goes; its particles live out their lives. A Lua mod's go when it unloads.
+function Emitter:Stop() end
+
 ---wxl.script. The client's own script: functions and events added to it, text run in it.
 ---@class wxl.script
 local script = {}
@@ -4102,8 +4141,11 @@ function draw.UnsupportedReason() end
 ---faded at its border over `feather` yards and from its centre by `radial_fade` (0 to 1).
 ---Since abi 0.1.39: a box's faces and a cylinder's side and ends take the same look, each face in its own
 ---frame; `occluded_alpha` (0 to 1) draws what the scene hides of the shape at that part of its opacity.
----@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder", center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
----@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?, occluded_alpha: number?}
+---Since abi 0.1.40: `mask = true` takes only the texture's opacity, the colour being the style's;
+---`texture_blur` blurs the picture, a step halving its detail. A "beam" (its 2 `points`, `widths` at
+---each end, `alphas` its opacity at each end) faces the camera around its axis, drawn with `fill_alpha`.
+---@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder"|"beam", widths: number|number[]?, center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
+---@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?, occluded_alpha: number?, mask: boolean?, texture_blur: number?}
 ---@return true|nil ok
 ---@return string|nil reason
 function draw.Draw(shape, style) end
@@ -4126,8 +4168,11 @@ function draw.Draw(shape, style) end
 ---faded at its border over `feather` yards and from its centre by `radial_fade` (0 to 1).
 ---Since abi 0.1.39: a box's faces and a cylinder's side and ends take the same look, each face in its own
 ---frame; `occluded_alpha` (0 to 1) draws what the scene hides of the shape at that part of its opacity.
----@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder", center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
----@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?, occluded_alpha: number?}
+---Since abi 0.1.40: `mask = true` takes only the texture's opacity, the colour being the style's;
+---`texture_blur` blurs the picture, a step halving its detail. A "beam" (its 2 `points`, `widths` at
+---each end, `alphas` its opacity at each end) faces the camera around its axis, drawn with `fill_alpha`.
+---@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder"|"beam", widths: number|number[]?, center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
+---@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?, occluded_alpha: number?, mask: boolean?, texture_blur: number?}
 ---@param duration? number
 ---@return wxl.Shape|nil shape
 ---@return string|nil reason
@@ -4135,25 +4180,70 @@ function draw.Add(shape, style, duration) end
 
 ---The kept shape becomes another, from a table as Draw's; it stays attached when it is.
 ---@param self wxl.Shape
----@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder", center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
+---@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder"|"beam", widths: number|number[]?, center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
 ---@return true|nil ok
 ---@return string|nil reason
 function draw.Update(self, shape) end
 
 ---The kept shape's look, from a table as Draw's.
 ---@param self wxl.Shape
----@param style {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?, occluded_alpha: number?}
+---@param style {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?, occluded_alpha: number?, mask: boolean?, texture_blur: number?}
 ---@return true|nil ok
 ---@return string|nil reason
 function draw.SetStyle(self, style) end
 
----Every shape this mod keeps goes.
+---Every shape and emitter this mod keeps goes.
 function draw.Clear() end
 
 ---What the last frame of the world drew and what it cost (every mod's shapes).
----@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer, textured: integer, textures: integer, textures_loading: integer, shadows: integer, occluded: integer, reused: integer}|nil stats
+---@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer, textured: integer, textures: integer, textures_loading: integer, shadows: integer, occluded: integer, reused: integer, particles: integer, particles_emitted: integer, particles_culled: integer, particle_draws: integer, emitters: integer, particle_microseconds: number}|nil stats
 ---@return string|nil reason
 function draw.Stats() end
+
+---Came with abi 0.1.40: a mod whose mod.json asks for an older abi cannot use it.
+---Throws one burst of `emitter.burst` particles and forgets them.
+---Since abi 0.1.40. The emitter: `spawn` ("point", "disc" of extent.x yards, "box" of extent, "segment"
+---to center + extent), a cone along `direction` (up by default) of half angle `spread`; `speed`, `life`, `size`
+---(yards across) and `spin` a number or {min, max}; `gravity` (yards/s^2 down), `drag`, `ground` "bounce"
+---(once, `restitution`, `friction`) or "settle"; `attraction` towards `attractor` (taking them out within
+---`attract_radius`). The look: `mode`, a `texture` (none: a soft round blot), sprite sheet `frames` and
+---`frame_rate`, `blend`, `softness` (yards over which they fade near the ground), up to 4 `keys` of their life.
+---@param emitter {spawn: "point"|"disc"|"box"|"segment"?, center: wxl.Vec3?, extent: wxl.Vec3?, facing: number?, direction: wxl.Vec3?, spread: number?, burst: integer?, rate: number?, duration: number?, speed: number|number[]?, life: number|number[]?, size: number|number[]?, spin: number|number[]?, gravity: number?, drag: number?, ground: "none"|"bounce"|"settle"?, restitution: number?, friction: number?, attractor: wxl.Vec3?, attraction: number?, attract_radius: number?, seed: integer?}
+---@param look? {mode: "camera"|"ground"|"stretched"?, texture: string|table?, frames: number|{x: integer, y: integer}?, frame_rate: number?, blend: "alpha"|"add"|"modulate"?, depth: "tested"|"on_top"?, occluded_alpha: number?, stretch: number?, softness: number?, mask: boolean?, texture_blur: number?, keys: {t: number, size: number?, color: integer?, alpha: number?}[]?}
+---@return true|nil ok
+---@return string|nil reason
+function draw.Emit(emitter, look) end
+
+---Came with abi 0.1.40: a mod whose mod.json asks for an older abi cannot use it.
+---Keeps an emitter: its burst now, then `rate` particles a second for `duration` seconds (nil: until
+---stopped); it goes when this mod unloads.
+---Since abi 0.1.40. The emitter: `spawn` ("point", "disc" of extent.x yards, "box" of extent, "segment"
+---to center + extent), a cone along `direction` (up by default) of half angle `spread`; `speed`, `life`, `size`
+---(yards across) and `spin` a number or {min, max}; `gravity` (yards/s^2 down), `drag`, `ground` "bounce"
+---(once, `restitution`, `friction`) or "settle"; `attraction` towards `attractor` (taking them out within
+---`attract_radius`). The look: `mode`, a `texture` (none: a soft round blot), sprite sheet `frames` and
+---`frame_rate`, `blend`, `softness` (yards over which they fade near the ground), up to 4 `keys` of their life.
+---@param emitter {spawn: "point"|"disc"|"box"|"segment"?, center: wxl.Vec3?, extent: wxl.Vec3?, facing: number?, direction: wxl.Vec3?, spread: number?, burst: integer?, rate: number?, duration: number?, speed: number|number[]?, life: number|number[]?, size: number|number[]?, spin: number|number[]?, gravity: number?, drag: number?, ground: "none"|"bounce"|"settle"?, restitution: number?, friction: number?, attractor: wxl.Vec3?, attraction: number?, attract_radius: number?, seed: integer?}
+---@param look? {mode: "camera"|"ground"|"stretched"?, texture: string|table?, frames: number|{x: integer, y: integer}?, frame_rate: number?, blend: "alpha"|"add"|"modulate"?, depth: "tested"|"on_top"?, occluded_alpha: number?, stretch: number?, softness: number?, mask: boolean?, texture_blur: number?, keys: {t: number, size: number?, color: integer?, alpha: number?}[]?}
+---@return wxl.Emitter|nil emitter
+---@return string|nil reason
+function draw.AddEmitter(emitter, look) end
+
+---Came with abi 0.1.40: a mod whose mod.json asks for an older abi cannot use it.
+---The emitter becomes another, from a table as Emit's; its particles keep how they move.
+---@param self wxl.Emitter
+---@param emitter {spawn: "point"|"disc"|"box"|"segment"?, center: wxl.Vec3?, extent: wxl.Vec3?, facing: number?, direction: wxl.Vec3?, spread: number?, burst: integer?, rate: number?, duration: number?, speed: number|number[]?, life: number|number[]?, size: number|number[]?, spin: number|number[]?, gravity: number?, drag: number?, ground: "none"|"bounce"|"settle"?, restitution: number?, friction: number?, attractor: wxl.Vec3?, attraction: number?, attract_radius: number?, seed: integer?}
+---@return true|nil ok
+---@return string|nil reason
+function draw.UpdateEmitter(self, emitter) end
+
+---Came with abi 0.1.40: a mod whose mod.json asks for an older abi cannot use it.
+---Its particles' look, those alive included, from a table as Emit's.
+---@param self wxl.Emitter
+---@param look {mode: "camera"|"ground"|"stretched"?, texture: string|table?, frames: number|{x: integer, y: integer}?, frame_rate: number?, blend: "alpha"|"add"|"modulate"?, depth: "tested"|"on_top"?, occluded_alpha: number?, stretch: number?, softness: number?, mask: boolean?, texture_blur: number?, keys: {t: number, size: number?, color: integer?, alpha: number?}[]?}
+---@return true|nil ok
+---@return string|nil reason
+function draw.SetEmitterStyle(self, look) end
 
 ---wxl.animation. An animation of the game played on a unit through the client's own animation of units, seen on this client only. Main thread only.
 ---Came with abi 0.1.37: a mod whose mod.json asks for an older abi cannot use it.

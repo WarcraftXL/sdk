@@ -63,6 +63,10 @@ namespace wxl::lua
 
     /// Gives back every wxl.Shape the state still holds.
     void CloseDrawShapes(lua_State* L);
+    /// wxl.draw's Emitters (abi 0.1.40), as its Shapes.
+    void       PushDrawEmitter(lua_State* L, wxl_handle value);
+    wxl_handle ToDrawEmitter(lua_State* L, int index);
+    void       CloseDrawEmitters(lua_State* L);
 } // namespace wxl::lua
 
 #endif // WXL_LUA_SERVICES_HPP

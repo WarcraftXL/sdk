@@ -698,7 +698,7 @@ namespace
         if (std::strcmp(row.service, "draw") == 0)
         {
             const std::string shape =
-                "{kind: \"line\"|\"circle\"|\"ring\"|\"sector\"|\"rectangle\"|\"polygon\"|\"grid\"|\"box\"|\"sphere\"|\"cylinder\", "
+                "{kind: \"line\"|\"circle\"|\"ring\"|\"sector\"|\"rectangle\"|\"polygon\"|\"grid\"|\"box\"|\"sphere\"|\"cylinder\"|\"beam\", widths: number|number[]?, "
                 "center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, "
                 "size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}";
             const std::string style =
@@ -707,7 +707,7 @@ namespace
                 "shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, "
                 "texture: string|table?, texture_right: number?, texture_bottom: number?, uv: \"fit\"|\"tile\"|\"world\"?, "
                 "uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, "
-                "blend: \"alpha\"|\"add\"|\"modulate\"?, feather: number?, radial_fade: number?, occluded_alpha: number?}";
+                "blend: \"alpha\"|\"add\"|\"modulate\"?, feather: number?, radial_fade: number?, occluded_alpha: number?, mask: boolean?, texture_blur: number?}";
             const std::string about =
                 "---`shape.kind` says which fields it reads: line `points` (`closed`, `on_ground`); circle `center`, `radius`;\n"
                 "---ring and `inner`; sector and `facing`, `angle` (radians), `inner`; rectangle `center`, `size` (x along\n"
@@ -724,7 +724,10 @@ namespace
                 "---`fill_color` (or `color`) and `fill_alpha`, put on the ground by `blend` \"alpha\", \"add\" or \"modulate\",\n"
                 "---faded at its border over `feather` yards and from its centre by `radial_fade` (0 to 1).\n"
                 "---Since abi 0.1.39: a box's faces and a cylinder's side and ends take the same look, each face in its own\n"
-                "---frame; `occluded_alpha` (0 to 1) draws what the scene hides of the shape at that part of its opacity.\n";
+                "---frame; `occluded_alpha` (0 to 1) draws what the scene hides of the shape at that part of its opacity.\n"
+                "---Since abi 0.1.40: `mask = true` takes only the texture's opacity, the colour being the style's;\n"
+                "---`texture_blur` blurs the picture, a step halving its detail. A \"beam\" (its 2 `points`, `widths` at\n"
+                "---each end, `alphas` its opacity at each end) faces the camera around its axis, drawn with `fill_alpha`.\n";
             if (name == "Draw")
                 return "---Draws a shape in the next frame of the world only: call it each frame for what follows the\n"
                        "---frame. nil, \"invalid\" for a shape refused (logged under `draw`, saying why).\n" + about +
@@ -747,12 +750,49 @@ namespace
                        "---@param self wxl.Shape\n---@param style " + style + "\n"
                        "---@return true|nil ok\n---@return string|nil reason\n"
                        "function " + owner + ".SetStyle(self, style) end\n\n";
+            const std::string emitter =
+                "{spawn: \"point\"|\"disc\"|\"box\"|\"segment\"?, center: wxl.Vec3?, extent: wxl.Vec3?, facing: number?, direction: wxl.Vec3?, "
+                "spread: number?, burst: integer?, rate: number?, duration: number?, speed: number|number[]?, life: number|number[]?, "
+                "size: number|number[]?, spin: number|number[]?, gravity: number?, drag: number?, ground: \"none\"|\"bounce\"|\"settle\"?, "
+                "restitution: number?, friction: number?, attractor: wxl.Vec3?, attraction: number?, attract_radius: number?, seed: integer?}";
+            const std::string particles =
+                "{mode: \"camera\"|\"ground\"|\"stretched\"?, texture: string|table?, frames: number|{x: integer, y: integer}?, "
+                "frame_rate: number?, blend: \"alpha\"|\"add\"|\"modulate\"?, depth: \"tested\"|\"on_top\"?, occluded_alpha: number?, "
+                "stretch: number?, softness: number?, mask: boolean?, texture_blur: number?, keys: {t: number, size: number?, color: integer?, alpha: number?}[]?}";
+            const std::string particleAbout =
+                "---Since abi 0.1.40. The emitter: `spawn` (\"point\", \"disc\" of extent.x yards, \"box\" of extent, \"segment\"\n"
+                "---to center + extent), a cone along `direction` (up by default) of half angle `spread`; `speed`, `life`, `size`\n"
+                "---(yards across) and `spin` a number or {min, max}; `gravity` (yards/s^2 down), `drag`, `ground` \"bounce\"\n"
+                "---(once, `restitution`, `friction`) or \"settle\"; `attraction` towards `attractor` (taking them out within\n"
+                "---`attract_radius`). The look: `mode`, a `texture` (none: a soft round blot), sprite sheet `frames` and\n"
+                "---`frame_rate`, `blend`, `softness` (yards over which they fade near the ground), up to 4 `keys` of their life.\n";
+            if (name == "Emit")
+                return "---Throws one burst of `emitter.burst` particles and forgets them.\n" + particleAbout +
+                       "---@param emitter " + emitter + "\n---@param look? " + particles + "\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Emit(emitter, look) end\n\n";
+            if (name == "AddEmitter")
+                return "---Keeps an emitter: its burst now, then `rate` particles a second for `duration` seconds (nil: until\n"
+                       "---stopped); it goes when this mod unloads.\n" + particleAbout +
+                       "---@param emitter " + emitter + "\n---@param look? " + particles + "\n"
+                       "---@return wxl.Emitter|nil emitter\n---@return string|nil reason\n"
+                       "function " + owner + ".AddEmitter(emitter, look) end\n\n";
+            if (name == "UpdateEmitter")
+                return "---The emitter becomes another, from a table as Emit's; its particles keep how they move.\n"
+                       "---@param self wxl.Emitter\n---@param emitter " + emitter + "\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".UpdateEmitter(self, emitter) end\n\n";
+            if (name == "SetEmitterStyle")
+                return "---Its particles' look, those alive included, from a table as Emit's.\n"
+                       "---@param self wxl.Emitter\n---@param look " + particles + "\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".SetEmitterStyle(self, look) end\n\n";
             if (name == "Clear")
-                return "---Every shape this mod keeps goes.\n"
+                return "---Every shape and emitter this mod keeps goes.\n"
                        "function " + owner + ".Clear() end\n\n";
             if (name == "Stats")
                 return "---What the last frame of the world drew and what it cost (every mod's shapes).\n"
-                       "---@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer, textured: integer, textures: integer, textures_loading: integer, shadows: integer, occluded: integer, reused: integer}|nil stats\n"
+                       "---@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer, textured: integer, textures: integer, textures_loading: integer, shadows: integer, occluded: integer, reused: integer, particles: integer, particles_emitted: integer, particles_culled: integer, particle_draws: integer, emitters: integer, particle_microseconds: number}|nil stats\n"
                        "---@return string|nil reason\n"
                        "function " + owner + ".Stats() end\n\n";
         }

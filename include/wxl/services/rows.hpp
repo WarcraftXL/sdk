@@ -69,6 +69,9 @@
 //   render_pass const wxl_render_pass*: what a wxl.render pass draws into; a script passes a table
 //   terrain_heights (const wxl_terrain_height*, uint32_t count): vertices of wxl.terrain set to
 //       heights; a script passes a list of {chunk_x, chunk_y, index, height}
+//   draw_emitter const wxl_draw_emitter*  draw_particles const wxl_draw_particles*: wxl.draw's
+//       particles, where they come from and how they look; a table each, a wxl::DrawEmitter and a
+//       wxl::DrawParticles
 //   draw_shape const wxl_draw_shape*  draw_style const wxl_draw_style*: what wxl.draw draws and
 //       how it looks; a script passes a table each, C++ a wxl::DrawShape and a wxl::DrawStyle
 //   provider const wxl_asset_provider*  transform const wxl_asset_transform*: what a native
@@ -197,6 +200,8 @@ namespace wxl::api
         struct terrain_heights {};
         struct draw_shape {};
         struct draw_style {};
+        struct draw_emitter {};
+        struct draw_particles {};
         struct draw_stats {};
         template <class K>
         struct opt {};
@@ -314,6 +319,8 @@ namespace wxl::api
     template <> struct Param<kind::terrain_heights> { using C = List<const wxl_terrain_height*, uint32_t>; };
     template <> struct Param<kind::draw_shape> { using C = List<const wxl_draw_shape*>; };
     template <> struct Param<kind::draw_style> { using C = List<const wxl_draw_style*>; };
+    template <> struct Param<kind::draw_emitter> { using C = List<const wxl_draw_emitter*>; };
+    template <> struct Param<kind::draw_particles> { using C = List<const wxl_draw_particles*>; };
     template <class R>
     struct Param<R, std::enable_if_t<IsResource<R>::value>>
     {
@@ -854,6 +861,18 @@ namespace wxl::api
     {
         using type = const wxl_draw_style&;
         static const wxl_draw_style* ToC(const wxl_draw_style& value) { return &value; }
+    };
+    template <>
+    struct CxxParam<kind::draw_emitter>
+    {
+        using type = const wxl_draw_emitter&;
+        static const wxl_draw_emitter* ToC(const wxl_draw_emitter& value) { return &value; }
+    };
+    template <>
+    struct CxxParam<kind::draw_particles>
+    {
+        using type = const wxl_draw_particles&;
+        static const wxl_draw_particles* ToC(const wxl_draw_particles& value) { return &value; }
     };
     /// A resource is its C value in C++: what the row that handed it out answered.
     template <class R>

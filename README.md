@@ -5,7 +5,7 @@
 **The contract a WarcraftXL mod is written against**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![ABI](https://img.shields.io/badge/ABI-0.1.39-blue.svg)](include/wxl/abi.h)
+[![ABI](https://img.shields.io/badge/ABI-0.1.40-blue.svg)](include/wxl/abi.h)
 [![C++](https://img.shields.io/badge/C%2B%2B-17%20and%20up-blue.svg)](#-getting-started)
 [![Header only](https://img.shields.io/badge/header--only-yes-lightgrey.svg)](include/wxl)
 
@@ -224,7 +224,7 @@ Beyond events, a runtime publishes services, and a mod asks for the ones it need
 | `wxl.cvar` | console variables: a mod's settings registered where the game keeps its own, read and set by the console and the interface, saved in Config.wtf, per account or per character | yes |
 | `wxl.terrain` | the ground of the map: its height, rays against it, its grid, and its vertices set to other heights, which the client draws, walks on and collides with | yes |
 | `wxl.animation` | an animation of the game played on a unit (a mining swing, an attack, a cast), once or looped, through the client's own animation of units and seen on this client only | yes |
-| `wxl.draw` | shapes drawn in the world: lines, circles, rings, sectors, rectangles, polygons and grids lying on the ground, boxes, spheres and cylinders; for a frame, kept, or following an object | yes, on Direct3D 9 and the Vulkan renderer alike |
+| `wxl.draw` | shapes drawn in the world: lines, circles, rings, sectors, rectangles, polygons and grids lying on the ground, boxes, spheres and cylinders; for a frame, kept, or following an object; the game's textures on them, soft and shadowed lines; particles (bursts and kept emitters, bouncing on the terrain, soft sprites) | yes, on Direct3D 9 and the Vulkan renderer alike |
 | `wxl.render` | drawing into the game's frame on the Vulkan renderer: the frame's points, images, buffers, pipelines of SPIR-V, compute dispatches, bone palettes, the game's model batches drawn again, its shaders replaced | yes; a Direct3D 9 device says it does not draw |
 | `wxl.vk` | the Vulkan device and the frame's command buffer, for a mod that records its own commands | no: the Vulkan renderer only |
 | `wxl.hook` | hook points a runtime names and keeps working | yes |
@@ -311,7 +311,7 @@ supplies only the bindings that reach its own client.
 
 ## 🔢 Versioning
 
-`major.minor.feature`, in [`abi.h`](include/wxl/abi.h): today `0.1.39`.
+`major.minor.feature`, in [`abi.h`](include/wxl/abi.h): today `0.1.40`.
 
 - **Major** changes when an existing field, signature or id changes meaning. A runtime refuses a
   mod built against a different major.

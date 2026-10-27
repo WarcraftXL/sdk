@@ -124,6 +124,18 @@ namespace wxl
             return s;
         }
 
+        /// A beam from @p a to @p b (world coordinates, kept by address as a line's points), @p width_a
+        /// yards wide at a and @p width_b at b (abi 0.1.40). Its look is the inside's: Fill(opacity).
+        static DrawShape Beam(const std::vector<wxl_vec3>& ends, float width_a, float width_b = 0.0f)
+        {
+            DrawShape s;
+            s.kind        = WXL_DRAW_BEAM;
+            s.points      = ends.data();
+            s.point_count = static_cast<uint32_t>(ends.size());
+            s.size        = wxl_vec3{width_a, width_b, 0.0f};
+            return s;
+        }
+
         /// A ground shape lies flat at center.z everywhere.
         DrawShape& Flat()
         {
@@ -263,10 +275,220 @@ namespace wxl
             radial_fade = part;
             return *this;
         }
+        /// The texture gives the opacity alone; the colour is the style's (abi 0.1.40).
+        DrawStyle& Mask()
+        {
+            flags |= WXL_DRAW_STYLE_MASK;
+            return *this;
+        }
+        /// The picture blurred by @p steps halvings of its detail (abi 0.1.40).
+        DrawStyle& TextureBlur(float steps)
+        {
+            texture_blur = steps;
+            return *this;
+        }
         /// What the scene hides of the shape drawn at @p opacity of its own (abi 0.1.39).
         DrawStyle& Occluded(float opacity)
         {
             occluded_alpha = opacity;
+            return *this;
+        }
+    };
+
+    /**
+     * @brief Where wxl.draw's particles come from and how they move (abi 0.1.40): a point by
+     *        default, thrown up at 1 to 2 yards a second, living a second, 0.3 yards across.
+     *
+     *     auto clods = wxl::DrawEmitter::Point(hit).Burst(12).Cone(wxl_vec3{0, 0, 1}, 0.6f).Speed(3, 6)
+     *                      .Gravity(19.29f).Bounce(0.35f, 0.5f).Life(0.8f, 1.2f).Size(0.12f, 0.25f);
+     */
+    struct DrawEmitter : wxl_draw_emitter
+    {
+        DrawEmitter() : wxl_draw_emitter{}
+        {
+            struct_size = sizeof(wxl_draw_emitter);
+            speed_min   = 1.0f;
+            speed_max   = 2.0f;
+            life_min = life_max = 1.0f;
+            size_min = size_max = 0.3f;
+        }
+        static DrawEmitter Point(wxl_vec3 at)
+        {
+            DrawEmitter e;
+            e.spawn  = WXL_DRAW_SPAWN_POINT;
+            e.center = at;
+            return e;
+        }
+        static DrawEmitter Disc(wxl_vec3 at, float radius)
+        {
+            DrawEmitter e = Point(at);
+            e.spawn       = WXL_DRAW_SPAWN_DISC;
+            e.extent      = wxl_vec3{radius, 0.0f, 0.0f};
+            return e;
+        }
+        static DrawEmitter Box(wxl_vec3 at, wxl_vec3 sides, float facing = 0.0f)
+        {
+            DrawEmitter e = Point(at);
+            e.spawn       = WXL_DRAW_SPAWN_BOX;
+            e.extent      = sides;
+            e.facing      = facing;
+            return e;
+        }
+        static DrawEmitter Segment(wxl_vec3 from, wxl_vec3 to)
+        {
+            DrawEmitter e = Point(from);
+            e.spawn       = WXL_DRAW_SPAWN_SEGMENT;
+            e.extent      = wxl_vec3{to.x - from.x, to.y - from.y, to.z - from.z};
+            return e;
+        }
+        DrawEmitter& Burst(uint32_t count)
+        {
+            burst = count;
+            return *this;
+        }
+        DrawEmitter& Rate(float per_second, float seconds = 0.0f)
+        {
+            rate     = per_second;
+            duration = seconds;
+            return *this;
+        }
+        DrawEmitter& Cone(wxl_vec3 axis, float half_angle)
+        {
+            direction = axis;
+            spread    = half_angle;
+            return *this;
+        }
+        DrawEmitter& Speed(float min, float max)
+        {
+            speed_min = min;
+            speed_max = max;
+            return *this;
+        }
+        DrawEmitter& Life(float min, float max)
+        {
+            life_min = min;
+            life_max = max;
+            return *this;
+        }
+        DrawEmitter& Size(float min, float max)
+        {
+            size_min = min;
+            size_max = max;
+            return *this;
+        }
+        DrawEmitter& Spin(float min, float max)
+        {
+            spin_min = min;
+            spin_max = max;
+            return *this;
+        }
+        DrawEmitter& Gravity(float yards_per_s2)
+        {
+            gravity = yards_per_s2;
+            return *this;
+        }
+        DrawEmitter& Drag(float per_second)
+        {
+            drag = per_second;
+            return *this;
+        }
+        DrawEmitter& Bounce(float restitution_, float friction_)
+        {
+            ground      = WXL_DRAW_GROUND_BOUNCE;
+            restitution = restitution_;
+            friction    = friction_;
+            return *this;
+        }
+        DrawEmitter& Settle(float friction_)
+        {
+            ground   = WXL_DRAW_GROUND_SETTLE;
+            friction = friction_;
+            return *this;
+        }
+        DrawEmitter& Attract(wxl_vec3 point, float acceleration, float radius)
+        {
+            attractor      = point;
+            attraction     = acceleration;
+            attract_radius = radius;
+            return *this;
+        }
+        DrawEmitter& Seed(uint32_t value)
+        {
+            seed = value;
+            return *this;
+        }
+    };
+
+    /**
+     * @brief How wxl.draw's particles look (abi 0.1.40): soft white blots facing the camera,
+     *        fading out over their life, until told otherwise.
+     *
+     *     auto dust = wxl::DrawParticles().Key(0.0f, 0.6f, 0x8A7A60, 0.5f).Key(1.0f, 2.5f, 0x8A7A60, 0.0f).Softness(0.3f);
+     */
+    struct DrawParticles : wxl_draw_particles
+    {
+        DrawParticles() : wxl_draw_particles{} { struct_size = sizeof(wxl_draw_particles); }
+        DrawParticles& Mode(uint32_t billboard)
+        {
+            mode = billboard;
+            return *this;
+        }
+        DrawParticles& Stretched(float seconds)
+        {
+            mode    = WXL_DRAW_BILLBOARD_STRETCHED;
+            stretch = seconds;
+            return *this;
+        }
+        /// A texture the client loads; the path is kept by address until the call returns.
+        DrawParticles& Texture(const char* path, float right = 1.0f, float bottom = 1.0f)
+        {
+            texture        = path;
+            texture_right  = right;
+            texture_bottom = bottom;
+            return *this;
+        }
+        DrawParticles& Frames(uint32_t columns, uint32_t rows, float per_second = 0.0f)
+        {
+            frames_x   = columns;
+            frames_y   = rows;
+            frame_rate = per_second;
+            return *this;
+        }
+        DrawParticles& Blend(uint32_t mode_)
+        {
+            blend = mode_;
+            return *this;
+        }
+        DrawParticles& OnTop()
+        {
+            depth = WXL_DRAW_DEPTH_ON_TOP;
+            return *this;
+        }
+        DrawParticles& Occluded(float opacity)
+        {
+            occluded_alpha = opacity;
+            return *this;
+        }
+        /// The texture gives the opacity alone; the colour is the keys'.
+        DrawParticles& Mask()
+        {
+            flags |= WXL_DRAW_PARTICLES_MASK;
+            return *this;
+        }
+        DrawParticles& TextureBlur(float steps)
+        {
+            texture_blur = steps;
+            return *this;
+        }
+        DrawParticles& Softness(float yards)
+        {
+            softness = yards;
+            return *this;
+        }
+        /// A key of their life: at @p t, their size times @p size, a colour and an opacity.
+        DrawParticles& Key(float t, float size, uint32_t rgb, float alpha)
+        {
+            if (key_count < WXL_DRAW_MAX_PARTICLE_KEYS) keys[key_count++] = wxl_draw_particle_key{t, size, rgb & 0xFFFFFFu, alpha};
             return *this;
         }
     };
@@ -294,6 +516,8 @@ namespace wxl
      *   Attach(h, object, flags), Detach(h)     follows an object, gone when it leaves view
      *   Remove(h), Clear()                      one kept shape, or every shape of the mod
      *   Stats()                                 what the last frame drew and what it cost
+     *   Emit(emitter, look)                     a burst of particles, forgotten (abi 0.1.40)
+     *   AddEmitter(emitter, look), UpdateEmitter, SetEmitterStyle, Burst, Place, Follow, Stop
      *
      * The same picture on Direct3D 9 and on the Vulkan renderer.
      */
@@ -308,6 +532,13 @@ namespace wxl
         {
             const wxl_draw_api* api = Raw();
             if (detail::Carries(api, &wxl_draw_api::remove)) api->remove(shape);
+        }
+
+        /// The emitter stops and goes; its particles live out their lives (abi 0.1.40).
+        static void Stop(wxl_handle emitter)
+        {
+            const wxl_draw_api* api = Raw();
+            if (detail::Carries(api, &wxl_draw_api::stop)) api->stop(emitter);
         }
 
         /// What the last frame drew and what it cost.
