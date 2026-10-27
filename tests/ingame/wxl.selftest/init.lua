@@ -2794,4 +2794,50 @@ step(function()
     chat(summary .. (failed == 0 and "" or " (the log says which)"))
 end)
 
+-- Phase 30: opcodes of the mod's own (wxl.net, abi 0.1.41) ----------------------------------------
+--
+-- Offline as far as the server goes: no server module answers 0xFF00-0xFF03, so the send gate
+-- stays closed and nothing reaches the server (which would close the connection on them).
+
+step(function()
+    print("phase 30: opcodes of the mod's own (wxl.net)")
+    local net = wxl.net
+    if wxl.runtime.abi_feature < 41 or not (net and net.Claim) then
+        result("wxl.net", false, "this runtime is older than abi 0.1.41")
+        return
+    end
+    result("the session is accepted", net.State() == "authenticated", tostring(net.State()))
+    result("the client's numbers end at 0x520", net.ReservedOpcodeLimit() == 0x520, tostring(net.ReservedOpcodeLimit()))
+    result("a body is at most 10000 bytes", net.MaxSend() == 10000, tostring(net.MaxSend()))
+    result("there is a connection", net.Connection() > 0, tostring(net.Connection()))
+    result("a declared number claims", net.Claim(0xFF00) == true and net.Claim(0xFF01) == true and net.Claim(0xFF02) == true)
+    local outside, why1 = net.Claim(0xFF10)
+    result("a number outside mod.json's net.opcodes is refused", outside == nil and why1 == "invalid", tostring(why1))
+    local stock, why2 = net.Claim(0x12E)
+    result("a number of the client's own is refused without stock", stock == nil and why2 == "invalid", tostring(why2))
+    local past, why3 = net.Claim(0x10000)
+    result("a number past 0xFFFF is refused", past == nil and why3 == "invalid", tostring(why3))
+    local heard = 0
+    result("a handler is set", net.SetHandler(0xFF01, function() heard = heard + 1 end) == true)
+    result("a compressed number pairs", net.SetCompressed(0xFF01, 0xFF02) == true)
+    result("the server has not spoken to this mod", net.Heard() == false)
+    local sent, why4 = net.Send(0xFF00, net.Writer():U32(1))
+    result("so the send gate refuses: nothing goes to a server that does not know the number",
+           sent == nil and why4 == "failed", tostring(why4))
+    local w = net.Writer():U8(7):U16(0x1234):F32(1.5):String("dig"):PackedGuid("0x0000000100000F00"):Vec3({ x = 1, y = 2, z = 3 })
+    local r = net.Reader(w:Data())
+    local a, b, c, d, e, v = r:U8(), r:U16(), r:F32(), r:String(), r:PackedGuid(), r:Vec3()
+    result("a writer and a reader go round", a == 7 and b == 0x1234 and c == 1.5 and d == "dig" and
+           e == "0x0000000100000F00" and v.z == 3 and r:AtEnd(), w:Size() .. " bytes")
+    r:U32()
+    result("a read past the end fails the reader", r:Ok() == false)
+    local text = string.rep("terrain ", 200)
+    local z = net.Deflate(text)
+    result("Deflate and Inflate go round", z ~= nil and #z < #text and net.Inflate(z) == text, z and #z or "nil")
+    result("Release gives a number back", net.Release(0xFF02) == true and select(2, net.Release(0xFF02)) == "not_found")
+    result("no message of these numbers came", heard == 0)
+    net.Release(0xFF00)
+    net.Release(0xFF01)
+end)
+
 print("ready: the checks start a few seconds after entering the world")

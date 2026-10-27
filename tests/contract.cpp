@@ -2201,19 +2201,20 @@ int main()
 
     Section("wxl.net");
     {
+        using wxltest::FakeNet;
         wxl::NetService netService;
         Check(netService.State() == WXL_NET_AUTHENTICATED, "the state reads");
-        Check(netService.ReservedOpcodeLimit().ValueOr(0) == 0x51F, "the reserved limit reads");
+        Check(netService.ReservedOpcodeLimit().ValueOr(0) == 0x520 && netService.MaxSend() == 10000,
+              "the reserved limit and the largest body read");
 
         struct Body
         {
             uint32_t a;
             uint16_t b;
         } body{1, 2};
-        Check(netService.Send(0x600, body) == WXL_OK && wxltest::FakeNet::Sent().back().second == sizeof(Body),
-              "a struct sends with its size");
+        Check(netService.Send(0x600, body) == WXL_E_INVALID, "a number nobody claimed is not sent");
 
-        const int releases = wxltest::FakeNet::Releases();
+        const int releases = FakeNet::Releases();
         {
             wxl::Expected<wxl::OpcodeClaim> claim = netService.Claim(0x601);
             Check(claim && *claim && claim->Opcode() == 0x601, "an opcode claims");
@@ -2223,14 +2224,85 @@ int main()
             Check(moved && !*claim, "a move hands the claim over");
             moved.Reset();
             moved.Reset();
-            Check(wxltest::FakeNet::Releases() == releases + 1, "Reset releases exactly once");
+            Check(FakeNet::Releases() == releases + 1, "Reset releases exactly once");
         }
-        Check(wxltest::FakeNet::Releases() == releases + 1, "and the destructor adds nothing");
+        Check(FakeNet::Releases() == releases + 1, "and the destructor adds nothing");
         {
             wxl::Expected<wxl::OpcodeClaim> scoped = netService.Claim(0x602);
         }
-        Check(wxltest::FakeNet::Releases() == releases + 2 && !wxltest::FakeNet::Claimed().count(0x602),
+        Check(FakeNet::Releases() == releases + 2 && !FakeNet::Claimed().count(0x602),
               "a scoped claim is given back at the end of its scope");
+
+        // Readers and writers, on their own.
+        wxl::ByteWriter out;
+        out.U8(7).U16(0x1234).U32(0xDEADBEEF).F32(1.5f).PackedGuid(0x0000000100000F00ull).String("hi").Vec3({1, 2, 3});
+        Check(out.Ok() && out.Size() == 1 + 2 + 4 + 4 + 3 + 3 + 12, "a writer lays its values out little-endian");
+        Check(out.Data()[1] == 0x34 && out.Data()[2] == 0x12 && out.Data()[11] == 0x12 && out.Data()[12] == 0x0F &&
+                  out.Data()[13] == 0x01,
+              "u16 low byte first; a packed guid is its mask and its non-zero bytes");
+        wxl::ByteReader in(out.Data(), out.Size());
+        const uint8_t   u8   = in.U8();
+        const uint16_t  u16  = in.U16();
+        const uint32_t  u32  = in.U32();
+        const float     f32  = in.F32();
+        const uint64_t  guid = in.PackedGuid();
+        const std::string text(in.String());
+        const wxl_vec3  v    = in.Vec3();
+        Check(u8 == 7 && u16 == 0x1234 && u32 == 0xDEADBEEF && f32 == 1.5f && guid == 0x0000000100000F00ull &&
+                  text == "hi" && v.z == 3.0f && in.AtEnd(),
+              "a reader reads back what the writer wrote, to the end");
+        Check(in.U32() == 0 && in.Failed() && in.Remaining() == 0, "a read past the end answers 0 and fails the reader");
+        wxl::ByteReader cut(out.Data(), 3);
+        Check(cut.U8() == 7 && cut.U32() == 0 && cut.Failed() && cut.U8() == 0,
+              "a short read fails, and every read after it answers 0");
+        const uint8_t unended[3] = {'a', 'b', 'c'};
+        wxl::ByteReader open(unended, sizeof unended);
+        Check(open.String().empty() && open.Failed(), "a string without its zero fails the reader");
+        wxl::ByteWriter small(4);
+        small.U16(1).U16(2).U8(3);
+        Check(small.Failed() && small.Size() == 4 && netService.Send(0x601, small) == WXL_E_INVALID,
+              "a writer refuses to grow past its limit, and a failed writer is not sent");
+
+        // NetOpcodes: claims, handlers, compressed numbers, the send gate.
+        {
+            wxl::NetOpcodes net;
+            uint32_t        got = 0, seq = 0;
+            float           height = 0;
+            Check(net.Handle(0x524, [&](wxl::ByteReader& r) {
+                      seq    = r.U32();
+                      height = r.F32();
+                      ++got;
+                  }) == WXL_OK,
+                  "Handle claims a number and sets its handler");
+            Check(net.Handle(0x529, [&](wxl::ByteReader& r) { got += 100 * r.U8(); }, 0x52A) == WXL_OK &&
+                      FakeNet::Claimed().count(0x52A),
+                  "and its compressed number with it");
+            Check(net.Claim(0x521) == WXL_OK, "a number to send is claimed");
+            FakeNet::Connect();
+            Check(net.Send(0x521, wxl::ByteWriter{}.U32(9)) == WXL_E_FAILED && !net.Heard(),
+                  "nothing is sent before the server speaks on this connection");
+            wxl::ByteWriter update;
+            update.U32(41).F32(2.5f);
+            Check(FakeNet::Deliver(0x524, std::string(reinterpret_cast<const char*>(update.Data()), update.Size())) &&
+                      got == 1 && seq == 41 && height == 2.5f,
+                  "a message of a claimed number reaches its handler as a reader");
+            Check(net.Heard() && net.Send(0x521, wxl::ByteWriter{}.U32(9)) == WXL_OK && FakeNet::Bodies().back().size() == 4,
+                  "and opens the gate: the mod sends");
+            const uint8_t raw[1] = {3};
+            std::string   packed(4, '\0');
+            const uint32_t want = 1;
+            std::memcpy(&packed[0], &want, 4);
+            packed += FakeNet::DeflateStored(raw, 1);
+            Check(FakeNet::Deliver(0x52A, packed) && got == 301, "a compressed message reaches the plain number's handler");
+            FakeNet::Connect();
+            Check(net.Send(0x521, wxl::ByteWriter{}.U32(9)) == WXL_E_FAILED, "a new connection closes the gate again");
+            const auto zipped = netService.Deflate("hello", 5);
+            const auto back   = zipped ? netService.Inflate(zipped->data(), static_cast<uint32_t>(zipped->size()))
+                                       : wxl::Expected<std::vector<uint8_t>>(wxl::Unexpected{WXL_E_FAILED});
+            Check(back && back->size() == 5 && std::memcmp(back->data(), "hello", 5) == 0, "Deflate and Inflate go round");
+        }
+        Check(!FakeNet::Claimed().count(0x524) && !FakeNet::Claimed().count(0x52A) && !FakeNet::Claimed().count(0x521),
+              "NetOpcodes gives every number back when it goes");
     }
 
     Section("wxl.ui");
