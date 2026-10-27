@@ -1688,6 +1688,15 @@ int main()
                   TerrainService::SetHeights({{512, 512, 145, 41.0f}}, 7) == WXL_E_INVALID &&
                   TerrainService::Reset(512, 512, 3) == WXL_OK && TerrainService::ResetAll() == WXL_OK,
               "SetHeights, Reset and ResetAll pass their layer, 0 unless named");
+        // abi 0.1.42: a layer provider answers each layer's texture scale.
+        static int seen = 0;
+        Check(TerrainService::SetLayerProvider([](void* user, const wxl_terrain_layer* layer, wxl_terrain_layer_look* look) {
+                  ++*static_cast<int*>(user);
+                  look->texture_scale = layer->texture == 2 ? 4.0f : look->texture_scale;
+              }, &seen) == WXL_OK,
+              "SetLayerProvider takes a function");
+        Check(FakeView::LayerAsked(2) == 4.0f && FakeView::LayerAsked(1) == 1.0f && seen == 2, "it answers each layer's look, the client's own left as it is");
+        Check(TerrainService::SetLayerProvider(nullptr) == WXL_OK && FakeView::LayerAsked(2) == 1.0f, "null takes it off");
         const auto& calls = FakeView::TerrainCalls();
         Check(calls.size() == 3 && calls[0].layer == 0 && calls[0].heights.size() == 2 && calls[0].heights[1].index == 9 &&
                   calls[1].what == "reset" && calls[1].layer == 3 && calls[1].chunk_y == 512 && calls[2].what == "reset_all",

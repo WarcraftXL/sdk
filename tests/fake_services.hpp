@@ -982,6 +982,28 @@ namespace wxltest
             });
             return count;
         }
+        // The layer provider set last, called by LayerAsked as the runtime calls it.
+        static wxl_terrain_layer_provider& TerrainProvider()
+        {
+            static wxl_terrain_layer_provider provider{};
+            return provider;
+        }
+        static wxl_result WXL_CALL TerrainSetLayerProvider(const wxl_terrain_layer_provider* p)
+        {
+            if (p && (p->struct_size < sizeof *p || !p->fn)) return WXL_E_INVALID;
+            TerrainProvider() = p ? *p : wxl_terrain_layer_provider{};
+            return WXL_OK;
+        }
+        static float LayerAsked(uint32_t texture)
+        {
+            const wxl_terrain_layer_provider& p = TerrainProvider();
+            wxl_terrain_layer layer{};
+            layer.struct_size = sizeof layer;
+            layer.texture     = texture;
+            wxl_terrain_layer_look look{sizeof(wxl_terrain_layer_look), 1.0f};
+            if (p.fn) p.fn(p.user, &layer, &look);
+            return look.texture_scale;
+        }
         static const wxl_terrain_api* TerrainTable()
         {
             static const wxl_terrain_api api = [] {
@@ -997,6 +1019,7 @@ namespace wxltest
                 t.reset_all   = &TerrainResetAll;
                 t.stats       = &TerrainStats;
                 t.vertices_in = &TerrainVerticesIn;
+                t.set_layer_provider = &TerrainSetLayerProvider;
                 return t;
             }();
             return &api;
