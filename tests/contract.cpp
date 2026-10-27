@@ -1740,7 +1740,38 @@ int main()
                   "each change as given");
         }
         const auto stats = DrawService::Stats();
-        Check(stats && stats.Value().vertices == 1234 && stats.Value().frames == 7, "Stats answers the service's counts");
+        Check(stats && stats.Value().vertices == 1234 && stats.Value().frames == 7 && stats.Value().textured == 2,
+              "Stats answers the service's counts");
+
+        // abi 0.1.38: lines along, shadows, textured insides.
+        FakeView::DrawCalls().clear();
+        const std::vector<float> fades = {0.0f, 1.0f, 0.5f};
+        Check(DrawService::Draw(DrawShape::Line(path).PointAlphas(fades),
+                                DrawStyle(0xE0B040).Softness(1.5f).LineAlpha(0.2f, 1.0f).Shadow()) == WXL_OK,
+              "a soft line fading along, with a shadow");
+        Check(DrawService::Draw(DrawShape::Ring(wxl_vec3{}, 6.0f, 4.0f),
+                                DrawStyle(0xFFFFFF, 0.0f).Fill(0.8f).FillColor(0x808080).Texture("SPELLS\\T_VFX_HERO_CIRCLE.BLP", 0.5f, 0.25f)
+                                    .Uv(WXL_DRAW_UV_WORLD, 4.0f, 2.0f, 0.5f, 0.1f, 0.2f).Blend(WXL_DRAW_BLEND_MODULATE).Feather(0.75f).RadialFade(0.3f)) == WXL_OK,
+              "a textured ring");
+        const auto& more = FakeView::DrawCalls();
+        Check(more.size() == 2, "both reached the service");
+        if (more.size() == 2)
+        {
+            const wxl_draw_style& a = more[0].style;
+            Check(more[0].alphas.size() == 3 && more[0].alphas[2] == 0.5f && (a.flags & WXL_DRAW_STYLE_LINE_ALPHA) && a.alpha_start == 0.2f &&
+                      a.alpha_end == 1.0f && a.softness == 1.5f && a.shadow_alpha > 0.0f && a.shadow_x == 1.5f && a.shadow_y == 1.5f &&
+                      a.shadow_softness == 1.0f && a.shadow_color == 0,
+                  "the opacities per point, along the line and the shadow as built");
+            const wxl_draw_style& b = more[1].style;
+            Check(more[1].texture == "SPELLS\\T_VFX_HERO_CIRCLE.BLP" && b.texture_right == 0.5f && b.texture_bottom == 0.25f &&
+                      b.uv == WXL_DRAW_UV_WORLD && b.uv_size_x == 4.0f && b.uv_size_y == 2.0f && b.uv_rotation == 0.5f && b.uv_offset_y == 0.2f &&
+                      b.blend == WXL_DRAW_BLEND_MODULATE && b.feather == 0.75f && b.radial_fade == 0.3f &&
+                      (b.flags & WXL_DRAW_STYLE_FILL_COLOR) && b.fill_color == 0x808080,
+                  "the texture, its frame, the blend, the feather and the fill's colour as built");
+        }
+        Check(sizeof(wxl_draw_style) > WXL_DRAW_STYLE_SIZE_0136 && sizeof(wxl_draw_shape) > WXL_DRAW_SHAPE_SIZE_0136 &&
+                  WXL_DRAW_STYLE_SIZE_0136 == 36u,
+              "the styles and shapes of abi 0.1.36 are a prefix of today's");
     }
 
     Section("animations played on units");

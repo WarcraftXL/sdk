@@ -1015,6 +1015,8 @@ namespace wxltest
             wxl_draw_style        style{};
             wxl_handle            target = WXL_HANDLE_NONE;
             uint32_t              attach = 0;
+            std::vector<float>    alphas;  ///< the shape's point_alphas, copied
+            std::string           texture; ///< the style's texture, copied
         };
         static std::vector<DrawCall>& DrawCalls()
         {
@@ -1034,6 +1036,15 @@ namespace wxltest
             call.radius = s->radius;
             call.facing = s->facing;
             call.points.assign(s->points, s->points + s->point_count);
+            if (s->struct_size > WXL_DRAW_SHAPE_SIZE_0136 && s->point_alphas) call.alphas.assign(s->point_alphas, s->point_alphas + s->point_count);
+        }
+        static void DrawStyleInto(DrawCall& call, const wxl_draw_style* style)
+        {
+            call.styled = style != nullptr;
+            if (!style) return;
+            call.style = *style;
+            if (style->texture) call.texture = style->texture;
+            call.style.texture = nullptr;
         }
         static wxl_bool WXL_CALL DrawSupported() { return WXL_TRUE; }
         static wxl_str WXL_CALL DrawUnsupportedReason() { return wxl_str{"", 0}; }
@@ -1042,8 +1053,7 @@ namespace wxltest
             if (!shape || shape->struct_size < sizeof *shape || shape->radius > 100.0f) return WXL_E_INVALID;
             DrawCall call{"draw"};
             DrawShapeInto(call, shape);
-            call.styled = style != nullptr;
-            if (style) call.style = *style;
+            DrawStyleInto(call, style);
             DrawCalls().push_back(call);
             return WXL_OK;
         }
@@ -1052,9 +1062,8 @@ namespace wxltest
             if (!shape || shape->struct_size < sizeof *shape || shape->radius > 100.0f) return WXL_HANDLE_NONE;
             DrawCall call{"add", ++DrawNext()};
             DrawShapeInto(call, shape);
-            call.styled   = style != nullptr;
+            DrawStyleInto(call, style);
             call.duration = duration;
-            if (style) call.style = *style;
             DrawCalls().push_back(call);
             return call.handle;
         }
@@ -1079,8 +1088,7 @@ namespace wxltest
         {
             if (!h) return WXL_E_NOT_FOUND;
             DrawCall call{"set_style", h};
-            call.styled = style != nullptr;
-            if (style) call.style = *style;
+            DrawStyleInto(call, style);
             DrawCalls().push_back(call);
             return WXL_OK;
         }
@@ -1112,6 +1120,7 @@ namespace wxltest
             out->shapes   = 3;
             out->vertices = 1234;
             out->frames   = 7;
+            if (out->struct_size >= sizeof *out) out->textured = 2;
             return WXL_OK;
         }
         // wxl.animation: every call kept; one play per unit; the model shows EmoteWork.

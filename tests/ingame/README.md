@@ -214,6 +214,18 @@ Then the swing is looped at 1.5 times the speed for three seconds (walk a step: 
 the swing comes back when you stop), `Stop` must end it once, and `OnUnitAnimationEnded` must say
 `stopped`, `looped`. An id past AnimationData's must be refused.
 
+Phase 29 checks textured ground shapes, soft lines and shadows (abi 0.1.38), on both clients and on
+Direct3D 9 and Vulkan alike. In front of the player for ten seconds, fading over the last: on the
+left a pale blue spell ring (`SPELLS\T_VFX_HERO_CIRCLE.BLP`, added as light), in the middle cracks
+multiplied into the ground with a soft border (`SPELLS\CrackedGround.blp`, modulate, feathered),
+on the right a charred patch laid in the world's frame and fading out from its middle
+(`TILESET\BURNINGSTEPPS\BurningSteppsCharcoal01.blp`); further on a 6 x 6 grid of soft gold lines
+over a light black shadow, its inside scored darker; on the left a white line on the ground fading
+in from its start, shadowed. Watch it: the pictures lie on the slopes and keep still as you move,
+the stain darkens the ground rather than covering it, the borders are soft, the shadows sit a pixel
+or two down and right of the lines. `Stats` must say the three textures loaded and drawn and the
+shadows drawn (the CPU's cost is printed as a NOTE); a blend that is none must be refused.
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the

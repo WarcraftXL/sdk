@@ -2836,6 +2836,14 @@ print("move " .. tostring(cone:Move({ x = 7, y = 8, z = 9 }, 0.5)) .. " " .. tos
 local kept = wxl.draw.Add({ kind = "box", center = { x = 0, y = 0, z = 0 }, size = { x = 1, y = 1, z = 1 } })
 cone:Remove()
 print("stats " .. wxl.draw.Stats().vertices)
+print("soft " .. tostring(wxl.draw.Draw({ kind = "line", points = { { 0, 0, 0 }, { 5, 0, 0 }, { 9, 0, 0 } }, alphas = { 0, 1, 0.5 } },
+                                        { color = 0xE0B040, softness = 1.5, alpha_start = 0.25, shadow_alpha = 0.6 })))
+print("textured " .. tostring(wxl.draw.Draw({ kind = "circle", radius = 4 },
+                                            { fill_alpha = 0.9, fill_color = 0x606060, texture = { "Interface\\WXL\\x.blp", 0.5, 0.75 },
+                                              uv = "world", uv_size = 4, uv_rotation = 0.3, uv_offset = { 0.1, 0.2 },
+                                              blend = "modulate", feather = 1, radial_fade = 0.5, shadow_offset = { x = -2, y = 3 } })))
+print("blend " .. tostring(select(2, pcall(wxl.draw.Draw, { kind = "circle", radius = 1 }, { blend = "screen" }))))
+print("alphas " .. tostring(select(2, pcall(wxl.draw.Draw, { kind = "line", points = { { 0, 0, 0 }, { 1, 0, 0 } }, alphas = { 1 } }))))
 )");
 
         CaptureSink sink;
@@ -2866,6 +2874,23 @@ print("stats " .. wxl.draw.Stats().vertices)
                                 std::fabs(c.style.fill_alpha - 0.3f) < 1e-6f);
             }
             Check(grid && line && cone, "the tables reach the service as given, a style left out as none");
+            Check(sink.Has("[wxl.shapes] soft true") && sink.Has("[wxl.shapes] textured true"), "abi 0.1.38's fields are taken");
+            Check(sink.Has("the style's 'blend' must be one of \"alpha\""), "an unknown blend is an error listing the blends");
+            Check(sink.Has("the shape has 2 points and 1 'alphas'"), "alphas that do not match the points are an error");
+            bool soft = false, textured = false;
+            for (const auto& c : calls)
+            {
+                soft = soft || (c.what == "draw" && c.alphas.size() == 3 && c.alphas[2] == 0.5f && c.style.softness == 1.5f &&
+                                (c.style.flags & WXL_DRAW_STYLE_LINE_ALPHA) && c.style.alpha_start == 0.25f && c.style.alpha_end == 1.0f &&
+                                std::fabs(c.style.shadow_alpha - 0.6f) < 1e-6f && c.style.shadow_x == 1.5f && c.style.shadow_softness == 1.0f);
+                textured = textured || (c.what == "draw" && c.texture == "Interface\\WXL\\x.blp" && c.style.texture_right == 0.5f &&
+                                        c.style.texture_bottom == 0.75f && c.style.uv == WXL_DRAW_UV_WORLD && c.style.uv_size_x == 4.0f &&
+                                        c.style.uv_size_y == 4.0f && std::fabs(c.style.uv_offset_y - 0.2f) < 1e-6f &&
+                                        c.style.blend == WXL_DRAW_BLEND_MODULATE && c.style.feather == 1.0f && c.style.radial_fade == 0.5f &&
+                                        (c.style.flags & WXL_DRAW_STYLE_FILL_COLOR) && c.style.fill_color == 0x606060 &&
+                                        c.style.shadow_x == -2.0f && c.style.shadow_y == 3.0f);
+            }
+            Check(soft && textured, "the line's opacities and shadow, the texture and its frame reach the service as given");
             FakeView::DrawCalls().clear();
             host.Shutdown();
         }

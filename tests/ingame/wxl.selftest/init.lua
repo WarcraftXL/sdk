@@ -2609,6 +2609,87 @@ step(function()
     anims.observer = nil
 end)
 
+-- Phase 29: textured ground shapes, soft lines and shadows (wxl.draw, abi 0.1.38) ----------------
+
+local looks = { kept = {} }
+
+step(function()
+    print("phase 29: textured ground shapes, soft lines and shadows (wxl.draw)")
+    local dr = wxl.draw
+    if not (dr and dr.Add) or wxl.runtime.abi_feature < 38 then
+        result("wxl.draw's textures", false, "this runtime is older than abi 0.1.38")
+        return
+    end
+    if not dr.Supported() then
+        skip("textured ground shapes", dr.UnsupportedReason())
+        return
+    end
+    local me = wxl.object.LocalPlayer()
+    local feet = me and me:Position()
+    if not feet then
+        skip("textured ground shapes", "no player in the world")
+        return
+    end
+    local f = me:Facing() or 0
+    local function ahead(d, side)
+        side = side or 0
+        return { x = feet.x + d * math.cos(f) - side * math.sin(f), y = feet.y + d * math.sin(f) + side * math.cos(f), z = feet.z }
+    end
+    local function add(name, shape, style)
+        style.fade_out = 1
+        local s, why = dr.Add(shape, style, 10)
+        result("Add keeps " .. name, s ~= nil, tostring(why))
+        if s then looks.kept[#looks.kept + 1] = s end
+        return s
+    end
+    -- A spell's targeting ring laid on the ground, lit (added), turned a little.
+    add("a textured ring", { kind = "ring", center = ahead(9, -7), radius = 4, inner = 2.5, facing = f },
+        { alpha = 0, fill_alpha = 1, fill_color = 0x80C0FF, texture = "SPELLS\\T_VFX_HERO_CIRCLE.BLP", blend = "add", uv_rotation = 0.3 })
+    -- Cracks multiplied into the ground: a stain, darker where the picture is dark.
+    add("a modulated stain", { kind = "circle", center = ahead(9, 0), radius = 3.5 },
+        { alpha = 0, fill_alpha = 0.9, color = 0xFFFFFF, texture = "SPELLS\\CrackedGround.blp", blend = "modulate", feather = 0.75 })
+    -- Scorched ground in the world's frame, feathered at its border and fading from the centre.
+    add("a feathered disc", { kind = "circle", center = ahead(9, 7), radius = 3.5 },
+        { alpha = 0, fill_alpha = 1, texture = "TILESET\\BURNINGSTEPPS\\BurningSteppsCharcoal01.blp", uv = "world", uv_size = 4,
+          feather = 1.5, radial_fade = 0.4 })
+    -- A digging grid: soft gold lines over a light black shadow, its inside scored dark.
+    add("a soft gold grid with a shadow", { kind = "grid", center = ahead(17, 0), length = 6, width = 6, spacing = 1, facing = f },
+        { color = 0xE8C060, alpha = 0.9, width = 1.5, softness = 1, shadow_alpha = 0.5, fill_alpha = 0.25, fill_color = 0x605040,
+          blend = "modulate", feather = 0.5 })
+    -- A line fading in from its start, every point's opacity given.
+    add("a line fading along", { kind = "line", points = { ahead(4, -10), ahead(14, -10), ahead(24, -10) }, alphas = { 0, 1, 0.3 },
+                                 on_ground = true },
+        { color = 0xFFFFFF, width = 4, softness = 1.5, shadow_alpha = 0.6, shadow_offset = { 2, 2 } })
+    local bad, why = dr.Draw({ kind = "circle", center = feet, radius = 2 }, { fill_alpha = 1, blend = 7 })
+    result("a blend that is none is refused", bad == nil, tostring(why))
+    print("look: for ten seconds then fading, in front of you: left a pale blue spell ring glowing on the ground, middle cracks" ..
+          " darkening the ground with a soft border, right a charred patch fading out from its middle; further on a 6 x 6 grid of" ..
+          " soft gold lines with a light shadow down and right over a darkened inside; on your left a white line on the ground" ..
+          " fading in from its start, shadowed; the same under Direct3D 9 and Vulkan")
+    wait(2.5)
+end)
+
+step(function()
+    local dr = wxl.draw
+    if #looks.kept == 0 or not dr then return end
+    local stats = dr.Stats()
+    result("the textures are loaded and drawn", stats ~= nil and stats.textures >= 3 and stats.textures_loading == 0 and stats.textured >= 4,
+           stats and string.format("%d textures, %d loading, %d insides", stats.textures, stats.textures_loading, stats.textured) or "no stats")
+    result("the lines' shadows are drawn", stats ~= nil and stats.shadows >= 2, stats and tostring(stats.shadows) or "no stats")
+    if stats then
+        print(string.format("NOTE wxl.draw's last frame with textures: %d shapes, %d vertices, %.0f us on the CPU", stats.drawn,
+                            stats.vertices, stats.build_microseconds))
+    end
+    wait(8.5)
+end)
+
+step(function()
+    local dr = wxl.draw
+    if #looks.kept == 0 or not dr then return end
+    dr.Clear()
+    looks.kept = {}
+end)
+
 -- The end ----------------------------------------------------------------------------------------
 
 step(function()
