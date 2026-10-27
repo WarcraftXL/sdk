@@ -222,7 +222,7 @@ Beyond events, a runtime publishes services, and a mod asks for the ones it need
 | `wxl.pose` | a unit's head turned over its animation | yes |
 | `wxl.imgui` | Dear ImGui and ImPlot drawn in the game's frame, for a native mod's windows | yes |
 | `wxl.cvar` | console variables: a mod's settings registered where the game keeps its own, read and set by the console and the interface, saved in Config.wtf, per account or per character | yes |
-| `wxl.render` | drawing into the game's frame on the Vulkan renderer: the frame's points, images, buffers, pipelines of SPIR-V, the game's model batches drawn again, its shaders replaced | yes; a Direct3D 9 device says it does not draw |
+| `wxl.render` | drawing into the game's frame on the Vulkan renderer: the frame's points, images, buffers, pipelines of SPIR-V, compute dispatches, bone palettes, the game's model batches drawn again, its shaders replaced | yes; a Direct3D 9 device says it does not draw |
 | `wxl.vk` | the Vulkan device and the frame's command buffer, for a mod that records its own commands | no: the Vulkan renderer only |
 | `wxl.hook` | hook points a runtime names and keeps working | yes |
 | `wxl.hook.raw` | a detour at a raw address | no: runtimes that load into a shipped binary |

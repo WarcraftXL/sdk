@@ -1798,6 +1798,22 @@ you want, not all of them. `wxl.render.ReplaceShader(name, stage, spirv)` gives 
 of that name a program of the mod's until `RestoreShader`, or until the mod goes.
 `wxl.profile.GpuZoneBegin(name)` and `GpuZoneEnd()` time a mod's passes on the GPU.
 
+Since abi `0.1.34`, `kind = "compute"` makes a compute pipeline of one program (`compute`, a `.spv`
+file or the bytes), which `wxl.render.Dispatch(pipeline, x, y, z, push)` runs inside
+`OnRenderPoint`, between passes: what it writes into a buffer (through `buffer:BufferAddress()`) is
+read by the passes after it. `wxl.render.BonePalette(matrices)` writes matrices of the mod's (a
+table of numbers, twelve a matrix: three rows of four, or a string of bytes) into the frame and
+answers their address, as many as the mod likes, read until the frame ends. A program takes an
+address in its push constants as two 32-bit words, low first, which a Lua mod writes as a string:
+
+```lua
+local function u32(n)
+    return string.char(n % 256, math.floor(n / 256) % 256, math.floor(n / 65536) % 256, math.floor(n / 16777216) % 256)
+end
+local at = wxl.render.BonePalette(bones)       -- bones: 12 numbers a matrix
+local push = u32(at % 4294967296) .. u32(math.floor(at / 4294967296)) .. u32(17)
+```
+
 The raw device (`wxl.vk`) is a C++ mod's: see "Drawing into the frame" in
 [Building a mod](building-a-mod.md).
 
@@ -2191,6 +2207,8 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.render.KeepBatch(batch)`, `.DrawBatch(batch, pipeline, constants)` | a model batch of the game kept until the frame ends, drawn again with a batch program (abi `0.1.33`) |
 | `wxl.render.SceneColorSlot()`, `.SceneDepthSlot()` | the frame as drawn so far, copied into textures: their indices (abi `0.1.33`) |
 | `wxl.render.ReplaceShader(name, stage, spirv)`, `.RestoreShader(name, stage)` | `true`: the game's shaders of that name drawn with the mod's program, or given theirs back (abi `0.1.33`) |
+| `wxl.render.Dispatch(pipeline, x, y, z, push)` | `true`: a compute pipeline run over x * y * z workgroups inside `OnRenderPoint`, between passes (abi `0.1.34`) |
+| `wxl.render.BonePalette(matrices)` | the address of matrices written into the frame, 12 numbers a matrix, read until the frame ends (abi `0.1.34`) |
 | `wxl.profile.GpuZoneBegin(name)`, `.GpuZoneEnd()` | a zone of the GPU's time around the mod's passes (abi `0.1.33`) |
 
 ### Object methods
@@ -2475,7 +2493,8 @@ module came with `0.1.27`, the `wxl.selectioncircle` module with `0.1.28`.
 `LuaScript`'s `OnInterfaceSignature` and `OnInterfaceCleanupRequest` came with `0.1.32`.
 
 `RenderScript`'s `OnRenderPoint`, the `wxl.render` module, `wxl.gx.Api`, `wxl.profile.GpuZoneBegin`
-and `GpuZoneEnd`, and `OnModelBatchDrawn`'s `batch` came with `0.1.33`.
+and `GpuZoneEnd`, and `OnModelBatchDrawn`'s `batch` came with `0.1.33`; `wxl.render.Dispatch` and
+`BonePalette` with `0.1.34`.
 
 ### Gameplay events
 

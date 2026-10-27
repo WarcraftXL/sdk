@@ -1946,7 +1946,24 @@ this service.
 **The game's shaders.** `ReplaceShader(name, stage, spirv, size)` gives the game's shaders named
 `name` (or starting with it) your SPIR-V for a stage, 0 vertex or 1 pixel, written against the same
 interface as a batch program, the game's registers at `pc.vertexRegs` and `pc.pixelRegs`;
-`RestoreShader` or your mod's unload gives them their own back.
+`RestoreShader` or your mod's unload gives them their own back. On this renderer the game's models
+read their bones from a palette of up to 256 bones, not from the registers c31 and up: a program
+reaches bone `b`'s rows with `WxlBoneRow(b, row)` of `batch.glsl`, wherever the batch has them.
+
+**Compute** (abi `0.1.34`). `RenderPipelineDesc::Compute(spirv, size)` makes a compute pipeline
+(`#version 460`, a `layout(local_size_x = ...) in;` of your choice, push constants of 128 bytes,
+the same bindless table). `Dispatch(pipeline, x, y, z, push, size)` runs it inside
+`OnRenderPoint`, between passes: the frame's drawing stops for it as for a pass. It reads what the
+frame drew before it, reads and writes your buffers through `BufferAddress`, and what it writes is
+seen by every draw and dispatch after it; it writes no image (a pass after it draws one from the
+buffer).
+
+**Bones of your own** (abi `0.1.34`). `BonePalette(matrices, size, &address)` writes matrices into
+the open frame, three `vec4` rows each (48 bytes, `WXL_RENDER_PALETTE_MATRIX_BYTES`), as many as
+you like (16 MiB at once), and gives their GPU address, read until the frame ends: your vertex
+program reads matrix `m`'s rows at `WxlPaletteRow(address, m, row)` (`render.glsl`), with any bone
+index size your vertices carry. Write it each frame you draw with it, from `OnRenderPoint` or a
+handler of the frame.
 
 **Raw Vulkan.** `wxl/services/vk.hpp` (`wxl.vk`, a raw service: declare it in `mod.json`) hands the
 device itself to a mod that records its own commands: `Instance()`, `Device()`, `Queue()`,
