@@ -1798,10 +1798,85 @@ edit cost (`last_microseconds`): a few microseconds for a brush, so an edit ever
 button is held is no trouble. The server keeps its own ground: a mod that digs where a server checks
 movement must tell its server.
 
-**Drawing a grid over the ground.** Lines between the positions `Vertices` answers, drawn at
-`OnRenderPoint("after_opaque_world")`: on the Vulkan renderer (either client) with a
-`wxl.render` pipeline of kind `"graphics"` and topology `"lines"` (the positions in a buffer of
-yours, the camera's matrix in the push constants). On Direct3D 9 a Lua mod has no way to draw yet.
+**Drawing a grid over the ground.** `wxl.draw` does it on every device: a `"grid"` shape with
+`spacing = 4.1666665` and its centre on a vertex follows the terrain's own cells, and lies on the
+ground as you edit it. See [Shapes in the world](#shapes-in-the-world-wxldraw).
+
+### Shapes in the world: `wxl.draw`
+
+`wxl.draw` (abi `0.1.36`) draws simple shapes in the 3D world: lines, shapes lying on the ground,
+volumes. It draws them the same on the stock client and the recompiled one, under Direct3D 9 and
+the Vulkan renderer alike, so a mod never asks which device it runs on.
+
+```lua
+-- Every frame, a grid under the point the camera looks at: drawn by the next frame only.
+Observe("RenderScript", "OnFrameBegin", function()
+    wxl.draw.Draw({ kind = "grid", center = aim, length = 10, width = 10, spacing = 1 },
+                  { color = 0x60D0FF, alpha = 0.6, width = 1 })
+end)
+
+-- A cone in front of a boss for three seconds, fading out over the last half second.
+local cone = wxl.draw.Add({ kind = "sector", radius = 15, angle = math.rad(70) },
+                          { color = 0xFF3020, fill_alpha = 0.3, width = 2, fade_out = 0.5 }, 3)
+cone:Attach(boss, 1)    -- it follows the boss and turns with it
+```
+
+**The shapes.** A shape is a table whose `kind` says what it reads:
+
+| `kind` | reads |
+|---|---|
+| `"line"` | `points` (2 or more); `closed = true` joins the last to the first, `on_ground = true` lays it on the ground |
+| `"circle"` | `center`, `radius` |
+| `"ring"` | `center`, `radius`, `inner` |
+| `"sector"` | `center`, `radius`, `facing` (the middle of the arc), `angle` (its width, up to `2 * math.pi`), `inner` (0 for a cone) |
+| `"rectangle"` | `center`, `length` (along `facing`), `width`, `facing` |
+| `"polygon"` | `points` (3 or more; concave is fine, crossing itself is not) |
+| `"grid"` | `center`, `length`, `width`, `spacing` (yards between the lines), `facing` |
+| `"box"` | `center`, `size` (`{ x = length, y = width, z = height }`), `facing`, `pitch`, `roll` |
+| `"sphere"` | `center`, `radius` |
+| `"cylinder"` | `center` (its middle), `radius`, `height`, `facing`, `pitch`, `roll` |
+
+Angles are radians, `facing` as an object's (0 towards +x, north). Points are offsets from
+`center`: leave `center` out to give them in world coordinates. Circles, rings, sectors,
+rectangles, polygons and grids lie on the ground: on its slopes, on the very triangles the client
+walks on, and on every edit `wxl.terrain` makes. Where there is no ground (a hole, a chunk not
+loaded, an instance made of buildings, a bridge, a floor), they lie flat at `center.z`; `flat =
+true` keeps them flat at `center.z` everywhere, for a floor whose height you know
+(`wxl.world.Trace` finds it).
+
+**The look.** The second table: `color` (`0xRRGGBB`), `alpha` (the lines' opacity, 0 for no
+lines), `fill_alpha` (the inside's, 0 for none), `width` (the lines' width in pixels of a picture
+1080 lines high, 0.5 to 31, the same at any distance), `depth` (`"tested"`: walls, units and the
+ground hide it; `"on_top"`: seen through them), `pulse` (seconds a beat of the opacity), and for a
+kept shape `fade_in` and `fade_out` (seconds). Leave it out for white lines 2 pixels wide.
+
+**For a frame, or kept.** `Draw` draws the shape in the next frame of the world only: call it each
+frame for what follows the frame, there is nothing to remove. `Add(shape, style, duration)` keeps
+it and answers a `wxl.Shape`, for `duration` seconds or until removed:
+
+| | |
+|---|---|
+| `shape:Move(center, facing)` | where it stands |
+| `wxl.draw.Update(shape, t)`, `wxl.draw.SetStyle(shape, t)` | another shape, another look |
+| `shape:SetDuration(seconds)` | it goes in that many seconds (0: when removed) |
+| `shape:Attach(object, flags)`, `shape:Detach()` | it follows an object (its offsets turn with it when `flags` is 1), and goes when the object leaves view |
+| `shape:Remove()`, `wxl.draw.Clear()` | it goes now; every shape of your mod goes |
+
+Your shapes go when your mod unloads or reloads.
+
+**When it is drawn.** After the world's opaque geometry and its water, before its translucent
+models, its spell effects and the interface: a telegraph on a lake's bed shows through the water,
+and the spell's own effects play over it.
+
+**Budgets.** A mod keeps up to 4096 shapes and draws up to 4096 a frame; a shape reaches up to
+250 yards from its centre and takes up to 4096 points; a grid draws up to 1024 lines. Past these the
+call answers `nil, "invalid"` with a line in the log under `draw` saying which. All mods together
+draw up to 524288 vertices a frame; past that, shapes are left out of the frame and the log says so
+once a second. `wxl.draw.Stats()` answers what the last frame drew and what it cost on the CPU
+(`build_microseconds`): a few tens of microseconds for a grid, a cone and a ring.
+
+The interface's own Lua (an add-on, a FrameXML file) has `WxlDraw(shape, style)`, the same tables
+as `Draw`, for the next frame of the world: call it from an `OnUpdate`.
 
 ### Drawing into the frame: `wxl.render`
 
@@ -2269,6 +2344,8 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.terrain.VerticesIn(x, y, radius)` | every vertex within a radius, each once: `{ chunk_x, chunk_y, index, x, y, z, original_z, inner, loaded }` (abi `0.1.35`) |
 | `wxl.terrain.Trace(start, finish)`, `.Locate(x, y)`, `.Vertices(chunk_x, chunk_y, original)` | `{ point, normal, chunk_x, chunk_y, fraction }` where a segment meets the ground; `{ chunk_x, chunk_y, cell_row, cell_col, nearest, loaded }`; a chunk's 145 vertices; see [The ground](#the-ground-wxlterrain) (abi `0.1.35`) |
 | `wxl.terrain.SetHeights(heights)`, `.Reset(chunk_x, chunk_y)`, `.ResetAll()`, `.Stats()` | `true`: vertices set to heights, all or none (`{ chunk_x, chunk_y, index, height }` each), or this mod's edits taken off; what the service holds (abi `0.1.35`) |
+| `wxl.draw.Draw(shape, style)` | `true`: a shape drawn by the next frame only: a line, a circle, a ring, a sector, a rectangle, a polygon or a grid on the ground, a box, a sphere or a cylinder; see [Shapes in the world](#shapes-in-the-world-wxldraw) (abi `0.1.36`) |
+| `wxl.draw.Add(shape, style, duration)`, `.Update(shape, t)`, `.SetStyle(shape, t)`, `.Clear()`, `.Stats()` | a kept `wxl.Shape` (`shape:Move(center, facing)`, `:SetDuration(seconds)`, `:Attach(object, flags)`, `:Detach()`, `:Remove()`); what the last frame drew (abi `0.1.36`) |
 | `wxl.render.Supported()`, `.UnsupportedReason()` | whether the render service drives the client's device, and why not (abi `0.1.33`) |
 | `wxl.render.CreateImage(width, height, format, samples)`, `.CreateScreenImage(divisor, format, samples)`, `.CreateBuffer(size)` | an image or a buffer of the mod's: `image:ImageSlot()`, `:ImageWidth()`, `:ImageHeight()`, `buffer:WriteBuffer(offset, bytes)`, `:BufferAddress()`; see [Drawing into the frame](#drawing-into-the-frame-wxlrender) (abi `0.1.33`) |
 | `wxl.render.CreatePipeline(desc)`, `.Sampler(flags)` | a pipeline of the mod's SPIR-V (`pipeline:PipelineReady()`); a sampler's index (abi `0.1.33`) |

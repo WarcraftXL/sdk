@@ -1925,13 +1925,55 @@ within a frame.
 heights are not this service's: the server keeps its own ground, so a mod that reshapes it where a
 server checks movement must tell its server.
 
-**Drawing the grid.** To show the player the vertices a brush will move, draw lines between the
-positions `Vertices` answers, at `RenderScript::OnRenderPoint(WXL_RENDER_POINT_AFTER_OPAQUE_WORLD,
-...)`. On the Vulkan renderer (either client), a `wxl.render` GRAPHICS pipeline with
-`WXL_RENDER_TOPOLOGY_LINES` reads the positions from a buffer of yours by address and the camera's
-matrix from its push constants. On Direct3D 9 (the stock client, or the recompiled client without
-`[gx] api = vulkan`), draw with `wxl::GxService`'s device (a line list, then
-`InvalidateState()`). No portable line service exists yet.
+**Drawing the grid.** To show the player the vertices a brush will move, draw a grid with
+`wxl::DrawService` (below): spacing 4.1666665 yards, its centre on a vertex, it lies on the
+terrain's own cells and follows the edits as they land, on every device.
+
+### Shapes in the world: `wxl.draw`
+
+`wxl::DrawService` (abi `0.1.36`) draws simple shapes in the 3D world, on the stock client and the
+recompiled one, under Direct3D 9 and the Vulkan renderer alike: the same vertices, the same
+programs, the same picture.
+
+```cpp
+#include "wxl/services/draw.hpp"
+
+// Each frame, a grid under the aim: immediate mode, drawn by the next frame of the world only.
+wxl::DrawService::Draw(wxl::DrawShape::Grid(aim, 10.0f, 10.0f, 1.0f), wxl::DrawStyle(0x60D0FF, 0.6f).Width(1.0f));
+
+// A telegraph kept three seconds, fading out, following a boss and turning with it.
+const wxl_handle cone = wxl::DrawService::Add(wxl::DrawShape::Sector(wxl_vec3{}, 15.0f, 0.0f, 1.2f),
+                                              wxl::DrawStyle(0xFF3020).Fill(0.3f).Fade(0.0f, 0.5f), 3.0f);
+wxl::DrawService::Attach(cone, boss, WXL_DRAW_ATTACH_TURN);
+```
+
+**Shapes.** `wxl::DrawShape` builds a `wxl_draw_shape` by kind: `Line(points, closed)` (with
+`.OnGround()` to lay it on the ground), `Circle`, `Ring`, `Sector` (a cone, or an arc of a ring with
+an inner radius), `Rectangle`, `Polygon` (concave is fine), `Grid`, `Box`, `Sphere`, `Cylinder`. A
+line's and a polygon's points are offsets from `center` and are read during the call only. Ground
+shapes lie on the ground, on the triangles the client walks on and on every `wxl.terrain` edit;
+where there is none they lie flat at `center.z`, and `.Flat()` keeps them there everywhere.
+
+**Look.** `wxl::DrawStyle(0xRRGGBB, line_alpha)` with `.Fill(opacity)`, `.Width(pixels at 1080
+lines)` (constant on screen, 0.5 to `WXL_DRAW_MAX_WIDTH`), `.OnTop()` (seen through walls; by
+default walls and units hide a shape), `.Pulse(seconds)`, `.Fade(in, out)`.
+
+**Lifetimes.** `Draw` is for one frame; `Add(shape, style, duration)` keeps a shape and answers a
+handle (`WXL_HANDLE_NONE` when refused): `Update`, `Move`, `SetStyle`, `SetDuration`, `Attach`
+(offsets from the object's position, turned with it under `WXL_DRAW_ATTACH_TURN`; the shape goes
+when the object leaves view), `Detach`, `Remove`; `Clear()` takes every shape of your mod off, and
+they all go when the mod is disabled or unloads.
+
+**When.** After the world's opaque geometry and its liquids, before its translucent models, its
+particles and spell effects, and the interface. Shapes are tested against the scene's depth (or
+drawn on top) and write none, so the translucent world blends over them.
+
+**Budgets and refusals.** `WXL_DRAW_MAX_SHAPES` kept and `WXL_DRAW_MAX_IMMEDIATE` immediate shapes a
+mod, `WXL_DRAW_MAX_POINTS` points, `WXL_DRAW_MAX_EXTENT` yards from the centre,
+`WXL_DRAW_MAX_GRID_LINES` lines, `WXL_DRAW_MAX_SHAPE_VERTICES` vertices a shape: past these the call
+answers `WXL_E_INVALID` and the log says why under the tag `draw`, once per mod and call. All mods
+together draw `WXL_DRAW_MAX_FRAME_VERTICES` a frame; past it, shapes are left out (counted in
+`Stats().left_out`, logged once a second). `Stats()` also answers the CPU's cost of the last frame.
 
 ### Drawing into the frame: `wxl.render`
 
