@@ -1804,9 +1804,9 @@ proportion at any resolution. Called again, `Set` changes the style; `Clear(targ
 `ClearAll()` take the mod's highlights off, and they go when the mod goes or the object leaves
 view. Scale the widths by the object's distance so that a far silhouette is not swallowed.
 
-Not every runtime draws them: the stock client does (Direct3D 9, shader model 3), and so does the
-recompiled client on its Vulkan renderer (`[gx] api = vulkan` in `WarcraftXL.ini`), with the same
-look; the recompiled client on Direct3D 9 does not. Ask first, and turn the feature off with the
+Not every runtime draws them: both clients do on the Vulkan renderer (`[gx] api = vulkan` in
+`WarcraftXL.ini`), and the stock client on Direct3D 9 too (shader model 3), with the same look;
+the recompiled client on Direct3D 9 does not. Ask first, and turn the feature off with the
 reason in the log:
 
 ```cpp
@@ -1927,7 +1927,7 @@ server checks movement must tell its server.
 
 **Drawing the grid.** To show the player the vertices a brush will move, draw lines between the
 positions `Vertices` answers, at `RenderScript::OnRenderPoint(WXL_RENDER_POINT_AFTER_OPAQUE_WORLD,
-...)`. On the recompiled client's Vulkan renderer, a `wxl.render` GRAPHICS pipeline with
+...)`. On the Vulkan renderer (either client), a `wxl.render` GRAPHICS pipeline with
 `WXL_RENDER_TOPOLOGY_LINES` reads the positions from a buffer of yours by address and the camera's
 matrix from its push constants. On Direct3D 9 (the stock client, or the recompiled client without
 `[gx] api = vulkan`), draw with `wxl::GxService`'s device (a line list, then
@@ -1935,7 +1935,7 @@ matrix from its push constants. On Direct3D 9 (the stock client, or the recompil
 
 ### Drawing into the frame: `wxl.render`
 
-On the runtime's Vulkan renderer (the recompiled client with `[gx] api = vulkan`), a mod draws
+On the runtime's Vulkan renderer (either client with `[gx] api = vulkan`), a mod draws
 into the game's frame with images, buffers and pipelines of its own (abi `0.1.33`):
 `wxl/services/render.hpp`. `wxl::GxService::Api()` says which device the client runs on
 (`WXL_GX_BACKEND_D3D9`, `WXL_GX_BACKEND_VULKAN`, ...), and `wxl::RenderService::Supported()`

@@ -31,8 +31,8 @@
 //
 // The runtime draws it after the world and before the interface, every frame something is
 // highlighted; nothing is drawn, and nothing costs, while nothing is. Where the device or the
-// runtime cannot draw it (the recompiled client until its Vulkan renderer's render points exist,
-// a device without the shader model the passes need), `supported` answers false and every `set`
+// runtime cannot draw it (the recompiled client on Direct3D 9, a device without the shader model
+// the passes need), `supported` answers false and every `set`
 // WXL_E_UNSUPPORTED, and `unsupported_reason` says why: a mod disables its feature with that line
 // rather than failing silently.
 //

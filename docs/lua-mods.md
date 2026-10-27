@@ -1695,8 +1695,8 @@ and lights it with a soft glow, where it is seen and never through a wall: `colo
 (hair, leaves) are outlined as shown. Called again it changes the style; it holds until
 `wxl.highlight.Clear(target)`, `ClearAll()`, the object leaving view, or the mod reloading, being
 disabled or unloading. To keep a far object's outline from swallowing it, scale the widths by its
-distance yourself. The stock client draws
-them, and so does the recompiled client on its Vulkan renderer (`[gx] api = vulkan`); where a
+distance yourself. Both clients draw
+them on the Vulkan renderer (`[gx] api = vulkan`), and the stock client on Direct3D 9 too; where a
 runtime does not (the recompiled client on Direct3D 9), `wxl.highlight.Supported()` is `false`,
 `UnsupportedReason()` says why and `Set` answers `nil, "unsupported"`: say so once and leave the
 feature off.
@@ -1799,13 +1799,13 @@ button is held is no trouble. The server keeps its own ground: a mod that digs w
 movement must tell its server.
 
 **Drawing a grid over the ground.** Lines between the positions `Vertices` answers, drawn at
-`OnRenderPoint("after_opaque_world")`: on the recompiled client's Vulkan renderer with a
+`OnRenderPoint("after_opaque_world")`: on the Vulkan renderer (either client) with a
 `wxl.render` pipeline of kind `"graphics"` and topology `"lines"` (the positions in a buffer of
 yours, the camera's matrix in the push constants). On Direct3D 9 a Lua mod has no way to draw yet.
 
 ### Drawing into the frame: `wxl.render`
 
-On the Vulkan renderer (the recompiled client with `[gx] api = vulkan`), `wxl.render` (abi
+On the Vulkan renderer (either client with `[gx] api = vulkan`, the stock 32-bit one too), `wxl.render` (abi
 `0.1.33`) lets a mod draw into the game's frame with images, buffers and pipelines of its own.
 `wxl.gx.Api()` names the device the client runs on (`"d3d9"`, `"vulkan"`, ...); on Direct3D 9
 `wxl.render.Supported()` is `false` and `UnsupportedReason()` says why.

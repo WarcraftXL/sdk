@@ -128,8 +128,8 @@
 //
 // --- Threads, devices -----------------------------------------------------------------------------
 //
-// Main thread only. On a device this service does not drive (Direct3D 9: the stock client, or the
-// recompiled one without `[gx] api = vulkan`) `supported` answers false, and every call
+// Main thread only. It drives the runtime's Vulkan renderer, on both clients under `[gx] api =
+// vulkan` (the stock 32-bit one too). On Direct3D 9 `supported` answers false, and every call
 // WXL_E_UNSUPPORTED (or nothing): the points are still raised there, and a mod draws with wxl.gx's
 // device. A mod's resources are given back when it goes, once the GPU is done with them.
 
