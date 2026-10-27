@@ -207,6 +207,13 @@ radius must be refused; `Stats` must count the shapes and their vertices (the CP
 printed as a NOTE), the grid must be drawn every frame, and the kept shapes must be gone once their
 duration ran out.
 
+Phase 28 checks an animation played on the player (abi 0.1.37), on both clients. Standing still,
+the player swings once with EmoteWork (62, the mining swing): `Play` must answer true, `Playing`
+62 and `Current` an animation, and `OnUnitAnimationEnded` must say `finished` once the swing is over.
+Then the swing is looped at 1.5 times the speed for three seconds (walk a step: the legs walk and
+the swing comes back when you stop), `Stop` must end it once, and `OnUnitAnimationEnded` must say
+`stopped`, `looped`. An id past AnimationData's must be refused.
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the

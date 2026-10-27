@@ -1063,6 +1063,7 @@ int main()
         host.Table()->publish_service(WXL_CVAR_SERVICE, WXL_CVAR_SERVICE_VERSION, wxltest::FakeView::CVarTable());
         host.Table()->publish_service(WXL_TERRAIN_SERVICE, WXL_TERRAIN_SERVICE_VERSION, wxltest::FakeView::TerrainTable());
         host.Table()->publish_service(WXL_DRAW_SERVICE, WXL_DRAW_SERVICE_VERSION, wxltest::FakeView::DrawTable());
+        host.Table()->publish_service(WXL_ANIMATION_SERVICE, WXL_ANIMATION_SERVICE_VERSION, wxltest::FakeView::AnimationTable());
         host.Table()->publish_service(WXL_RENDER_SERVICE, WXL_RENDER_SERVICE_VERSION, wxltest::FakeRender::Table());
         host.Table()->publish_service(WXL_VK_SERVICE, WXL_VK_SERVICE_VERSION, wxltest::FakeRender::VkTable());
     }
@@ -1740,6 +1741,27 @@ int main()
         }
         const auto stats = DrawService::Stats();
         Check(stats && stats.Value().vertices == 1234 && stats.Value().frames == 7, "Stats answers the service's counts");
+    }
+
+    Section("animations played on units");
+    {
+        using wxltest::FakeView;
+        using wxltest::FakeObjects;
+        using wxl::AnimationService;
+        FakeView::AnimationCalls().clear();
+        FakeView::AnimationPlays().clear();
+        const wxl::Unit boar(FakeObjects::kBoar);
+        Check(AnimationService::Play(boar, 62, WXL_ANIMATION_LOOP | WXL_ANIMATION_OVERRIDE, 1.5) == WXL_OK &&
+                  AnimationService::Playing(boar).ValueOr(0) == 62 && AnimationService::Current(boar).ValueOr(0) == 62,
+              "Play takes a unit, an id, flags and a speed; Playing and Current answer");
+        Check(AnimationService::Play(boar, 600, 0, 0) == WXL_E_INVALID, "an id past the client's is refused");
+        Check(AnimationService::Stop(boar) == WXL_OK && AnimationService::Stop(boar) == WXL_E_NOT_FOUND &&
+                  !AnimationService::Playing(boar).HasValue(),
+              "Stop ends it once");
+        const auto& calls = FakeView::AnimationCalls();
+        Check(calls.size() == 4 && calls[0].what == "play" && calls[0].unit == FakeObjects::kBoar && calls[0].anim == 62 &&
+                  calls[0].flags == 5u && calls[0].speed == 1.5 && calls[2].what == "stop",
+              "with the unit, the id, the flags and the speed as given");
     }
 
     Section("console variables");

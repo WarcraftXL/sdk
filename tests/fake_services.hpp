@@ -32,6 +32,7 @@
 #include "wxl/services/input.h"
 #include "wxl/services/world.h"
 #include "wxl/services/pose.h"
+#include "wxl/services/animation.h"
 #include "wxl/services/highlight.h"
 #include "wxl/services/selectioncircle.h"
 #include "wxl/services/texture.h"
@@ -1113,6 +1114,81 @@ namespace wxltest
             out->frames   = 7;
             return WXL_OK;
         }
+        // wxl.animation: every call kept; one play per unit; the model shows EmoteWork.
+        struct AnimationCall
+        {
+            std::string what;
+            wxl_handle  unit  = WXL_HANDLE_NONE;
+            uint32_t    anim  = 0;
+            uint32_t    flags = 0;
+            double      speed = 0.0;
+        };
+        static std::vector<AnimationCall>& AnimationCalls()
+        {
+            static std::vector<AnimationCall> calls;
+            return calls;
+        }
+        static std::vector<std::pair<wxl_handle, uint32_t>>& AnimationPlays()
+        {
+            static std::vector<std::pair<wxl_handle, uint32_t>> plays;
+            return plays;
+        }
+        static wxl_result WXL_CALL AnimationPlay(wxl_handle unit, uint32_t anim, uint32_t flags, double speed)
+        {
+            AnimationCalls().push_back(AnimationCall{"play", unit, anim, flags, speed});
+            if (anim > WXL_ANIMATION_MAX_ID || (flags & ~WXL_ANIMATION_FLAGS)) return WXL_E_INVALID;
+            auto& plays = AnimationPlays();
+            for (auto& p : plays)
+                if (p.first == unit)
+                {
+                    p.second = anim;
+                    return WXL_OK;
+                }
+            plays.emplace_back(unit, anim);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL AnimationStop(wxl_handle unit)
+        {
+            AnimationCalls().push_back(AnimationCall{"stop", unit});
+            auto& plays = AnimationPlays();
+            for (size_t i = 0; i < plays.size(); ++i)
+                if (plays[i].first == unit)
+                {
+                    plays.erase(plays.begin() + static_cast<std::ptrdiff_t>(i));
+                    return WXL_OK;
+                }
+            return WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL AnimationPlaying(wxl_handle unit, uint32_t* out)
+        {
+            for (const auto& p : AnimationPlays())
+                if (p.first == unit && out)
+                {
+                    *out = p.second;
+                    return WXL_OK;
+                }
+            return WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL AnimationCurrent(wxl_handle, uint32_t* out)
+        {
+            if (!out) return WXL_E_INVALID;
+            *out = 62;
+            return WXL_OK;
+        }
+        static const wxl_animation_api* AnimationTable()
+        {
+            static const wxl_animation_api api = [] {
+                wxl_animation_api t{};
+                t.struct_size = sizeof t;
+                t.play        = &AnimationPlay;
+                t.stop        = &AnimationStop;
+                t.playing     = &AnimationPlaying;
+                t.current     = &AnimationCurrent;
+                return t;
+            }();
+            return &api;
+        }
+
         static const wxl_draw_api* DrawTable()
         {
             static const wxl_draw_api api = [] {

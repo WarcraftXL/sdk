@@ -2542,6 +2542,73 @@ step(function()
     shapes.kept = {}
 end)
 
+-- Phase 28: animations on units (wxl.animation) ---------------------------------------------------
+
+local anims = { ended = {}, observer = nil }
+
+step(function()
+    print("phase 28: an animation played on the player (wxl.animation)")
+    local an = wxl.animation
+    if not (an and an.Play) then
+        result("wxl.animation", false, "this runtime is older than abi 0.1.37")
+        return
+    end
+    local me = wxl.object.LocalPlayer()
+    if not me then
+        skip("animations on units", "no player in the world")
+        return
+    end
+    anims.ended = {}
+    anims.observer = Observe("ObjectScript", "OnUnitAnimationEnded", function(unit, anim_id, reason, looped)
+        anims.ended[#anims.ended + 1] = { anim_id = anim_id, reason = reason, looped = looped }
+    end)
+    local bad, why = an.Play(me, 600)
+    result("an id past AnimationData's is refused", bad == nil and why == "invalid", tostring(why))
+    local ok, err = an.Play(me, 62)
+    result("Play swings the player once (EmoteWork, the mining swing)", ok == true, tostring(err))
+    result("Playing answers it", an.Playing(me) == 62, tostring(an.Playing(me)))
+    local shown = an.Current(me)
+    result("the model shows it (or the animation it falls back to)", shown ~= nil and shown ~= 0, tostring(shown))
+    print("look: stand still: your character swings once as when mining, then stands again")
+    wait(4)
+end)
+
+step(function()
+    local an = wxl.animation
+    if not (an and anims.observer) then return end
+    local first = anims.ended[1]
+    result("the one-shot ends by itself, finished", first ~= nil and first.anim_id == 62 and first.reason == "finished" and first.looped == false,
+           first and (first.anim_id .. " " .. first.reason) or "no OnUnitAnimationEnded (did you move?)")
+    result("and the player is handed back to the game", an.Playing(wxl.object.LocalPlayer()) == nil)
+    anims.ended = {}
+    local ok, err = an.Play(wxl.object.LocalPlayer(), 62, 1, 1.5)
+    result("a loop at one and a half times the speed", ok == true, tostring(err))
+    print("look: you swing again and again, faster, for three seconds; walk a step: your legs walk, the swing comes back when you stop")
+    wait(3)
+end)
+
+step(function()
+    local an = wxl.animation
+    if not (an and anims.observer) then return end
+    local me = wxl.object.LocalPlayer()
+    result("the loop is still played after its length", #anims.ended == 0 and an.Playing(me) == 62,
+           #anims.ended > 0 and anims.ended[1].reason or "")
+    result("Stop ends it", an.Stop(me) == true)
+    local again, why = an.Stop(me)
+    result("and only once", again == nil and why == "not_found", tostring(why))
+    wait(0.5)
+end)
+
+step(function()
+    local an = wxl.animation
+    if not (an and anims.observer) then return end
+    local last = anims.ended[#anims.ended]
+    result("OnUnitAnimationEnded says stopped, looped", last ~= nil and last.reason == "stopped" and last.looped == true,
+           last and last.reason or "nothing")
+    Unobserve(anims.observer)
+    anims.observer = nil
+end)
+
 -- The end ----------------------------------------------------------------------------------------
 
 step(function()

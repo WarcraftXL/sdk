@@ -2875,6 +2875,65 @@ print("stats " .. wxl.draw.Stats().vertices)
         if (g_failures) sink.Dump();
     }
 
+    Section("animations played on units in Lua");
+    {
+        using wxltest::FakeView;
+        const fs::path mods = MakeTree(scratch, "animation", binary, fs::path());
+        WriteFile(mods / "swing-a" / "mod.json", LuaManifest("wxl.swing-a"));
+        WriteFile(mods / "swing-a" / "init.lua", R"(
+local me = wxl.object.LocalPlayer()
+print("play " .. tostring(wxl.animation.Play(me, 62)) .. " " .. tostring(wxl.animation.Play(me, 62, 1 + 4, 1.25)))
+print("playing " .. wxl.animation.Playing(me) .. " current " .. wxl.animation.Current(me))
+print("bad " .. tostring(select(2, wxl.animation.Play(me, 600))))
+print("arg " .. tostring(select(2, pcall(wxl.animation.Play, me, -1))))
+print("missing " .. tostring(select(2, pcall(wxl.animation.Play, me))))
+Observe("ObjectScript", "OnUnitAnimationEnded", function(unit, anim_id, reason, looped)
+    print("ended " .. anim_id .. " " .. reason .. " " .. tostring(looped))
+end)
+)");
+        WriteFile(mods / "swing-b" / "mod.json", LuaManifest("wxl.swing-b", "\"loadAfter\": [ \"wxl.swing-a\" ]"));
+        WriteFile(mods / "swing-b" / "init.lua", R"(
+local me = wxl.object.LocalPlayer()
+print("b play " .. tostring(wxl.animation.Play(me, 17)))
+print("b stop " .. tostring(wxl.animation.Stop(me)) .. " " .. tostring(select(2, wxl.animation.Stop(me))))
+print("b again " .. tostring(wxl.animation.Play(me, 18)))
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_ANIMATION_SERVICE, WXL_ANIMATION_SERVICE_VERSION, FakeView::AnimationTable()});
+        FakeView::AnimationCalls().clear();
+        FakeView::AnimationPlays().clear();
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            Check(sink.Has("[wxl.swing-a] play true true") && sink.Has("[wxl.swing-a] playing 62 current 62"),
+                  "Play answers true; Playing and Current answer the ids");
+            Check(sink.Has("[wxl.swing-a] bad invalid"), "an id the service refuses answers nil and why");
+            Check(sink.Has("takes a whole number from 0") && sink.Has("'anim_id' (argument 2) is missing"),
+                  "a negative id or none is an error naming the argument");
+            Check(sink.Has("[wxl.swing-b] b play true") && sink.Has("[wxl.swing-b] b stop true not_found"),
+                  "the last Lua mod to play on a unit holds it and stops it once");
+            const auto& calls = FakeView::AnimationCalls();
+            Check(calls.size() >= 2 && calls[1].anim == 62 && calls[1].flags == 5u && calls[1].speed == 1.25 && calls[0].speed == 0.0,
+                  "the flags and the speed reach the service as given, left out as 0");
+            wxl_unit_animation_args args{};
+            args.unit    = 0x1234;
+            args.anim_id = 17;
+            args.reason  = WXL_ANIMATION_END_INTERRUPTED;
+            args.looped  = WXL_FALSE;
+            host.Raise(WXL_EV_UnitAnimationEnded, &args);
+            Check(sink.Has("[wxl.swing-a] ended 17 interrupted false"), "OnUnitAnimationEnded reaches a Lua mod with the reason's name");
+            FakeView::AnimationCalls().clear();
+            host.Shutdown();
+        }
+        bool stopped = false;
+        for (const auto& c : FakeView::AnimationCalls()) stopped = stopped || c.what == "stop";
+        Check(stopped, "the animation a Lua mod plays is stopped when it unloads");
+        if (g_failures) sink.Dump();
+    }
+
     Section("a rolled view and a pointer held off the centre in Lua");
     {
         using wxltest::FakeView;
