@@ -1774,8 +1774,9 @@ followed by a row of 8 in the middle of the squares.
 answers `nil, "invalid"` and sets nothing, with a line in the log under `terrain`. Before it returns,
 the ground is drawn anew (its light on the slopes, its grass grown again), you walk on it and fall
 into it, the camera bumps into it and your clicks land on it (`wxl.world.Trace` meets it too). If
-you stand still on ground that goes down, you fall; ground raised under you holds you at your next
-step. Water keeps its surface, and trees and rocks the map placed stay where they are. A vertex on a
+you stand still on ground that goes down, you fall; ground raised over your feet puts you on top,
+standing or walking, at once for a step's rise and at 8 yards a second for more, landing as the
+game lands you (the server sees a landing, never a teleport), unless a roof or a floor is above you. Water keeps its surface, and trees and rocks the map placed stay where they are. A vertex on a
 chunk's edge belongs to both chunks: setting it through either sets both.
 
 **Whose edits.** Your edits are your mod's: `Reset(chunk_x, chunk_y)` takes them off one chunk,
@@ -1877,6 +1878,59 @@ once a second. `wxl.draw.Stats()` answers what the last frame drew and what it c
 
 The interface's own Lua (an add-on, a FrameXML file) has `WxlDraw(shape, style)`, the same tables
 as `Draw`, for the next frame of the world: call it from an `OnUpdate`.
+
+### Animations on units: `wxl.animation`
+
+`wxl.animation` (abi `0.1.37`) plays an animation of the game on a unit (you, a creature, another
+player in view), once or looped, the way the game plays an emote. Nothing goes to the server: it is
+seen on this client only.
+
+```lua
+local me = wxl.object.LocalPlayer()
+wxl.animation.Play(me, 62)                 -- one swing, as the game swings when you mine
+wxl.animation.Play(me, 62, 1 + 4, 1.2)     -- loop (1) + override (4), a little faster
+wxl.animation.Stop(me)                     -- the game chooses your animation again
+
+Observe("ObjectScript", "OnUnitAnimationEnded", function(unit, anim_id, reason, looped)
+    -- reason: "finished", "interrupted", "stopped", "replaced" or "gone"
+end)
+```
+
+`Play(unit, anim_id, flags, speed)`: `flags` adds up loop 1 (again at each end until `Stop`),
+no_blend 2 (no blend from the pose it leaves), override 4 (a loop played again whenever the game
+replaced it, death excepted; a one-shot ignores it) and exact 8 (no fallback to the model's nearest animation); `nil` or 0 plays it
+once, blended. `speed` 1 (or `nil`) is the animation's own, 0.05 to 20. It answers `true`, or
+`nil, "failed"` when the game did not play it (your model still loading, the unit dead), `nil,
+"invalid"` for an id past 505 or a flag it does not know.
+
+The game decides how: the whole body standing still, the upper body alone over your legs while you
+run, the model's nearest animation when it has not that one, weapons sheathed or drawn as the
+animation wants. And the game comes first: moving, fighting, casting, an emote or dying replace
+yours. A one-shot so replaced has ended (`"interrupted"`); a loop comes back by itself once the unit
+is idle, or at once with override. `wxl.animation.Playing(unit)` answers the id a mod plays on it,
+`wxl.animation.Current(unit)` what its model shows now. Your animations end when your mod is
+disabled, reloads or unloads.
+
+Ids are `AnimationData.dbc`'s. For a tool swung at the ground:
+
+| Id | Name | What it is |
+|---|---|---|
+| 0 | Stand | the idle stance the game falls back to |
+| 16 | AttackUnarmed | a punch |
+| 17 | Attack1H | a swing of a one-handed weapon: a pickaxe held in one hand |
+| 18 | Attack2H | an overhead swing of a two-handed weapon |
+| 19 | Attack2HL | a large two-handed swing (polearms, staves) |
+| 32 | SpellCast | a short release of a spell, both hands |
+| 53 | SpellCastDirected | a cast thrown forward with one hand, at a point |
+| 54 | SpellCastOmni | a cast released all around |
+| 62 | EmoteWork | the work swing: what the client plays while you mine, weapons sheathed |
+| 136 | EmoteWorkNoSheathe | the same swing with the weapon kept in hand (models without it fall back to 62) |
+| 69 | EmoteDance | a dance |
+| 123 | UseStandingLoop | hands busy at waist height: herbs, skins, opening a chest |
+
+The game's own mining is a spell whose cast plays 62 (EmoteWork) again and again while it lasts, with
+a pickaxe model in the right hand: 62 gives that look, 136 keeps a tool you hold in hand, 17 or 18
+strike like a weapon.
 
 ### Drawing into the frame: `wxl.render`
 
@@ -2346,6 +2400,8 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.terrain.SetHeights(heights)`, `.Reset(chunk_x, chunk_y)`, `.ResetAll()`, `.Stats()` | `true`: vertices set to heights, all or none (`{ chunk_x, chunk_y, index, height }` each), or this mod's edits taken off; what the service holds (abi `0.1.35`) |
 | `wxl.draw.Draw(shape, style)` | `true`: a shape drawn by the next frame only: a line, a circle, a ring, a sector, a rectangle, a polygon or a grid on the ground, a box, a sphere or a cylinder; see [Shapes in the world](#shapes-in-the-world-wxldraw) (abi `0.1.36`) |
 | `wxl.draw.Add(shape, style, duration)`, `.Update(shape, t)`, `.SetStyle(shape, t)`, `.Clear()`, `.Stats()` | a kept `wxl.Shape` (`shape:Move(center, facing)`, `:SetDuration(seconds)`, `:Attach(object, flags)`, `:Detach()`, `:Remove()`); what the last frame drew (abi `0.1.36`) |
+| `wxl.animation.Play(unit, anim_id, flags, speed)`, `.Stop(unit)` | `true`: an AnimationData animation played on a unit as the game plays an emote, once or looped, or this mod's stopped; see [Animations on units](#animations-on-units-wxlanimation) (abi `0.1.37`) |
+| `wxl.animation.Playing(unit)`, `.Current(unit)` | the id a mod plays on a unit, or `nil`; the id its model shows now (abi `0.1.37`) |
 | `wxl.render.Supported()`, `.UnsupportedReason()` | whether the render service drives the client's device, and why not (abi `0.1.33`) |
 | `wxl.render.CreateImage(width, height, format, samples)`, `.CreateScreenImage(divisor, format, samples)`, `.CreateBuffer(size)` | an image or a buffer of the mod's: `image:ImageSlot()`, `:ImageWidth()`, `:ImageHeight()`, `buffer:WriteBuffer(offset, bytes)`, `:BufferAddress()`; see [Drawing into the frame](#drawing-into-the-frame-wxlrender) (abi `0.1.33`) |
 | `wxl.render.CreatePipeline(desc)`, `.Sampler(flags)` | a pipeline of the mod's SPIR-V (`pipeline:PipelineReady()`); a sampler's index (abi `0.1.33`) |
@@ -2682,6 +2738,7 @@ and one `OnGroupMember` per other member follows. The full parameter lists are i
 | | `OnUnitAuraRefreshed` | the same | an aura still on a unit gained or lost stacks (`previous_stacks` says how many it had), or its duration was renewed |
 | | `OnUnitAuraChanged` | `unit`, `spell_id`, `removed` | the coarse one, older than these: something about this unit's auras changed, an aura put on (`removed` false) or taken off; use it when you only need to know that, the three above when you need what |
 | | `OnUnitMountChanged` | `unit`, `unit_guid`, `previous_display_id`, `display_id` | a unit got on a mount (`display_id` not 0), off one (`0`) or changed mounts |
+| | `OnUnitAnimationEnded` | `unit`, `anim_id`, `reason`, `looped` | an animation a mod played with `wxl.animation` ended (`reason`: `"finished"`, `"interrupted"`, `"stopped"`, `"replaced"`, `"gone"`) (abi `0.1.37`) |
 | `LootScript` | `OnLootOpened` | `source`, `source_guid`, `kind`, `money`, `count` | the loot window opened on a corpse, a chest, a fish... (`kind`: `"corpse"`, `"fishing"`, `"skinning"`...) |
 | | `OnLootSlot` | `index`, `slot`, `item_id`, `quantity`, `display_id`, `random_suffix`, `random_property_id`, `slot_type` | one item of that window (`slot_type`: `"take"`, `"roll"`, `"master"`, `"locked"`, `"owner"`) |
 | | `OnLootSlotCleared` | the same | an item left the window: someone took it |

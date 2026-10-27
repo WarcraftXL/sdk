@@ -329,6 +329,7 @@ When two handlers disagree, decline wins.
 | `ObjectScript` | `OnUnitAuraApplied`, `OnUnitAuraRemoved`, `OnUnitAuraRefreshed` | an aura in a unit's aura slot: the slot, the spell, the caster (`wxl::Object` and guid), stacks and the count before, level, flags, `harmful`, the duration and what is left, in milliseconds |
 | | `OnUnitAuraChanged` | the coarse one, older than these: something about this unit's auras changed (an aura on, or off with `removed`); the three above say what |
 | | `OnUnitMountChanged` | a unit's mount display id before and after: on a mount, off it, another one |
+| | `OnUnitAnimationEnded` | an animation a mod played on a unit with `wxl.animation` ended, and why (`wxl_animation_end`) (abi `0.1.37`) |
 | `LootScript` | `OnLootOpened`, `OnLootSlot`, `OnLootSlotCleared`, `OnLootClosed` | the loot window: its source, its `wxl_loot_kind`, its money and item count, then one `OnLootSlot` per item; an item taken; the window closed |
 | | `OnLootMoney` | the player's share of looted money |
 | | `OnLootRollStart`, `OnLootRoll`, `OnLootRollWon`, `OnLootAllPassed` | a roll on a group's loot: started (with the `roll_id` the interface's `RollOnLoot` takes), someone's choice as `wxl_roll_type`, the winner, nobody |
@@ -1885,7 +1886,12 @@ chunks' edges, its vertex buffers filled again, its bounds and culling, under Di
 Vulkan renderer alike, its grass grown again on the new ground), the player's walking and falling,
 the camera's collision, and the client's own ray tests (`wxl::WorldService::Trace`, clicks). A
 player standing still on ground that went down falls; one moving meets the new ground at the next
-step. The edit is all or nothing: an entry off the grid, or a height that is not a number within
+step. Ground raised over the player's feet, under any part of them, puts them on top, standing or
+walking: a rise up to a step's at once (as the client's own step up), a higher one at 8 yards a
+second. One standing still lands through the client's own fall, so the server gets the messages of a
+landing (`MSG_MOVE_HEARTBEAT` falling, then `MSG_MOVE_FALL_LAND`, and `PlayerMoveStop`), never a
+teleport; one walking is carried by its next movement message. Nobody is lifted through a roof, the
+floor of a building or a rock above them. The edit is all or nothing: an entry off the grid, or a height that is not a number within
 `WXL_TERRAIN_HEIGHT_LIMIT`, refuses it whole with `WXL_E_INVALID` and a log line under `terrain`.
 Liquids keep their surface and map doodads (trees, rocks) stay where the map put them.
 
@@ -1974,6 +1980,71 @@ mod, `WXL_DRAW_MAX_POINTS` points, `WXL_DRAW_MAX_EXTENT` yards from the centre,
 answers `WXL_E_INVALID` and the log says why under the tag `draw`, once per mod and call. All mods
 together draw `WXL_DRAW_MAX_FRAME_VERTICES` a frame; past it, shapes are left out (counted in
 `Stats().left_out`, logged once a second). `Stats()` also answers the CPU's cost of the last frame.
+
+### Animations on units: `wxl.animation`
+
+`wxl::AnimationService` (abi `0.1.37`) plays an animation of the game on a unit (the player, a
+creature, another player in view), once or looped, the way the game plays an emote: through the
+client's own `CGUnit_C::PlayBaseAnimation`. Nothing is sent to the server; it is seen on this client.
+
+```cpp
+#include "wxl/services/animation.hpp"
+
+const wxl::Player me = wxl::Player::Local();
+// One swing, as the client swings when it mines, a little faster.
+wxl::AnimationService::Play(me, 62, 0, 1.3);
+// Swinging until told otherwise, over the legs' run too.
+wxl::AnimationService::Play(me, 62, WXL_ANIMATION_LOOP | WXL_ANIMATION_OVERRIDE, 1.0);
+...
+wxl::AnimationService::Stop(me);
+```
+
+**How it plays.** The client chooses the bones: the whole body standing still, the upper body
+alone over the legs' run while the unit moves; the model's nearest animation when it has not the one
+asked for (AnimationData's fallback), unless `WXL_ANIMATION_EXACT`; the weapons sheathed or drawn as
+AnimationData says; a blend from the pose it leaves, unless `WXL_ANIMATION_NO_BLEND`. `speed` is 1
+for the animation's own (0 counts as 1), from 0.05 to 20.
+
+**Who wins.** The game first: moving, fighting, casting, an emote, sitting or dying replace your
+animation as they replace an emote. A one-shot so replaced has ended; a `WXL_ANIMATION_LOOP` comes
+back by itself as soon as the unit is idle again. `WXL_ANIMATION_OVERRIDE` plays a loop again every
+time the game replaced it, at once, death excepted; a one-shot ignores it and ends when replaced. A one-shot lasts one play
+of its length, then the unit is handed back to the game.
+
+**Ends.** `ObjectScript::OnUnitAnimationEnded(unit, anim_id, reason, looped)` says when each play
+ended and why (`wxl_animation_end`): `finished` (a one-shot played its length), `interrupted` (the
+game replaced a one-shot), `stopped` (`Stop`, or its mod went), `replaced` (another play on the
+unit), `gone` (the unit left view). Raised on the main thread at the unit's next frame, for every
+mod's plays. `Playing(unit)` answers the id a mod plays on a unit, `Current(unit)` what its model
+shows now, whoever chose it. A unit plays one mod animation at a time; your mod's end when it is
+disabled or unloads.
+
+**Refusals.** `WXL_E_INVALID` for an object that is no unit, an id past `WXL_ANIMATION_MAX_ID`, a flag
+outside `WXL_ANIMATION_FLAGS` or a speed out of range (logged once under `animation`);
+`WXL_E_FAILED` when the client did not play it (its model still loading, the unit dead); off the main
+thread `WXL_E_INVALID`.
+
+**Which animation.** Ids are `AnimationData.dbc`'s. For a tool swung at the ground or a wall:
+
+| Id | Name | What it is |
+|---|---|---|
+| 0 | Stand | the idle stance the game falls back to |
+| 16 | AttackUnarmed | a punch |
+| 17 | Attack1H | a swing of a one-handed weapon: a pickaxe held in one hand |
+| 18 | Attack2H | an overhead swing of a two-handed weapon |
+| 19 | Attack2HL | a large two-handed swing (polearms, staves) |
+| 32 | SpellCast | a short release of a spell, both hands |
+| 53 | SpellCastDirected | a cast thrown forward with one hand, at a point |
+| 54 | SpellCastOmni | a cast released all around |
+| 62 | EmoteWork | the work swing: what the client plays while you mine, weapons sheathed |
+| 136 | EmoteWorkNoSheathe | the same swing with the weapon kept in hand (models without it fall back to 62) |
+| 69 | EmoteDance | a dance |
+| 123 | UseStandingLoop | hands busy at waist height: herbs, skins, opening a chest |
+
+The client's own mining is a spell (Mining, 2575) whose cast shows SpellVisualKit 166: animation 62
+(EmoteWork) on the caster, played again at each end while the cast lasts, and a pickaxe model
+(`Spells\MiningPick_SpellObject.mdx`) in the right hand. A mod's pickaxe swing is 62 for that look,
+136 to keep an equipped tool in hand, 17 or 18 for a weapon-like strike.
 
 ### Drawing into the frame: `wxl.render`
 
