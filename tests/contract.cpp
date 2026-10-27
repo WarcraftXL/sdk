@@ -1697,6 +1697,20 @@ int main()
               "SetLayerProvider takes a function");
         Check(FakeView::LayerAsked(2) == 4.0f && FakeView::LayerAsked(1) == 1.0f && seen == 2, "it answers each layer's look, the client's own left as it is");
         Check(TerrainService::SetLayerProvider(nullptr) == WXL_OK && FakeView::LayerAsked(2) == 1.0f, "null takes it off");
+        // abi 0.1.43: the look's extra texture and numbers, and the provider's flags.
+        Check(TerrainService::SetLayerProvider([](void*, const wxl_terrain_layer* layer, wxl_terrain_layer_look* look) {
+                  if (look->struct_size < sizeof *look || layer->texture != 5) return;
+                  look->extra_texture = "tileset\\rock_h.blp";
+                  look->params[0]     = 6.0f;
+                  look->params[1]     = 1.0f;
+                  look->params[2]     = 1.0f;
+              }, nullptr, WXL_TERRAIN_LAYER_PARAMS_EVERY_DRAW) == WXL_OK &&
+                  FakeView::TerrainProvider().flags == WXL_TERRAIN_LAYER_PARAMS_EVERY_DRAW,
+              "SetLayerProvider passes its flags");
+        Check(FakeView::LayerAsked(5) == 1.0f && FakeView::LastLook().params[0] == 6.0f && FakeView::LastLook().extra_texture &&
+                  FakeView::LayerAsked(4) == 1.0f && !FakeView::LastLook().extra_texture && FakeView::LastLook().params[2] == 0.0f,
+              "a look carries the layer's extra texture and numbers, none unless answered");
+        Check(TerrainService::SetLayerProvider(nullptr) == WXL_OK, "and null takes that one off too");
         const auto& calls = FakeView::TerrainCalls();
         Check(calls.size() == 3 && calls[0].layer == 0 && calls[0].heights.size() == 2 && calls[0].heights[1].index == 9 &&
                   calls[1].what == "reset" && calls[1].layer == 3 && calls[1].chunk_y == 512 && calls[2].what == "reset_all",

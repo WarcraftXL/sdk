@@ -999,9 +999,18 @@ namespace wxltest
             wxl_terrain_layer layer{};
             layer.struct_size = sizeof layer;
             layer.texture     = texture;
-            wxl_terrain_layer_look look{sizeof(wxl_terrain_layer_look), 1.0f};
+            wxl_terrain_layer_look look{};
+            look.struct_size   = sizeof look;
+            look.texture_scale = 1.0f;
             if (p.fn) p.fn(p.user, &layer, &look);
+            LastLook() = look;
             return look.texture_scale;
+        }
+        // The whole look the last LayerAsked got back (abi 0.1.43: extra texture, numbers).
+        static wxl_terrain_layer_look& LastLook()
+        {
+            static wxl_terrain_layer_look look{};
+            return look;
         }
         static const wxl_terrain_api* TerrainTable()
         {
