@@ -81,6 +81,25 @@
 // where retail reads them so under 0x4 or 0x80: a map loaded with 0x80 and without 0x4 is given 0x4
 // as it loads, so its alpha maps are read as retail reads them.
 //
+// Since abi 0.1.45 a mod may also supply a tile's other files (set_tile_provider). Cataclysm and
+// later write a tile as several files: the root (<map>_<x>_<y>.adt: MVER, MHDR, 256 MCNKs of
+// heights, normals, vertex colours, sounds; MH2O and MFBO) and, beside it, _tex0 (MTEX, MTXF or
+// MTXP, MAMP, and per chunk MCLY, MCAL, MCSH), _obj0 (MMDX, MMID, MWMO, MWID, MDDF, MODF, and per
+// chunk the doodad and map object references MCRD and MCRW) and _obj1 (the same placements for
+// the far view). The client of 3.3.5a reads one file with an index of its chunks (MCIN). When it
+// has read a root without MCIN, the runtime asks the tile providers for the set, keeps the
+// files a provider answered until the client frees the tile, and loads the tile natively: the
+// client's own structures point into these files as they would into one file (no file is made
+// again): its chunks by an index of the root's MCNKs, its textures by _tex0's MTEX, its
+// placements by _obj0's, each chunk's layers, alpha maps and shadow by _tex0's MCNK of the same
+// place, its references by _obj0's. The client holds 4 layers a chunk and 16 holes (a 4 x 4
+// grid): a chunk's first 4 layers are kept (layers 5 to 8 through a provider's chunk_fn), and
+// retail's 64 holes (8 x 8) are folded into the 16, a hole wherever one of the 4 it covers is.
+// A layer naming a texture the tile does not have, a reference to a placement that does not exist
+// or names its model by FileDataID, are left out. A root without MCIN no provider answers loads
+// with its ground, liquids and sounds, untextured and without placements. Tiles with MCIN load as
+// the client loads them.
+//
 // --- Editing ----------------------------------------------------------------------------------
 //
 //   set_heights  sets vertices to absolute heights, many at once
@@ -323,6 +342,49 @@ typedef struct wxl_terrain_layer_provider
     wxl_terrain_chunk_fn chunk_fn; ///< a chunk's layers past the client's four; null for none
 } wxl_terrain_layer_provider;
 
+/// A tile's file a tile provider supplies (abi 0.1.45): an index into wxl_terrain_tile_files.
+#define WXL_TERRAIN_TILE_TEX0 0u  ///< <tile>_tex0.adt: textures, layers, alpha maps, shadows
+#define WXL_TERRAIN_TILE_OBJ0 1u  ///< <tile>_obj0.adt: models, map objects, each chunk's references
+#define WXL_TERRAIN_TILE_OBJ1 2u  ///< <tile>_obj1.adt: the far view's placements (kept for providers; this client draws obj0's)
+/// Files a tile provider answers.
+#define WXL_TERRAIN_TILE_FILES 3u
+
+/// A root ADT without MCIN the client has read, what a tile provider is told (abi 0.1.45). Valid
+/// during the call only.
+typedef struct wxl_terrain_tile
+{
+    uint32_t    struct_size;
+    int32_t     tile_x;        ///< its column on the map (0 to 63)
+    int32_t     tile_y;        ///< and its row
+    wxl_str     path;          ///< the root's name as the client opened it ("World\\Maps\\X\\X_32_48.adt")
+    const void* file;          ///< the root's bytes (MVER, MHDR, MCNK...)
+    uint32_t    file_size;
+    const void* map_file;      ///< the map's WDT, as wxl_terrain_layer's
+    uint32_t    map_file_size;
+    uint32_t    reserved;      ///< 0
+} wxl_terrain_tile;
+
+/// A tile provider's answer: the files of the tile's set it has, by WXL_TERRAIN_TILE_*; null (or a
+/// size of 0) for one it has not. The runtime copies them before the call returns.
+typedef struct wxl_terrain_tile_files
+{
+    uint32_t    struct_size;
+    const void* data[WXL_TERRAIN_TILE_FILES];
+    uint32_t    size[WXL_TERRAIN_TILE_FILES];
+} wxl_terrain_tile_files;
+
+/// Called on the main thread when the client has read a root ADT without MCIN, while a tile
+/// provider is set; it fills @p out. The first provider that answers a file gives it.
+typedef void(WXL_CALL* wxl_terrain_tile_fn)(void* user, const wxl_terrain_tile* tile, wxl_terrain_tile_files* out);
+
+/// What set_tile_provider takes.
+typedef struct wxl_terrain_tile_provider
+{
+    uint32_t            struct_size;
+    wxl_terrain_tile_fn fn;
+    void*               user;
+} wxl_terrain_tile_provider;
+
 typedef struct wxl_terrain_api
 {
     uint32_t struct_size;
@@ -417,6 +479,16 @@ typedef struct wxl_terrain_api
      *        the one before left. WXL_E_INVALID off the main thread or for a provider without fn.
      */
     wxl_result(WXL_CALL* set_layer_provider)(const wxl_terrain_layer_provider* provider);
+
+    /**
+     * @brief The calling mod's tile provider (abi 0.1.45): asked for a tile's split files (_tex0,
+     *        _obj0, _obj1) when the client has read a root ADT without MCIN, so the tile loads
+     *        natively. One per mod; a new one replaces it; null takes it off, and it goes when
+     *        the mod is disabled or unloads. Several mods' providers are asked in the order they
+     *        were set, each file taken from the first that answers it. WXL_E_INVALID off the main
+     *        thread or for a provider without fn.
+     */
+    wxl_result(WXL_CALL* set_tile_provider)(const wxl_terrain_tile_provider* provider);
 } wxl_terrain_api;
 
 #ifdef __cplusplus

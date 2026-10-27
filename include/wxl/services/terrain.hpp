@@ -86,6 +86,20 @@ namespace wxl
             return api->set_layer_provider(&provider);
         }
 
+        /// The calling mod's tile provider (abi 0.1.45): @p fn is asked for a tile's split files
+        /// when the client has read a root ADT without MCIN; null takes it off.
+        static wxl_result SetTileProvider(wxl_terrain_tile_fn fn, void* user = nullptr)
+        {
+            const wxl_terrain_api* api = Raw();
+            if (!detail::Carries(api, &wxl_terrain_api::set_tile_provider)) return WXL_E_UNSUPPORTED;
+            if (!fn) return api->set_tile_provider(nullptr);
+            wxl_terrain_tile_provider provider{};
+            provider.struct_size = sizeof provider;
+            provider.fn          = fn;
+            provider.user        = user;
+            return api->set_tile_provider(&provider);
+        }
+
         /// The ground's height under a point; nothing where there is none (a hole, a chunk not
         /// loaded, no terrain), off the main thread or on a runtime without the service.
         static std::optional<float> Height(float x, float y, bool original = false)

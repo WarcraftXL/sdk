@@ -71,6 +71,8 @@
 //       heights; a script passes a list of {chunk_x, chunk_y, index, height}
 //   terrain_layer_provider const wxl_terrain_layer_provider*: what a native mod hands
 //       wxl.terrain's set_layer_provider
+//   terrain_tile_provider const wxl_terrain_tile_provider*: what a native mod hands
+//       wxl.terrain's set_tile_provider
 //   gx_shader_provider const wxl_gx_shader_provider*: what a native mod hands wxl.gx's
 //       set_shader_provider
 //   draw_emitter const wxl_draw_emitter*  draw_particles const wxl_draw_particles*: wxl.draw's
@@ -210,6 +212,7 @@ namespace wxl::api
         struct draw_style {};
         struct draw_emitter {};
         struct terrain_layer_provider {};
+        struct terrain_tile_provider {};
         struct gx_shader_provider {};
         struct draw_particles {};
         struct draw_stats {};
@@ -332,6 +335,7 @@ namespace wxl::api
     template <> struct Param<kind::draw_style> { using C = List<const wxl_draw_style*>; };
     template <> struct Param<kind::draw_emitter> { using C = List<const wxl_draw_emitter*>; };
     template <> struct Param<kind::terrain_layer_provider> { using C = List<const wxl_terrain_layer_provider*>; };
+    template <> struct Param<kind::terrain_tile_provider> { using C = List<const wxl_terrain_tile_provider*>; };
     template <> struct Param<kind::gx_shader_provider> { using C = List<const wxl_gx_shader_provider*>; };
     template <> struct Param<kind::draw_particles> { using C = List<const wxl_draw_particles*>; };
     template <class R>

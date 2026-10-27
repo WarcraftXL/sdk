@@ -33,6 +33,8 @@ WXL_API(terrain, vertices_in, VerticesIn, list<wxl_terrain_vertex>, (f64 x, f64 
         "Every vertex within radius yards of a point, each once whichever chunks it is on: a list of {chunk_x, chunk_y, index, x, y, z, original_z, inner, loaded}, ready for SetHeights.")
 WXL_API_SINCE(terrain, set_layer_provider, (0, 1, 42))
 WXL_API(terrain, set_layer_provider, SetLayerProvider, result, (terrain_layer_provider provider), native, by_hand, "")
+WXL_API_SINCE(terrain, set_tile_provider, (0, 1, 45))
+WXL_API(terrain, set_tile_provider, SetTileProvider, result, (terrain_tile_provider provider), native, by_hand, "")
 
 // MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
 // guarded by X, and skips it when it is included again with X defined: this table is read
