@@ -2595,6 +2595,12 @@ print("vertexless " .. tostring(select(2, pcall(function() return wxl.render.Cre
 print("outside " .. tostring(select(2, wxl.render.Fullscreen(tint, { 1, 0, 0, 1 }))))
 print("replace " .. tostring(wxl.render.ReplaceShader("Diffuse_T1", 1, "shaders/tint.spv")) .. " " ..
       tostring(select(2, wxl.render.RestoreShader("Ocean", 0))))
+local fill = wxl.render.CreatePipeline({ kind = "compute", name = "fill", compute = "shaders/tint.spv" })
+print("compute " .. tostring(fill ~= nil) .. " " ..
+      tostring(select(2, pcall(function() return wxl.render.CreatePipeline({ kind = "compute", fragment = SPIRV }) end))))
+local bones = {}
+for i = 1, 12 * 300 do bones[i] = i end
+print("palette " .. tostring(wxl.render.BonePalette(bones)) .. " " .. tostring(select(2, pcall(function() return wxl.render.BonePalette({ 1, 2, 3 }) end))))
 Observe("RenderScript", "OnRenderPoint", function(point, frame, width, height, samples)
     print("point " .. point .. " " .. frame .. " " .. width .. "x" .. height .. " " .. samples)
     if point ~= "after_world" then return end
@@ -2603,6 +2609,7 @@ Observe("RenderScript", "OnRenderPoint", function(point, frame, width, height, s
     print("raw " .. tostring(wxl.render.Fullscreen(tint, "abcd")))
     wxl.render.End()
     print("slots " .. wxl.render.SceneColorSlot() .. " " .. wxl.render.SceneDepthSlot())
+    print("dispatch " .. tostring(wxl.render.Dispatch(fill, 4, 2, 1, { 1, 2 })) .. " " .. tostring(select(2, wxl.render.Dispatch(tint, 1, 1, 1))))
 end)
 Observe("RenderScript", "OnModelBatchDrawn", function(model, root, ...)
     local batch = select(14, ...)
@@ -2636,6 +2643,11 @@ end)
                       sink.Has("[wxl.draw-a] vertexless") && sink.Has("a graphics pipeline takes a vertex program"),
                   "a kind of no name, a path out of the folder and a graphics pipeline without its vertex program are errors");
             Check(sink.Has("[wxl.draw-a] outside invalid"), "a draw outside a pass is refused");
+            Check(sink.Has("[wxl.draw-a] compute true") && sink.Has("'compute' is missing; a compute pipeline takes SPIR-V"),
+                  "a compute pipeline from a file of the mod's folder; one without its program is an error");
+            Check(sink.Has(("[wxl.draw-a] palette " + std::to_string(0x20000000ull + 300 * 48)).c_str()) &&
+                      sink.Has("'matrices' (argument 1) must hold whole matrices"),
+                  "a palette of 300 matrices from a table answers its address; a table of no whole matrix is an error");
             Check(sink.Has("[wxl.draw-a] replace true not_found") && FakeRender::Replaced().count("Diffuse_T1/1"),
                   "a shader replaced from a file; restoring one the mod did not replace is not found");
 
@@ -2644,20 +2656,25 @@ end)
             Check(sink.Has("[wxl.draw-a] point after_world 12 1920x1080 4") && sink.Has("[wxl.draw-a] begin true") &&
                       sink.Has("[wxl.draw-a] full true") && sink.Has("[wxl.draw-a] raw true") && sink.Has("[wxl.draw-a] slots 1 2"),
                   "RenderPoint reaches Lua by name; a pass of an image cleared and the frame's attachments, full-screen draws");
+            Check(sink.Has("[wxl.draw-a] dispatch true invalid"), "a compute pipeline is dispatched between passes; another kind is refused");
             const wxl_render_pass& pass = FakeRender::LastPass();
-            float                  first[4] = {};
-            if (!FakeRender::Bytes().empty() && FakeRender::Bytes()[0].size() == 16) std::memcpy(first, FakeRender::Bytes()[0].data(), 16);
+            // The trace's bytes: the palette (at load), the two full-screen pushes, the dispatch's push.
+            float first[4] = {}, matrix[12] = {};
+            if (FakeRender::Bytes().size() > 1 && FakeRender::Bytes()[1].size() == 16) std::memcpy(first, FakeRender::Bytes()[1].data(), 16);
+            if (!FakeRender::Bytes().empty() && FakeRender::Bytes()[0].size() == 300 * 48)
+                std::memcpy(matrix, FakeRender::Bytes()[0].data() + 299 * 48, 48);
             Check(pass.color_count == 2 && pass.clear == 1u && pass.colors[1] == WXL_RENDER_SCENE_COLOR &&
                       pass.depth == WXL_RENDER_SCENE_DEPTH && first[1] == 0.5f && first[2] == 0.25f &&
-                      FakeRender::Bytes().size() == 2 && FakeRender::Bytes()[1].size() == 4,
+                      FakeRender::Bytes().size() == 4 && FakeRender::Bytes()[2].size() == 4 && FakeRender::Bytes()[3].size() == 8,
                   "the pass crosses whole; push as numbers become 32-bit floats, a string its bytes");
+            Check(matrix[0] == 3589.0f && matrix[11] == 3600.0f, "a palette's numbers become 32-bit floats, 12 a matrix, in order");
 
             wxl_model_batch_args drawn{};
             int                  token = 0;
             drawn.batch                = &token;
             host.Raise(WXL_EV_ModelBatchDrawn, &drawn);
-            Check(sink.Has("[wxl.draw-a] kept true") && sink.Has("[wxl.draw-a] batch true") && FakeRender::Bytes().size() == 3 &&
-                      FakeRender::Bytes()[2].size() == 32,
+            Check(sink.Has("[wxl.draw-a] kept true") && sink.Has("[wxl.draw-a] batch true") && FakeRender::Bytes().size() == 5 &&
+                      FakeRender::Bytes()[4].size() == 32,
                   "a batch kept from ModelBatchDrawn is drawn again with the mod's constants");
             host.Shutdown();
         }

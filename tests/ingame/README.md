@@ -178,6 +178,14 @@ viewer is connected); each of the four points (`after_opaque_world`, `after_liqu
 `after_world`, `after_ui`) must come during those two seconds, a model batch must be kept from
 `ModelBatchDrawn`, and the frame's colour is copied into no texture outside a point.
 
+Phase 25 checks compute and bone palettes (abi 0.1.34). On a device `wxl.render` does not drive,
+`BonePalette` must answer `unsupported` and no compute pipeline is made. On the recompiled client
+with `[gx] api = vulkan`: a compute pipeline of the selftest's SPIR-V fills a buffer each frame for
+two seconds, and a full-screen pass reads one row of it (watch it: the world orange), a dispatch
+inside a pass is refused; then a palette of 300 matrices is written each frame for two seconds and
+the pass reads the last row of the last matrix (the world green); a dispatch outside a point is
+refused.
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the

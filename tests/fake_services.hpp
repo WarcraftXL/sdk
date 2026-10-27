@@ -3069,8 +3069,18 @@ namespace wxltest
         static uint32_t WXL_CALL Sampler(uint32_t flags) { return flags & 7u; }
         static wxl_handle WXL_CALL CreatePipeline(const wxl_render_pipeline_desc* desc)
         {
-            if (!desc || desc->struct_size < sizeof(wxl_render_pipeline_desc) || !desc->fragment || desc->fragment_size < 4)
-                return WXL_HANDLE_NONE;
+            if (!desc || desc->struct_size < sizeof(wxl_render_pipeline_desc)) return WXL_HANDLE_NONE;
+            if (desc->kind == WXL_RENDER_PIPELINE_COMPUTE)
+            {
+                // A compute program alone.
+                if (!desc->compute || desc->compute_size < 4 || desc->fragment || desc->vertex) return WXL_HANDLE_NONE;
+                wxl_render_pipeline_desc copy = *desc;
+                copy.name = nullptr, copy.compute = nullptr;
+                Pipelines()[Next()] = copy;
+                Trace().push_back(std::string("compute ") + (desc->name ? desc->name : "") + " " + std::to_string(desc->compute_size));
+                return Next()++;
+            }
+            if (!desc->fragment || desc->fragment_size < 4) return WXL_HANDLE_NONE;
             uint32_t magic = 0;
             std::memcpy(&magic, desc->fragment, 4);
             if (magic != 0x07230203u) return WXL_HANDLE_NONE;
@@ -3137,6 +3147,25 @@ namespace wxltest
             if (!batch) return WXL_E_NOT_FOUND;
             return Drawn(pipeline, "draw_batch", constants, size, WXL_RENDER_BATCH_BYTES);
         }
+        static wxl_result WXL_CALL Dispatch(wxl_handle pipeline, uint32_t x, uint32_t y, uint32_t z, const void* push, uint32_t size)
+        {
+            if (!InPoint() || Open()) return WXL_E_INVALID;
+            const auto found = Pipelines().find(pipeline);
+            if (found == Pipelines().end()) return WXL_E_NOT_FOUND;
+            if (found->second.kind != WXL_RENDER_PIPELINE_COMPUTE || size > WXL_RENDER_PUSH_BYTES) return WXL_E_INVALID;
+            Trace().push_back("dispatch " + std::to_string(x) + "x" + std::to_string(y) + "x" + std::to_string(z) + " " + std::to_string(size));
+            Keep(push, size);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL BonePalette(const void* matrices, uint32_t size, uint64_t* address)
+        {
+            if (address) *address = 0;
+            if (!matrices || !address || !size || size % WXL_RENDER_PALETTE_MATRIX_BYTES) return WXL_E_INVALID;
+            *address = 0x20000000ull + size;
+            Trace().push_back("palette " + std::to_string(size / WXL_RENDER_PALETTE_MATRIX_BYTES));
+            Keep(matrices, size);
+            return WXL_OK;
+        }
         static void* WXL_CALL KeepBatch(const void* batch)
         {
             if (!batch) return nullptr;
@@ -3195,6 +3224,8 @@ namespace wxltest
                 t.scene_depth_slot    = &SceneDepthSlot;
                 t.replace_shader      = &ReplaceShader;
                 t.restore_shader      = &RestoreShader;
+                t.dispatch            = &Dispatch;
+                t.bone_palette        = &BonePalette;
                 return t;
             }();
             return &api;
