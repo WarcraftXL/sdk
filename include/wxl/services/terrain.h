@@ -42,6 +42,17 @@
 // 1, is drawn exactly as the client draws it. The answer is taken when the layer is made (when its
 // chunk is loaded): a provider set later sees the chunks loaded after it.
 //
+// Since abi 0.1.43 a look also carries an extra texture and four numbers per layer, for a mod that
+// draws the ground with pixel programs of its own (wxl.gx's set_shader_provider; wxl.modern-adt's
+// height blending). In the client's single-pass pixel programs (the paths that draw every layer of
+// a chunk in one draw, at ps_3_0 and under the Vulkan renderer alike), layer k's extra texture is
+// bound on sampler WXL_TERRAIN_LAYER_SAMPLER + k, read at the layer's own texture coordinates
+// (so at its texture scale too), wrapped as the layer's texture is; its numbers are pixel constant
+// WXL_TERRAIN_LAYER_PARAM_ROW + k. A provider set with WXL_TERRAIN_LAYER_PARAMS_EVERY_DRAW has
+// those rows written at every single-pass draw of every chunk, zeros for a layer without numbers,
+// so its programs never read another chunk's. The client's own programs read neither: a stock
+// chunk is drawn as before.
+//
 // --- Editing ----------------------------------------------------------------------------------
 //
 //   set_heights  sets vertices to absolute heights, many at once
@@ -189,7 +200,19 @@ typedef struct wxl_terrain_layer_look
 {
     uint32_t struct_size;
     float    texture_scale; ///< how many times larger the texture is drawn than the client's own tiling: 1 as the client, 4 a picture over four times the yards; 1/64 to 1024
+    // --- abi 0.1.43 (read when struct_size reaches past them)
+    const char* extra_texture; ///< a texture file (a BLP path in the client's archives) bound with the layer on sampler WXL_TERRAIN_LAYER_SAMPLER + layer of the single-pass pixel programs; null for none. Copied: valid during the call only
+    float       params[4];     ///< the layer's four numbers, pixel constant WXL_TERRAIN_LAYER_PARAM_ROW + layer of those programs; zeros for none
 } wxl_terrain_layer_look;
+
+/// The sampler of layer 0's extra texture in the single-pass pixel programs; layer k's is this + k.
+#define WXL_TERRAIN_LAYER_SAMPLER 12u
+/// The pixel constant of layer 0's numbers in those programs; layer k's is this + k.
+#define WXL_TERRAIN_LAYER_PARAM_ROW 32u
+
+/// wxl_terrain_layer_provider.flags (abi 0.1.43): the layers' numbers are written at every
+/// single-pass draw of every chunk, zeros for a layer that has none.
+#define WXL_TERRAIN_LAYER_PARAMS_EVERY_DRAW 0x1u
 
 /// Called on the main thread for each layer the client makes, while a provider is set.
 typedef void(WXL_CALL* wxl_terrain_layer_fn)(void* user, const wxl_terrain_layer* layer, wxl_terrain_layer_look* look);
@@ -200,6 +223,8 @@ typedef struct wxl_terrain_layer_provider
     uint32_t             struct_size;
     wxl_terrain_layer_fn fn;
     void*                user;
+    // --- abi 0.1.43 (read when struct_size reaches past it)
+    uint32_t             flags; ///< WXL_TERRAIN_LAYER_PARAMS_EVERY_DRAW, or 0
 } wxl_terrain_layer_provider;
 
 typedef struct wxl_terrain_api

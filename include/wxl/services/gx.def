@@ -18,6 +18,8 @@ WXL_API(gx, invalidate_state, InvalidateState, none, (), native, generated, "")
 WXL_API_SINCE(gx, api, (0, 1, 33))
 WXL_API(gx, api, Api, enumeration<wxl_gx_backend>, (), generated, generated,
         "The API the client's device runs on: none, d3d9, d3d9ex, opengl or vulkan.")
+WXL_API_SINCE(gx, set_shader_provider, (0, 1, 43))
+WXL_API(gx, set_shader_provider, SetShaderProvider, result, (gx_shader_provider provider), native, by_hand, "")
 
 // MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
 // guarded by X, and skips it when it is included again with X defined: this table is read
