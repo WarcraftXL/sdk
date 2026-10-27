@@ -37,6 +37,7 @@
 #include "wxl/services/texture.h"
 #include "wxl/services/cvar.h"
 #include "wxl/services/terrain.h"
+#include "wxl/services/draw.h"
 #include "wxl/terrain/grid.hpp"
 #include "wxl/services/imgui.h"
 #include "wxl/services/data.h"
@@ -994,6 +995,142 @@ namespace wxltest
                 t.reset_all   = &TerrainResetAll;
                 t.stats       = &TerrainStats;
                 t.vertices_in = &TerrainVerticesIn;
+                return t;
+            }();
+            return &api;
+        }
+
+        // wxl.draw: every call kept whole (the shape's kind, centre and points, the look, the
+        // duration), handles counted from 1; a radius above 100 refused, as the runtime refuses.
+        struct DrawCall
+        {
+            std::string           what;
+            wxl_handle            handle = WXL_HANDLE_NONE;
+            uint32_t              kind = 0, flags = 0;
+            wxl_vec3              center{};
+            float                 radius = 0.0f, facing = 0.0f, duration = 0.0f;
+            std::vector<wxl_vec3> points;
+            bool                  styled = false;
+            wxl_draw_style        style{};
+            wxl_handle            target = WXL_HANDLE_NONE;
+            uint32_t              attach = 0;
+        };
+        static std::vector<DrawCall>& DrawCalls()
+        {
+            static std::vector<DrawCall> calls;
+            return calls;
+        }
+        static wxl_handle& DrawNext()
+        {
+            static wxl_handle next = 0;
+            return next;
+        }
+        static void DrawShapeInto(DrawCall& call, const wxl_draw_shape* s)
+        {
+            call.kind   = s->kind;
+            call.flags  = s->flags;
+            call.center = s->center;
+            call.radius = s->radius;
+            call.facing = s->facing;
+            call.points.assign(s->points, s->points + s->point_count);
+        }
+        static wxl_bool WXL_CALL DrawSupported() { return WXL_TRUE; }
+        static wxl_str WXL_CALL DrawUnsupportedReason() { return wxl_str{"", 0}; }
+        static wxl_result WXL_CALL DrawDraw(const wxl_draw_shape* shape, const wxl_draw_style* style)
+        {
+            if (!shape || shape->struct_size < sizeof *shape || shape->radius > 100.0f) return WXL_E_INVALID;
+            DrawCall call{"draw"};
+            DrawShapeInto(call, shape);
+            call.styled = style != nullptr;
+            if (style) call.style = *style;
+            DrawCalls().push_back(call);
+            return WXL_OK;
+        }
+        static wxl_handle WXL_CALL DrawAdd(const wxl_draw_shape* shape, const wxl_draw_style* style, float duration)
+        {
+            if (!shape || shape->struct_size < sizeof *shape || shape->radius > 100.0f) return WXL_HANDLE_NONE;
+            DrawCall call{"add", ++DrawNext()};
+            DrawShapeInto(call, shape);
+            call.styled   = style != nullptr;
+            call.duration = duration;
+            if (style) call.style = *style;
+            DrawCalls().push_back(call);
+            return call.handle;
+        }
+        static wxl_result WXL_CALL DrawUpdate(wxl_handle h, const wxl_draw_shape* shape)
+        {
+            if (!h || !shape) return WXL_E_NOT_FOUND;
+            DrawCall call{"update", h};
+            DrawShapeInto(call, shape);
+            DrawCalls().push_back(call);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL DrawMove(wxl_handle h, wxl_vec3 center, float facing)
+        {
+            if (!h) return WXL_E_NOT_FOUND;
+            DrawCall call{"move", h};
+            call.center = center;
+            call.facing = facing;
+            DrawCalls().push_back(call);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL DrawSetStyle(wxl_handle h, const wxl_draw_style* style)
+        {
+            if (!h) return WXL_E_NOT_FOUND;
+            DrawCall call{"set_style", h};
+            call.styled = style != nullptr;
+            if (style) call.style = *style;
+            DrawCalls().push_back(call);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL DrawSetDuration(wxl_handle h, float seconds)
+        {
+            DrawCall call{"set_duration", h};
+            call.duration = seconds;
+            DrawCalls().push_back(call);
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL DrawAttach(wxl_handle h, wxl_handle target, uint32_t flags)
+        {
+            DrawCall call{"attach", h};
+            call.target = target;
+            call.attach = flags;
+            DrawCalls().push_back(call);
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL DrawDetach(wxl_handle h)
+        {
+            DrawCalls().push_back(DrawCall{"detach", h});
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static void WXL_CALL DrawRemove(wxl_handle h) { DrawCalls().push_back(DrawCall{"remove", h}); }
+        static void WXL_CALL DrawClear() { DrawCalls().push_back(DrawCall{"clear"}); }
+        static wxl_result WXL_CALL DrawStats(wxl_draw_stats* out)
+        {
+            if (!out) return WXL_E_INVALID;
+            out->shapes   = 3;
+            out->vertices = 1234;
+            out->frames   = 7;
+            return WXL_OK;
+        }
+        static const wxl_draw_api* DrawTable()
+        {
+            static const wxl_draw_api api = [] {
+                wxl_draw_api t{};
+                t.struct_size        = sizeof t;
+                t.supported          = &DrawSupported;
+                t.unsupported_reason = &DrawUnsupportedReason;
+                t.draw               = &DrawDraw;
+                t.add                = &DrawAdd;
+                t.update             = &DrawUpdate;
+                t.move               = &DrawMove;
+                t.set_style          = &DrawSetStyle;
+                t.set_duration       = &DrawSetDuration;
+                t.attach             = &DrawAttach;
+                t.detach             = &DrawDetach;
+                t.remove             = &DrawRemove;
+                t.clear              = &DrawClear;
+                t.stats              = &DrawStats;
                 return t;
             }();
             return &api;

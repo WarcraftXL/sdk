@@ -2814,6 +2814,67 @@ print("b " .. tostring(wxl.terrain.SetHeights({ { chunk_x = 1, chunk_y = 2, inde
         if (g_failures) sink.Dump();
     }
 
+    Section("shapes in the world in Lua");
+    {
+        using wxltest::FakeView;
+        const fs::path mods = MakeTree(scratch, "draw", binary, fs::path());
+        WriteFile(mods / "shapes" / "mod.json", LuaManifest("wxl.shapes"));
+        WriteFile(mods / "shapes" / "init.lua", R"(
+print("supported " .. tostring(wxl.draw.Supported()))
+print("grid " .. tostring(wxl.draw.Draw({ kind = "grid", center = { x = 1, y = 2, z = 3 }, length = 12, width = 8, spacing = 1 },
+                                        { color = 0x40C0FF, alpha = 0.7, width = 1.5 })))
+print("line " .. tostring(wxl.draw.Draw({ kind = "line", points = { { 0, 0, 0 }, { x = 5, y = 0, z = 0 }, { 5, 5, 0 } }, on_ground = true })))
+print("refused " .. tostring(select(2, wxl.draw.Draw({ kind = "circle", radius = 500 }))))
+print("kind " .. tostring(select(2, pcall(wxl.draw.Draw, { kind = "blob" }))))
+print("color " .. tostring(select(2, pcall(wxl.draw.Draw, { kind = "circle", radius = 1 }, { color = "red" }))))
+local cone = wxl.draw.Add({ kind = "sector", center = { x = 4, y = 5, z = 6 }, radius = 15, facing = 1, angle = 1.2 },
+                          { color = 0xFF4020, fill_alpha = 0.3, fade_out = 0.4, depth = "on_top" }, 3)
+print("cone " .. tostring(cone))
+print("move " .. tostring(cone:Move({ x = 7, y = 8, z = 9 }, 0.5)) .. " " .. tostring(cone:SetDuration(2)) .. " " ..
+      tostring(wxl.draw.SetStyle(cone, { color = 0x00FF00 })) .. " " ..
+      tostring(wxl.draw.Update(cone, { kind = "ring", radius = 4, inner = 3 })))
+local kept = wxl.draw.Add({ kind = "box", center = { x = 0, y = 0, z = 0 }, size = { x = 1, y = 1, z = 1 } })
+cone:Remove()
+print("stats " .. wxl.draw.Stats().vertices)
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_DRAW_SERVICE, WXL_DRAW_SERVICE_VERSION, FakeView::DrawTable()});
+        FakeView::DrawCalls().clear();
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            Check(sink.Has("[wxl.shapes] supported true"), "Supported answers");
+            Check(sink.Has("[wxl.shapes] grid true") && sink.Has("[wxl.shapes] line true"), "Draw takes tables and answers true");
+            Check(sink.Has("[wxl.shapes] refused invalid"), "a shape the service refuses answers nil and why");
+            Check(sink.Has("the shape's 'kind' must be one of \"line\""), "an unknown kind is an error listing the kinds");
+            Check(sink.Has("the style's 'color' must be a number 0xRRGGBB"), "a colour that is no number is an error saying so");
+            Check(sink.Has("[wxl.shapes] cone ") && sink.Has("[wxl.shapes] move true true true true"),
+                  "Add answers a Shape whose methods and functions reach it");
+            Check(sink.Has("[wxl.shapes] stats 1234"), "Stats answers a table");
+            const auto& calls = FakeView::DrawCalls();
+            bool grid = false, line = false, cone = false;
+            for (const auto& c : calls)
+            {
+                grid = grid || (c.what == "draw" && c.kind == WXL_DRAW_GRID && c.center.y == 2.0f && c.style.color == 0x40C0FF &&
+                                std::fabs(c.style.alpha - 0.7f) < 1e-6f);
+                line = line || (c.what == "draw" && c.kind == WXL_DRAW_LINE && c.points.size() == 3 && c.points[1].x == 5.0f &&
+                                (c.flags & WXL_DRAW_ON_GROUND) && !c.styled);
+                cone = cone || (c.what == "add" && c.kind == WXL_DRAW_SECTOR && c.duration == 3.0f && c.style.depth == WXL_DRAW_DEPTH_ON_TOP &&
+                                std::fabs(c.style.fill_alpha - 0.3f) < 1e-6f);
+            }
+            Check(grid && line && cone, "the tables reach the service as given, a style left out as none");
+            FakeView::DrawCalls().clear();
+            host.Shutdown();
+        }
+        bool removed = false;
+        for (const auto& c : FakeView::DrawCalls()) removed = removed || c.what == "remove";
+        Check(removed, "the shapes a Lua mod keeps go when it unloads");
+        if (g_failures) sink.Dump();
+    }
+
     Section("a rolled view and a pointer held off the centre in Lua");
     {
         using wxltest::FakeView;

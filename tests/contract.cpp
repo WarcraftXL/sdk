@@ -1062,6 +1062,7 @@ int main()
         host.Table()->publish_service(WXL_TEXTURE_SERVICE, WXL_TEXTURE_SERVICE_VERSION, wxltest::FakeView::TextureTable());
         host.Table()->publish_service(WXL_CVAR_SERVICE, WXL_CVAR_SERVICE_VERSION, wxltest::FakeView::CVarTable());
         host.Table()->publish_service(WXL_TERRAIN_SERVICE, WXL_TERRAIN_SERVICE_VERSION, wxltest::FakeView::TerrainTable());
+        host.Table()->publish_service(WXL_DRAW_SERVICE, WXL_DRAW_SERVICE_VERSION, wxltest::FakeView::DrawTable());
         host.Table()->publish_service(WXL_RENDER_SERVICE, WXL_RENDER_SERVICE_VERSION, wxltest::FakeRender::Table());
         host.Table()->publish_service(WXL_VK_SERVICE, WXL_VK_SERVICE_VERSION, wxltest::FakeRender::VkTable());
     }
@@ -1695,6 +1696,50 @@ int main()
         const auto at = wxl::terrain::Locate(-20.0f, 33.0f);
         Check(at.on_map && wxl::terrain::Locate(-20.0f, 33.0f).chunk_x == TerrainService::Locate(-20.0f, 33.0f)->chunk_x,
               "the grid's arithmetic and the service agree");
+    }
+
+    Section("shapes in the world");
+    {
+        using wxltest::FakeView;
+        using wxl::DrawService;
+        using wxl::DrawShape;
+        using wxl::DrawStyle;
+        FakeView::DrawCalls().clear();
+        Check(DrawService::Supported(), "Supported answers the service");
+        Check(DrawService::Draw(DrawShape::Grid(wxl_vec3{1, 2, 3}, 12.0f, 8.0f, 1.0f), DrawStyle(0x40C0FF, 0.7f).Width(1.5f)) == WXL_OK,
+              "Draw takes a grid and its look");
+        const std::vector<wxl_vec3> path = {{0, 0, 0}, {5, 0, 0}, {5, 5, 0}};
+        Check(DrawService::Draw(DrawShape::Line(path).OnGround(), DrawStyle()) == WXL_OK, "and a line on the ground");
+        Check(DrawService::Draw(DrawShape::Circle(wxl_vec3{}, 500.0f), DrawStyle()) == WXL_E_INVALID, "a refusal comes back");
+        const wxl_handle cone =
+            DrawService::Add(DrawShape::Sector(wxl_vec3{4, 5, 6}, 15.0f, 1.0f, 1.2f), DrawStyle(0xFF4020).Fill(0.3f).Fade(0.1f, 0.4f), 3.0f);
+        Check(cone != WXL_HANDLE_NONE, "Add answers a handle");
+        Check(DrawService::Move(cone, wxl_vec3{7, 8, 9}, 0.5f) == WXL_OK && DrawService::SetStyle(cone, DrawStyle().OnTop()) == WXL_OK &&
+                  DrawService::SetDuration(cone, 2.0f) == WXL_OK && DrawService::Attach(cone, wxl::Unit(wxltest::FakeObjects::kBoar), WXL_DRAW_ATTACH_TURN) == WXL_OK &&
+                  DrawService::Detach(cone) == WXL_OK && DrawService::Update(cone, DrawShape::Ring(wxl_vec3{}, 4.0f, 3.0f)) == WXL_OK,
+              "Move, SetStyle, SetDuration, Attach, Detach and Update reach the kept shape");
+        DrawService::Remove(cone);
+        DrawService::Clear();
+        const auto& calls = FakeView::DrawCalls();
+        Check(calls.size() == 11, "every call reached the service once");
+        if (calls.size() == 11)
+        {
+            Check(calls[0].kind == WXL_DRAW_GRID && calls[0].center.z == 3.0f && calls[0].styled && calls[0].style.color == 0x40C0FF &&
+                      std::fabs(calls[0].style.alpha - 0.7f) < 1e-6f && calls[0].style.width == 1.5f &&
+                      calls[0].style.struct_size == sizeof(wxl_draw_style),
+                  "the grid and its look as built, struct sizes set");
+            Check(calls[1].kind == WXL_DRAW_LINE && calls[1].points.size() == 3 && (calls[1].flags & WXL_DRAW_ON_GROUND),
+                  "the line's points, laid on the ground");
+            Check(calls[2].what == "add" && calls[2].kind == WXL_DRAW_SECTOR && calls[2].duration == 3.0f && calls[2].style.fade_out == 0.4f &&
+                      std::fabs(calls[2].style.fill_alpha - 0.3f) < 1e-6f,
+                  "the cone kept for its duration, with its fill and fades");
+            Check(calls[3].what == "move" && calls[3].center.y == 8.0f && calls[4].style.depth == WXL_DRAW_DEPTH_ON_TOP &&
+                      calls[6].target == wxltest::FakeObjects::kBoar && calls[6].attach == WXL_DRAW_ATTACH_TURN && calls[8].kind == WXL_DRAW_RING &&
+                      calls[9].what == "remove" && calls[10].what == "clear",
+                  "each change as given");
+        }
+        const auto stats = DrawService::Stats();
+        Check(stats && stats.Value().vertices == 1234 && stats.Value().frames == 7, "Stats answers the service's counts");
     }
 
     Section("console variables");

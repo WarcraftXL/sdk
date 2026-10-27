@@ -197,6 +197,16 @@ again): `wxl.terrain`'s height and trace and the client's own ray test (`wxl.wor
 camera's and the clicks' collision) must meet it, the original height must stay readable, and the
 edit's cost is printed as a NOTE. A reset gives the ground back, and nothing is left to reset.
 
+Phase 27 checks shapes in the world (abi 0.1.36), on both clients and on Direct3D 9 and Vulkan
+alike. In front of the player for six seconds, fading over the last: a filled circle, a ring, a
+beating cone, a rectangle, a concave polygon and a line laid on the ground, a tilted box, a sphere,
+a cylinder drawn on top of everything; a ring under the player follows them, and a grid on the
+terrain's cells under the player is drawn each frame through the immediate mode (watch it: every
+shape lies on the slopes, walls and units hide them, the cylinder shows through). A shape of no
+radius must be refused; `Stats` must count the shapes and their vertices (the CPU's cost is
+printed as a NOTE), the grid must be drawn every frame, and the kept shapes must be gone once their
+duration ran out.
+
 ## Building it
 
 The suite is built with the SDK's tests (`WXL_SDK_TESTS`, on in the SDK's own tree), by the

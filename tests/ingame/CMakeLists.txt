@@ -4,7 +4,7 @@
 #   <WXL_INGAME_DIR>/
 #     wxl.selftest/  wxl.test-*/       the suite, Lua mods as they are in this folder
 #     wxl.test-throw/bin/<arch>/...    the C++ test mods, built for this tree's architecture
-#     wxl.scout/  wxl.lua-services/  wxl.memory-report/  wxl.probe/   the examples it calls
+#     wxl.scout/  wxl.lua-services/  wxl.memory-report/  wxl.probe/  wxl.ground-marks/   the examples it calls
 #     wxl.model-swap/                  the points example, which logs every model and swaps the murloc
 #
 # One tree is one architecture: configure the x64 tree and the x86 tree with the same
@@ -42,7 +42,7 @@ set(ingame_test-points_sources src/TestPoints.cpp)
 set(ingame_test-bones_sources src/TestBones.cpp)
 
 # The Lua examples selftest calls into, copied from examples/ under their manifest ids.
-set(ingame_examples lua-services memory-report probe)
+set(ingame_examples lua-services memory-report probe ground-marks)
 
 set(ingame_commands)
 set(ingame_targets)

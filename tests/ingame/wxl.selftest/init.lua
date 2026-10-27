@@ -2444,6 +2444,104 @@ step(function()
     ground.v = nil
 end)
 
+-- Phase 27: shapes in the world (wxl.draw) -------------------------------------------------------
+
+local shapes = { kept = {}, frame = nil, frames = 0 }
+
+step(function()
+    print("phase 27: shapes in the world (wxl.draw)")
+    local dr = wxl.draw
+    if not (dr and dr.Add) then
+        result("wxl.draw", false, "this runtime is older than abi 0.1.36")
+        return
+    end
+    local supported = dr.Supported()
+    result("wxl.draw draws on this device", supported == true, dr.UnsupportedReason())
+    if not supported then return end
+    local me = wxl.object.LocalPlayer()
+    local feet = me and me:Position()
+    if not feet then
+        skip("shapes in the world", "no player in the world")
+        return
+    end
+    local f = me:Facing() or 0
+    local function ahead(d, side)
+        side = side or 0
+        return { x = feet.x + d * math.cos(f) - side * math.sin(f), y = feet.y + d * math.sin(f) + side * math.cos(f), z = feet.z }
+    end
+    local seconds = 6
+    local function add(name, shape, style)
+        style.fade_out = 1
+        local s, why = dr.Add(shape, style, seconds)
+        result("Add keeps " .. name, s ~= nil, tostring(why))
+        if s then shapes.kept[#shapes.kept + 1] = s end
+        return s
+    end
+    -- On the ground, in a fan in front of the player: a filled circle, a ring, a cone, a rectangle,
+    -- a concave polygon; a line along the ground; in the air, a box, a sphere and a cylinder.
+    add("a circle", { kind = "circle", center = ahead(8, -8), radius = 3 }, { color = 0xFF4040, fill_alpha = 0.35, width = 2 })
+    add("a ring", { kind = "ring", center = ahead(8, 0), radius = 3, inner = 2 }, { color = 0x40FF40, fill_alpha = 0.35, width = 2 })
+    add("a cone", { kind = "sector", center = ahead(2, 0), radius = 12, facing = f, angle = 0.8 },
+        { color = 0xFF8000, fill_alpha = 0.2, width = 3, pulse = 1 })
+    add("a rectangle", { kind = "rectangle", center = ahead(8, 8), length = 6, width = 3, facing = f + 0.5 },
+        { color = 0x4080FF, fill_alpha = 0.35, width = 2 })
+    add("a polygon", { kind = "polygon", center = ahead(16, 0), points = { { 0, 0, 0 }, { 4, 0, 0 }, { 4, 4, 0 }, { 2, 1, 0 }, { 0, 4, 0 } } },
+        { color = 0xFFFF40, fill_alpha = 0.35, width = 2 })
+    add("a line on the ground", { kind = "line", points = { ahead(4, -12), ahead(14, -12), ahead(14, 12) }, on_ground = true },
+        { color = 0xFFFFFF, width = 4 })
+    local up = function(p, h) return { x = p.x, y = p.y, z = p.z + h } end
+    add("a box", { kind = "box", center = up(ahead(16, -8), 2), size = { x = 2, y = 2, z = 2 }, facing = f, pitch = 0.3 },
+        { color = 0x40FFFF, fill_alpha = 0.25, width = 2 })
+    add("a sphere", { kind = "sphere", center = up(ahead(16, 8), 2), radius = 1.5 }, { color = 0xFF40FF, fill_alpha = 0.25, width = 1.5 })
+    add("a cylinder, on top of everything", { kind = "cylinder", center = up(ahead(24, 0), 2), radius = 1.5, height = 4 },
+        { color = 0xFFFFFF, fill_alpha = 0.15, width = 1.5, depth = "on_top" })
+    local ring = add("a ring under the player", { kind = "ring", radius = 1.5, inner = 1.2 }, { color = 0x00FFFF, fill_alpha = 0.5, width = 1 })
+    if ring then result("Attach makes it follow the player", ring:Attach(me, 1) == true) end
+    -- Each frame, a grid on the terrain's own cells under the player (immediate mode).
+    shapes.frames = 0
+    shapes.frame = Observe("RenderScript", "OnFrameBegin", function()
+        local at = me:Position()
+        if not at then return end
+        if dr.Draw({ kind = "grid", center = at, length = 16, width = 16, spacing = 4.1666665 }, { color = 0xC0C0C0, alpha = 0.6, width = 1 }) then
+            shapes.frames = shapes.frames + 1
+        end
+    end)
+    local bad, why = dr.Draw({ kind = "circle", center = feet, radius = 0 })
+    result("a shape of no radius is refused", bad == nil and why == "invalid", tostring(why))
+    print("look: in front of you for six seconds then fading: a red disc, a green ring, an orange cone beating, a blue rectangle," ..
+          " a yellow concave polygon, a white line along the ground, a cyan box tilted, a magenta sphere, a white cylinder seen" ..
+          " through walls; a cyan ring under you that follows you; a grey grid on the ground's cells under you; all lying on the" ..
+          " slopes, hidden behind walls and units except the cylinder, the same under Direct3D 9 and Vulkan")
+    wait(3)
+end)
+
+step(function()
+    local dr = wxl.draw
+    if not (dr and dr.Stats and shapes.frame) then return end
+    local stats = dr.Stats()
+    result("the frames draw the shapes", stats ~= nil and stats.drawn >= 10 and stats.vertices > 0,
+           stats and string.format("%d shapes, %d vertices", stats.drawn, stats.vertices) or "no stats")
+    result("the immediate grid is drawn every frame", shapes.frames > 10 and stats ~= nil and stats.immediate == 1,
+           tostring(shapes.frames) .. " frames")
+    if stats then
+        print(string.format("NOTE wxl.draw's last frame: %d shapes, %d vertices, %.0f us on the CPU (the most %.0f us), %.0f us in Draw calls",
+                            stats.drawn, stats.vertices, stats.build_microseconds, stats.max_build_microseconds, stats.immediate_microseconds))
+    end
+    wait(4.5)
+end)
+
+step(function()
+    local dr = wxl.draw
+    if not (dr and dr.Stats and shapes.frame) then return end
+    Unobserve(shapes.frame)
+    shapes.frame = nil
+    local stats = dr.Stats()
+    result("kept shapes go when their duration runs out", stats ~= nil and stats.shapes == 0,
+           stats and tostring(stats.shapes) .. " left" or "no stats")
+    dr.Clear()
+    shapes.kept = {}
+end)
+
 -- The end ----------------------------------------------------------------------------------------
 
 step(function()
