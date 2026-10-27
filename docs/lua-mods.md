@@ -1918,6 +1918,76 @@ Observe("RenderScript", "OnFrameBegin", function()
 end)
 ```
 
+**A picture's shape only, and a blur** (abi `0.1.40`). `mask = true` takes only the opacity of
+the picture and draws it in the style's colour (`fill_color`, or `color`): the game's dark cracks
+glow white or gold. `texture_blur` (0 to 8) blurs the picture, each step halving its detail; with
+`feather` and `radial_fade` a textured halo is soft all round. The same on every device.
+
+**Beams** (abi `0.1.40`). A `"beam"` is a shaft of light, a spell's ray, a laser: a strip from its
+first point to its second, turned around its own axis to face the camera each frame so that it reads
+as a volume from any side. `widths = { start, end }` (yards), `alphas = { start, end }` (its opacity
+along it; none: 1 to 0). It is drawn with the inside's look: `fill_alpha`, `fill_color`, `blend`
+(`"add"` for light), `feather` the part of its half width over which it fades to its sides (1: soft
+all across), a `texture` along it (`"fit"` once from start to end, `"tile"` repeated, `uv_size` a part
+of its length; `"world"` `uv_size` yards a picture) whose `uv_offset` scrolls it, `mask`,
+`occluded_alpha`. It fades where it nears the camera and as it is seen end-on, never flashing.
+
+```lua
+-- A golden ray rising out of the ground, soft, a shimmer scrolling up it.
+local ray = wxl.draw.Add({ kind = "beam", points = { foot, top }, widths = { 0.8, 2.2 }, alphas = { 0.9, 0 } },
+                         { alpha = 0, fill_alpha = 1, fill_color = 0xFFD070, blend = "add", feather = 1,
+                           texture = "SPELLS\\TEXTURES\\Beam_WebGlowWhite.blp", mask = true, uv = "tile", uv_size = { 1, 0.3 } })
+```
+
+**Particles** (abi `0.1.40`). Dust, debris, sparks, glows: an emitter throws soft sprites that the
+runtime moves each frame.
+
+```lua
+-- Clods of earth thrown up where a pickaxe hits: they fall, bounce once and settle (forgotten).
+wxl.draw.Emit({ center = hit, burst = 14, spread = 0.7, speed = { 3, 6 }, life = { 1.0, 1.6 },
+                size = { 0.12, 0.28 }, spin = { -6, 6 }, gravity = 19.29,
+                ground = "bounce", restitution = 0.35, friction = 0.6 },
+              { texture = "SPELLS\\CrackedGround.blp", mask = true, softness = 0.15,
+                keys = { { t = 0, color = 0x6B5235, alpha = 1 }, { t = 1, size = 0.6, color = 0x5A4430, alpha = 0 } } })
+
+-- Sparks streaming from the player while it lasts.
+local sparks = wxl.draw.AddEmitter({ center = { x = 0, y = 0, z = 1 }, rate = 40, spread = 0.5, speed = { 1, 2 },
+                                     life = 0.8, size = { 0.08, 0.15 }, gravity = 4 },
+                                   { blend = "add", mode = "stretched", stretch = 0.05,
+                                     keys = { { t = 0, color = 0xFFD070 }, { t = 1, size = 0.3, color = 0xFF6020, alpha = 0 } } })
+sparks:Follow(wxl.object.LocalPlayer(), 1)
+```
+
+The emitter (first table) says where particles come from and how they move:
+
+| | |
+|---|---|
+| `spawn`, `center`, `extent`, `facing` | `"point"` (the default), `"disc"` (`extent.x` yards across its radius), `"box"` (`extent` its sides), `"segment"` (from `center` to `center + extent`) |
+| `direction`, `spread` | the cone they leave along: up by default; `spread` its half angle (0 straight, `math.pi` every way) |
+| `burst`, `rate`, `duration` | particles at once; a kept emitter's particles a second, for `duration` seconds (0: until stopped) |
+| `speed`, `life`, `size`, `spin` | each a number or `{ min, max }`: yards a second, seconds, yards across, radians a second |
+| `gravity`, `drag` | yards/s² down (the game's falls: 19.29); the part of their speed lost a second |
+| `ground`, `restitution`, `friction` | `"bounce"` once (giving back `restitution` of the fall, losing `friction` of the speed along the ground) then rest; `"settle"` rest where they land, sliding to a stop; the ground is the terrain's (`center.z` where there is none) |
+| `attractor`, `attraction`, `attract_radius` | pulled towards a point at `attraction` yards/s² (negative: pushed away), going within `attract_radius`: grains converging into a hole |
+| `seed` | the same seed throws the same particles |
+
+The look (second table, nil for soft white blots fading out): `mode` (`"camera"`: facing it, the
+default; `"ground"`: lying flat; `"stretched"`: drawn along their speed, `stretch` seconds of it
+long), a `texture` (none: a soft round blot; `{ wxl.texture.Make(...) }` too) with `frames = { x, y }`
+of a sprite sheet played at `frame_rate` (0: once over a life), `mask`, `texture_blur`, `blend`
+(`"alpha"`: sorted far to near; `"add"` for light; `"modulate"`), `depth`, `occluded_alpha`,
+`softness` (yards: they fade as they near the ground, the same on every device), and up to 4 `keys`
+of their life `{ t, size, color, alpha }`, in lines between them.
+
+`wxl.draw.Emit` throws one burst and forgets it. `wxl.draw.AddEmitter` keeps an emitter and answers
+an `Emitter`: `emitter:Burst(count)`, `emitter:Place(center, facing)`, `emitter:Follow(object, flags)`
+(it throws from the object, turned with it when `flags` is 1; it pauses when the object leaves view),
+`wxl.draw.UpdateEmitter(emitter, t)`, `wxl.draw.SetEmitterStyle(emitter, t)`, and `emitter:Stop()`
+(its particles live out their lives). A mod holds up to 256 emitters and 16384 particles, all mods
+65536; what is past them is not thrown (`Stats().particles_culled`). `Stats()` answers `particles`,
+`particles_emitted`, `particle_draws`, `emitters` and `particle_microseconds`. The example
+`dig-dust` throws clods, dust and grains where the camera looks.
+
 Pictures that suit the ground among the game's own:
 
 | Picture | What it is |
@@ -2485,6 +2555,7 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.draw.Add(shape, style, duration)`, `.Update(shape, t)`, `.SetStyle(shape, t)`, `.Clear()`, `.Stats()` | a kept `wxl.Shape` (`shape:Move(center, facing)`, `:SetDuration(seconds)`, `:Attach(object, flags)`, `:Detach()`, `:Remove()`); what the last frame drew (abi `0.1.36`) |
 | `wxl.draw` style `texture`, `uv`, `blend`, `feather`, `radial_fade`, `softness`, `alpha_start`, `shadow_alpha`, shape `alphas` | pictures on the ground, soft and shadowed lines; see [Shapes in the world](#shapes-in-the-world-wxldraw) (abi `0.1.38`) |
 | `wxl.draw` style `occluded_alpha`; pictures on boxes and cylinders | what the scene hides of a shape, seen faintly; textured volumes (abi `0.1.39`) |
+| `wxl.draw.Emit(emitter, look)`, `.AddEmitter(emitter, look)`, `.UpdateEmitter(e, t)`, `.SetEmitterStyle(e, t)`; style `mask`, `texture_blur` | particles thrown once or kept (`e:Burst(n)`, `:Place(center, facing)`, `:Follow(object, flags)`, `:Stop()`); a picture's shape in the style's colour, blurred (abi `0.1.40`) |
 | `wxl.animation.Play(unit, anim_id, flags, speed)`, `.Stop(unit)` | `true`: an AnimationData animation played on a unit as the game plays an emote, once or looped, or this mod's stopped; see [Animations on units](#animations-on-units-wxlanimation) (abi `0.1.37`) |
 | `wxl.animation.Playing(unit)`, `.Current(unit)` | the id a mod plays on a unit, or `nil`; the id its model shows now (abi `0.1.37`) |
 | `wxl.render.Supported()`, `.UnsupportedReason()` | whether the render service drives the client's device, and why not (abi `0.1.33`) |

@@ -1999,6 +1999,40 @@ shapes and volumes. Changing only a kept shape's style (`SetStyle`, its `uv_offs
 scroll its picture) builds nothing again, and an immediate shape given as the frame before is not
 built again (`Stats().reused`). The style of abi 0.1.38 (`WXL_DRAW_STYLE_SIZE_0138`) is still taken.
 
+**Masks and blur** (abi `0.1.40`). `.Mask()` (`WXL_DRAW_STYLE_MASK`) takes only the texture's
+opacity, the colour being the style's; `.TextureBlur(steps)` blurs the picture, each step halving
+its detail. The style of abi 0.1.39 (`WXL_DRAW_STYLE_SIZE_0139`) is still taken.
+
+**Beams** (abi `0.1.40`). `wxl::DrawShape::Beam(ends, width_a, width_b)` (`WXL_DRAW_BEAM`, two points,
+`size.x` and `size.y` the widths, `point_alphas` the opacity at each end, 1 to 0 without) is a shaft
+of light turned around its axis to face the camera each frame, drawn with the inside's look
+(`Fill`, `FillColor`, `Blend`, `Feather` the part of its half width that fades to its sides,
+`Texture` and `Uv` along it, `Mask`, `Occluded`); it fades near the camera and when seen end-on.
+
+**Particles** (abi `0.1.40`). `wxl::DrawEmitter` says where particles come from and how they move
+(`Point`, `Disc`, `Box`, `Segment`; `.Burst(n)`, `.Rate(per_second, seconds)`, `.Cone(axis,
+half_angle)`, `.Speed`, `.Life`, `.Size`, `.Spin` as min and max, `.Gravity`, `.Drag`,
+`.Bounce(restitution, friction)`, `.Settle(friction)`, `.Attract(point, acceleration, radius)`,
+`.Seed`); `wxl::DrawParticles` how they look (`.Mode`, `.Stretched(seconds)`, `.Texture`, `.Frames(x,
+y, per_second)`, `.Mask`, `.TextureBlur`, `.Blend`, `.OnTop`, `.Occluded`, `.Softness(yards)`,
+`.Key(t, size, rgb, alpha)` up to four).
+
+```cpp
+// A dust puff where a pickaxe hits: soft, spreading, gone in half a second.
+wxl::DrawService::Emit(wxl::DrawEmitter::Disc(hit, 0.4f).Burst(10).Cone(wxl_vec3{0, 0, 1}, 1.2f).Speed(0.4f, 1.2f)
+                           .Life(0.4f, 0.6f).Size(0.5f, 0.9f).Drag(2.5f),
+                       wxl::DrawParticles().Softness(0.4f).Key(0.0f, 0.6f, 0x9A8A70, 0.45f).Key(1.0f, 2.6f, 0x8A7A60, 0.0f));
+```
+
+`Emit` throws one burst and forgets it; `AddEmitter` keeps one and answers its handle, for
+`UpdateEmitter`, `SetEmitterStyle`, `Burst`, `Place`, `Follow` and `Stop` (its particles live out
+their lives). The runtime moves them on the CPU each frame (gravity, drag, an attractor, one bounce
+or a rest on the terrain the client walks on) and draws an emitter's particles in one draw call:
+soft blots or pictures facing the camera, lying flat or stretched along their speed, sorted far to
+near when blended by their opacity. Budgets: `WXL_DRAW_MAX_PARTICLES` in all,
+`WXL_DRAW_MAX_MOD_PARTICLES` and `WXL_DRAW_MAX_EMITTERS` a mod; what is past them is counted in
+`Stats().particles_culled`.
+
 **Lifetimes.** `Draw` is for one frame; `Add(shape, style, duration)` keeps a shape and answers a
 handle (`WXL_HANDLE_NONE` when refused): `Update`, `Move`, `SetStyle`, `SetDuration`, `Attach`
 (offsets from the object's position, turned with it under `WXL_DRAW_ATTACH_TURN`; the shape goes
