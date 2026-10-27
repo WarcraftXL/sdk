@@ -95,7 +95,12 @@ namespace wxl::lua
 
         void Log(wxl_log_level level, std::string_view message) const;
 
+        /// The opcode numbers the manifests declared, as the host found them: a script mod's are
+        /// its alone among the Lua mods.
+        const host::OpcodeDeclarations& Opcodes() const { return opcodes_; }
+
     private:
+        host::OpcodeDeclarations opcodes_;
         struct Handler
         {
             ScriptMod* mod;

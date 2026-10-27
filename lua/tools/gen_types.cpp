@@ -317,6 +317,57 @@ namespace
         return "any";
     }
 
+    /// wxl.net's reader and writer, which no row brings.
+    std::string NetExtras(const std::string& owner)
+    {
+        std::string text =
+            "---A reader over a string of bytes, as a handler is handed one.\n"
+            "---@param bytes string\n---@return wxl.net.Reader reader\n"
+            "function " + owner + ".Reader(bytes) end\n\n"
+            "---An empty message body, refusing to grow past MaxSend() bytes, or past `limit`.\n"
+            "---@param limit? integer\n---@return wxl.net.Writer writer\n"
+            "function " + owner + ".Writer(limit) end\n\n"
+            "---Reads a message's body, little-endian. A read past the end answers 0 (\"\" for strings) and\n"
+            "---leaves the reader failed: read the whole message, then check Ok().\n"
+            "---@class wxl.net.Reader\nlocal NetReader = {}\n";
+        for (const char* name : {"U8", "U16", "U32", "U64", "I8", "I16", "I32", "I64", "F32", "F64"})
+            text += "---@return number\nfunction NetReader:" + std::string(name) + "() end\n";
+        text +=
+            "---@return boolean\nfunction NetReader:Bool() end\n"
+            "---Eight bytes as a guid, \"0x\" and sixteen hex digits.\n---@return string\nfunction NetReader:Guid() end\n"
+            "---A guid as the server packs one: a mask byte, then the bytes it marks.\n"
+            "---@return string\nfunction NetReader:PackedGuid() end\n"
+            "---Three floats.\n---@return wxl.Vec3\nfunction NetReader:Vec3() end\n"
+            "---A string ended by a zero byte, at most `max` bytes before it (4096).\n"
+            "---@param max? integer\n---@return string\nfunction NetReader:String(max) end\n"
+            "---@param count integer\n---@return string\nfunction NetReader:Bytes(count) end\n"
+            "---@param count integer\n---@return wxl.net.Reader self\nfunction NetReader:Skip(count) end\n"
+            "---@return boolean\nfunction NetReader:Ok() end\n"
+            "---Whether every byte was read, and nothing past.\n---@return boolean\nfunction NetReader:AtEnd() end\n"
+            "---@return integer\nfunction NetReader:Remaining() end\n"
+            "---@return integer\nfunction NetReader:Position() end\n"
+            "---@return integer\nfunction NetReader:Size() end\n"
+            "---The whole body.\n---@return string\nfunction NetReader:Data() end\n\n"
+            "---Writes a message's body, little-endian; each call answers the writer, to chain. A write past\n"
+            "---the limit is dropped and leaves the writer failed: Send refuses it.\n"
+            "---@class wxl.net.Writer\nlocal NetWriter = {}\n";
+        for (const char* name : {"U8", "U16", "U32", "U64", "I8", "I16", "I32", "I64", "F32", "F64"})
+            text += "---@param value number\n---@return wxl.net.Writer self\nfunction NetWriter:" + std::string(name) +
+                    "(value) end\n";
+        text +=
+            "---@param value boolean\n---@return wxl.net.Writer self\nfunction NetWriter:Bool(value) end\n"
+            "---@param guid string|integer\n---@return wxl.net.Writer self\nfunction NetWriter:Guid(guid) end\n"
+            "---@param guid string|integer\n---@return wxl.net.Writer self\nfunction NetWriter:PackedGuid(guid) end\n"
+            "---@param v wxl.Vec3\n---@return wxl.net.Writer self\nfunction NetWriter:Vec3(v) end\n"
+            "---The text and a zero byte.\n---@param text string\n---@return wxl.net.Writer self\n"
+            "function NetWriter:String(text) end\n"
+            "---@param bytes string\n---@return wxl.net.Writer self\nfunction NetWriter:Bytes(bytes) end\n"
+            "---@return boolean\nfunction NetWriter:Ok() end\n"
+            "---@return integer\nfunction NetWriter:Size() end\n"
+            "---@return string\nfunction NetWriter:Data() end\n\n";
+        return text;
+    }
+
     /// What a shim row takes and gives, as the shims in sdk/lua/src/Shims.cpp serve it.
     std::string ShimDefinition(const wxl::api::Row& row, const std::string& owner)
     {
@@ -612,6 +663,56 @@ namespace
                        "---@return {edited_chunks: integer, edited_vertices: integer, edits: integer, reapplied: integer, last_vertices: integer, last_chunks: integer, last_microseconds: integer, max_microseconds: integer}|nil stats\n"
                        "---@return string|nil reason\n"
                        "function " + owner + ".Stats() end\n\n";
+        }
+        if (std::strcmp(row.service, "net") == 0)
+        {
+            if (name == "State")
+                return "---Where the client is with the world server: \"offline\", \"connecting\", \"connected\" (the\n"
+                       "---socket is up) or \"authenticated\" (the server accepted the session: messages flow).\n"
+                       "---@return \"offline\"|\"connecting\"|\"connected\"|\"authenticated\"|nil state\n"
+                       "---@return string|nil reason\n"
+                       "function " + owner + ".State() end\n\n";
+            if (name == "Claim")
+                return "---Claims an opcode number for this mod: the server's messages of it stop at the mod (its\n"
+                       "---function, once SetHandler gives one), and the mod may send it. Refused (nil, \"invalid\", and a\n"
+                       "---line in the log saying why) for a number above 0xFFFF, one of the client's own (up to 0x520)\n"
+                       "---unless mod.json says \"net\": { \"stock\": true }, one another mod claimed or declares, or\n"
+                       "---one outside the numbers this mod's mod.json lists in \"net\": { \"opcodes\": [...] }.\n"
+                       "---Given back when the mod is disabled, reloads or unloads.\n"
+                       "---@param opcode integer from 0x521\n---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Claim(opcode) end\n\n";
+            if (name == "Release")
+                return "---Gives a claimed number back, its function and its compressed number with it.\n"
+                       "---@param opcode integer\n---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Release(opcode) end\n\n";
+            if (name == "SetHandler")
+                return "---Sets the function a claimed number's messages are handed to, on the main thread:\n"
+                       "---`fn(reader, opcode)`, the reader over the message's body. A reader left read past its end\n"
+                       "---is logged once per number as malformed. nil takes the function away; the messages still stop.\n"
+                       "---@param opcode integer\n---@param fn? fun(reader: wxl.net.Reader, opcode: integer)\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".SetHandler(opcode, fn) end\n\n";
+            if (name == "SetCompressed")
+                return "---Makes `compressed`, a second number this mod claimed, the compressed form of `opcode`: its\n"
+                       "---messages are a u32 size and a zlib stream, as the client's own compressed opcodes are; the\n"
+                       "---runtime inflates them and hands them to `opcode`'s function as `opcode` messages. 0 undoes it.\n"
+                       "---@param opcode integer\n---@param compressed integer\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".SetCompressed(opcode, compressed) end\n\n";
+            if (name == "Send")
+                return "---Sends a message of a number this mod claimed to the server: `body` is a wxl.net.Writer or a\n"
+                       "---string of bytes, at most MaxSend() bytes. nil, \"failed\" while not authenticated, and until\n"
+                       "---the server has sent this mod one of its numbers on this connection (Heard()): a server that\n"
+                       "---does not know a number closes the connection. nil, \"busy\" past 64 messages of a number in a\n"
+                       "---second.\n"
+                       "---@param opcode integer\n---@param body? wxl.net.Writer|string\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Send(opcode, body) end\n\n";
+            if (name == "Heard")
+                return "---Whether this mod may send on this connection: the server has sent it one of its numbers\n"
+                       "---since the connection came up.\n"
+                       "---@return boolean heard\n"
+                       "function " + owner + ".Heard() end\n\n";
         }
         if (std::strcmp(row.service, "cvar") == 0 && name == "Register")
             return "---Registers a console variable for this mod: the console, the interface's GetCVar and SetCVar\n"
@@ -995,6 +1096,7 @@ namespace
                 else
                     writeRow(row, services[s].id, ".");
             }
+            if (std::strcmp(services[s].id, "net") == 0) out << NetExtras(services[s].id);
         }
         return out.str();
     }

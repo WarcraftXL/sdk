@@ -240,12 +240,18 @@ namespace wxl::host
         /// Whether the caller runs on the thread that built the host.
         bool OnMainThread() const { return std::this_thread::get_id() == mainThread_; }
 
+        /// The manifest of a loaded mod, or of the one inside its wxl_mod_query or
+        /// wxl_mod_load; null for nobody. Main thread for the loading one.
+        const Manifest* ManifestOf(ModToken token) const;
         /// The loaded mod a token names, or null for 0 or a token past the end.
         const LoadedMod* ModOf(ModToken token) const;
 
         /// The table every mod receives. Valid for the host's lifetime.
         const wxl_host* Table() const { return &table_; }
 
+        /// The opcode numbers the manifests of the mods found declared, each with its mod and
+        /// the loaded mod that claims it (wxl.lua for a script mod's). Filled by @ref LoadAll.
+        const OpcodeDeclarations&      Opcodes() const { return opcodes_; }
         const std::vector<LoadedMod>&  Loaded() const { return loaded_; }
         const std::vector<RefusedMod>& Refused() const { return refused_; }
 
@@ -328,11 +334,13 @@ namespace wxl::host
         std::vector<ModBinary>  binaries_; ///< index-aligned with loaded_
         std::vector<RefusedMod> refused_;
         bool                    loadedAll_   = false;
+        OpcodeDeclarations      opcodes_;
         std::string             loadingId_;  ///< the mod inside wxl_mod_query or wxl_mod_load
         AbiVersion              loadingAbi_;           ///< its built abi, once wxl_mod_query answered
         bool                    loadingAbiKnown_ = false;
         std::string             loadingDisabled_;      ///< the reason, when it disabled itself while loading
         bool                    loadingDisabledSet_ = false;
+        const Manifest*         loadingManifest_    = nullptr; ///< the loading mod's, while it loads
         DisableFn               disableFn_   = nullptr;
         void*                   disableUser_ = nullptr;
         std::thread::id         mainThread_;

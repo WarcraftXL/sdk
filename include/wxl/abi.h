@@ -47,7 +47,7 @@
 
 #define WXL_ABI_VERSION_MAJOR   0
 #define WXL_ABI_VERSION_MINOR   1
-#define WXL_ABI_VERSION_FEATURE 40
+#define WXL_ABI_VERSION_FEATURE 41
 
 // --- Platform ------------------------------------------------------------------------------
 //
@@ -89,7 +89,10 @@ typedef enum wxl_result
     WXL_E_FAILED      = 5, ///< it should have worked and did not
     /// Not available yet, try again later: what was asked for exists, but is still being made
     /// ready (downloaded, read, computed). Appended in 0.1.19.
-    WXL_E_PENDING     = 6
+    WXL_E_PENDING     = 6,
+    /// Too much at once, try again later: a limit on how often something may be done was
+    /// reached (wxl.net's sends of a number in a second). Appended in 0.1.41.
+    WXL_E_BUSY        = 7
 } wxl_result;
 
 /**

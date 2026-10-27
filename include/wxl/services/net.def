@@ -1,0 +1,48 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.net as data: one row per member of wxl_net_api, in member order. The shapes and their
+// columns are described in wxl/services/rows.hpp.
+//
+// The table was declared before any runtime served it; scripts reach it from abi 0.1.41, when
+// both runtimes first did.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including net.def"
+#endif
+
+WXL_API_SERVICE(net, WXL_NET_SERVICE, WXL_NET_SERVICE_VERSION, (0, 1, 41), open,
+                "Messages of the mod's own on the world connection: opcode numbers it claims, receives and sends.")
+
+WXL_API(net, state, State, u32, (), shim, by_hand,
+        "Where the client is with the world server: \"offline\", \"connecting\", \"connected\" or \"authenticated\".")
+WXL_API(net, send, Send, result, (u32 opcode, bytes data, bytes_size size), shim, by_hand,
+        "Sends a message of a number the mod claimed: a wxl.net Writer or a string of bytes as the body. "
+        "Refused until the server has sent the mod one of its numbers on this connection.")
+WXL_API(net, claim_opcode, Claim, result, (u32 opcode), shim, by_hand,
+        "Claims an opcode number for the mod: the server's messages of it stop at the mod, and the mod may send it.")
+WXL_API(net, release_opcode, Release, result, (u32 opcode), shim, by_hand,
+        "Gives a claimed number back, its handler and its compressed number with it.")
+WXL_API(net, reserved_opcode_limit, ReservedOpcodeLimit, u32, (), generated, by_hand,
+        "The highest number the client and its servers use, 0x520: a mod's own start above it.")
+WXL_API(net, set_handler, SetHandler, result, (u32 opcode, net_handler handler, ptr user), shim, by_hand,
+        "Sets fn(reader, opcode) for a claimed number's messages, on the main thread; nil takes it away.")
+WXL_API(net, set_compressed, SetCompressed, result, (u32 opcode, u32 compressed), shim, by_hand,
+        "Makes a second claimed number the compressed form of the first (u32 size and zlib): its messages "
+        "are inflated and handed to the first's function. 0 takes the pairing back.")
+WXL_API(net, max_send, MaxSend, u32, (), generated, by_hand, "The largest body Send takes, in bytes.")
+WXL_API(net, connection, Connection, u32, (), generated, by_hand,
+        "The world connection, counted: 0 while there is none, a new number each time one comes up.")
+WXL_API(net, heard, Heard, boolean, (), shim, by_hand,
+        "Whether the mod may send on this connection: the server has sent it one of its numbers since it came up.")
+WXL_API(net, deflate, Deflate, whole_bytes, (bytes data, bytes_size size), generated, by_hand,
+        "Compresses a string of bytes into a zlib stream.")
+WXL_API(net, inflate, Inflate, whole_bytes, (bytes data, bytes_size size), generated, by_hand,
+        "Inflates a zlib stream into the bytes it holds.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

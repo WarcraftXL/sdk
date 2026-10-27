@@ -7,7 +7,12 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <new>
+#include <type_traits>
 #include <deque>
 #include <filesystem>
 #include <fstream>
@@ -41,6 +46,7 @@
 #include "wxl/services/terrain.h"
 #include "wxl/services/draw.h"
 #include "wxl/services/animation.h"
+#include "wxl/services/net.h"
 
 namespace wxl::lua::shims
 {
@@ -3957,6 +3963,702 @@ namespace wxl::lua::shims
             return 1;
         }
 
+
+        // --- wxl.net: the opcode numbers each Lua mod claims, and its readers and writers -----
+        //
+        // The runtime sees every Lua mod's numbers as wxl.lua's. Each is kept here with the mod
+        // that claimed it: another Lua mod's claim of it is refused, its messages reach that
+        // mod's function alone, and the send gate is kept for each mod, not for wxl.lua.
+
+        const wxl_net_api* Net() { return wxl::api::Table<wxl_net_api>(); }
+
+        constexpr const char* kNetReader = "wxl.net.Reader";
+        constexpr const char* kNetWriter = "wxl.net.Writer";
+
+        struct NetClaim
+        {
+            ScriptMod* mod    = nullptr;
+            uint32_t   opcode = 0;
+            int        fn     = LUA_NOREF;
+            bool       warned = false; ///< "malformed" was logged once
+        };
+
+        std::vector<std::unique_ptr<NetClaim>> g_netClaims;
+
+        /// The connection on which each Lua mod last heard one of its numbers.
+        std::vector<std::pair<ScriptMod*, uint32_t>> g_netHeard;
+
+        NetClaim* NetClaimOf(uint32_t opcode)
+        {
+            for (const std::unique_ptr<NetClaim>& claim : g_netClaims)
+                if (claim->opcode == opcode) return claim.get();
+            return nullptr;
+        }
+
+        std::string Hex(uint32_t value)
+        {
+            char text[16];
+            std::snprintf(text, sizeof text, "0x%X", static_cast<unsigned>(value));
+            return text;
+        }
+
+        bool NetHeard(const ScriptMod& mod)
+        {
+            const wxl_net_api* api = Net();
+            if (!api || !wxl::detail::Carries(api, &wxl_net_api::connection)) return false;
+            const uint32_t connection = api->connection();
+            if (!connection) return false;
+            for (const auto& [who, on] : g_netHeard)
+                if (who == &mod) return on == connection;
+            return false;
+        }
+
+        void NetHear(ScriptMod& mod)
+        {
+            const wxl_net_api* api = Net();
+            if (!api || !wxl::detail::Carries(api, &wxl_net_api::connection)) return;
+            const uint32_t connection = api->connection();
+            for (auto& [who, on] : g_netHeard)
+                if (who == &mod)
+                {
+                    on = connection;
+                    return;
+                }
+            g_netHeard.emplace_back(&mod, connection);
+        }
+
+        uint32_t CheckOpcode(lua_State* L, int index, const char* function, const char* parameter)
+        {
+            if (lua_isnoneornil(L, index))
+                luaL_error(L, "wxl.net.%s: '%s' (argument %d) is missing; it takes an opcode number", function,
+                           parameter, index);
+            const lua_Number value = luaL_checknumber(L, index);
+            if (!(value >= 0.0) || value > 4294967295.0 || value != std::floor(value))
+                luaL_error(L, "wxl.net.%s: '%s' (argument %d) takes a whole number from 0", function, parameter, index);
+            return static_cast<uint32_t>(value);
+        }
+
+        // --- the reader ----------------------------------------------------------------------
+
+        struct NetReader
+        {
+            std::string bytes;
+            size_t      at     = 0;
+            bool        failed = false;
+
+            bool Take(size_t count, const char*& out)
+            {
+                if (failed || count > bytes.size() - at)
+                {
+                    failed = true;
+                    at     = bytes.size();
+                    return false;
+                }
+                out = bytes.data() + at;
+                at += count;
+                return true;
+            }
+        };
+
+        struct NetWriter
+        {
+            std::string bytes;
+            size_t      limit  = WXL_NET_MAX_SEND;
+            bool        failed = false;
+
+            bool Put(const void* data, size_t size)
+            {
+                if (failed || size > limit - bytes.size())
+                {
+                    failed = true;
+                    return false;
+                }
+                bytes.append(static_cast<const char*>(data), size);
+                return true;
+            }
+        };
+
+        template <class T>
+        int L_NetDestroy(lua_State* L)
+        {
+            static_cast<T*>(lua_touserdata(L, 1))->~T();
+            return 0;
+        }
+
+        NetReader& ToReader(lua_State* L) { return *static_cast<NetReader*>(luaL_checkudata(L, 1, kNetReader)); }
+        NetWriter& ToWriter(lua_State* L) { return *static_cast<NetWriter*>(luaL_checkudata(L, 1, kNetWriter)); }
+
+        void PushNetReader(lua_State* L, const void* data, size_t size);
+
+        template <class T>
+        T ReadNumber(NetReader& reader)
+        {
+            T           value{};
+            const char* at = nullptr;
+            if (reader.Take(sizeof(T), at)) std::memcpy(&value, at, sizeof(T));
+            return value;
+        }
+
+        template <class T>
+        int L_ReadNumber(lua_State* L)
+        {
+            lua_pushnumber(L, static_cast<lua_Number>(ReadNumber<T>(ToReader(L))));
+            return 1;
+        }
+
+        int L_ReadBool(lua_State* L)
+        {
+            lua_pushboolean(L, ReadNumber<uint8_t>(ToReader(L)) != 0);
+            return 1;
+        }
+
+        void PushGuidText(lua_State* L, uint64_t guid)
+        {
+            char text[24];
+            std::snprintf(text, sizeof text, "0x%016llX", static_cast<unsigned long long>(guid));
+            lua_pushstring(L, text);
+        }
+
+        int L_ReadGuid(lua_State* L)
+        {
+            PushGuidText(L, ReadNumber<uint64_t>(ToReader(L)));
+            return 1;
+        }
+
+        int L_ReadPackedGuid(lua_State* L)
+        {
+            NetReader&    reader = ToReader(L);
+            const uint8_t mask   = ReadNumber<uint8_t>(reader);
+            uint64_t      guid   = 0;
+            for (int i = 0; i < 8; ++i)
+                if (mask & (1u << i)) guid |= static_cast<uint64_t>(ReadNumber<uint8_t>(reader)) << (8 * i);
+            PushGuidText(L, guid);
+            return 1;
+        }
+
+        int L_ReadVec3(lua_State* L)
+        {
+            NetReader& reader = ToReader(L);
+            const float x = ReadNumber<float>(reader), y = ReadNumber<float>(reader), z = ReadNumber<float>(reader);
+            lua_createtable(L, 0, 3);
+            lua_pushnumber(L, x);
+            lua_setfield(L, -2, "x");
+            lua_pushnumber(L, y);
+            lua_setfield(L, -2, "y");
+            lua_pushnumber(L, z);
+            lua_setfield(L, -2, "z");
+            return 1;
+        }
+
+        int L_ReadString(lua_State* L)
+        {
+            NetReader&   reader = ToReader(L);
+            const double max    = lua_isnoneornil(L, 2) ? 4096.0 : luaL_checknumber(L, 2);
+            const size_t limit  = max < 0.0 ? 0 : static_cast<size_t>(max);
+            const size_t left   = reader.failed ? 0 : reader.bytes.size() - reader.at;
+            const size_t span   = left < limit + 1 ? left : limit + 1;
+            const void*  zero   = span ? std::memchr(reader.bytes.data() + reader.at, 0, span) : nullptr;
+            if (!zero)
+            {
+                reader.failed = true;
+                reader.at     = reader.bytes.size();
+                lua_pushliteral(L, "");
+                return 1;
+            }
+            const size_t length = static_cast<size_t>(static_cast<const char*>(zero) - (reader.bytes.data() + reader.at));
+            lua_pushlstring(L, reader.bytes.data() + reader.at, length);
+            reader.at += length + 1;
+            return 1;
+        }
+
+        int L_ReadBytes(lua_State* L)
+        {
+            NetReader&       reader = ToReader(L);
+            const lua_Number count  = luaL_checknumber(L, 2);
+            const char*      at     = nullptr;
+            if (!(count >= 0.0) || !reader.Take(static_cast<size_t>(count), at))
+            {
+                reader.failed = true;
+                reader.at     = reader.bytes.size();
+                lua_pushliteral(L, "");
+                return 1;
+            }
+            lua_pushlstring(L, at, static_cast<size_t>(count));
+            return 1;
+        }
+
+        int L_ReadSkip(lua_State* L)
+        {
+            NetReader&       reader = ToReader(L);
+            const lua_Number count  = luaL_checknumber(L, 2);
+            const char*      at     = nullptr;
+            if (!(count >= 0.0) || !reader.Take(static_cast<size_t>(count), at)) reader.failed = true;
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        int L_ReadOk(lua_State* L)
+        {
+            lua_pushboolean(L, !ToReader(L).failed);
+            return 1;
+        }
+
+        int L_ReadAtEnd(lua_State* L)
+        {
+            const NetReader& reader = ToReader(L);
+            lua_pushboolean(L, !reader.failed && reader.at == reader.bytes.size());
+            return 1;
+        }
+
+        int L_ReadRemaining(lua_State* L)
+        {
+            const NetReader& reader = ToReader(L);
+            lua_pushnumber(L, static_cast<lua_Number>(reader.failed ? 0 : reader.bytes.size() - reader.at));
+            return 1;
+        }
+
+        int L_ReadPosition(lua_State* L)
+        {
+            lua_pushnumber(L, static_cast<lua_Number>(ToReader(L).at));
+            return 1;
+        }
+
+        int L_ReadSize(lua_State* L)
+        {
+            lua_pushnumber(L, static_cast<lua_Number>(ToReader(L).bytes.size()));
+            return 1;
+        }
+
+        int L_ReadData(lua_State* L)
+        {
+            const NetReader& reader = ToReader(L);
+            lua_pushlstring(L, reader.bytes.data(), reader.bytes.size());
+            return 1;
+        }
+
+        // --- the writer ----------------------------------------------------------------------
+
+        template <class T>
+        int L_WriteNumber(lua_State* L)
+        {
+            NetWriter&       writer = ToWriter(L);
+            const lua_Number number = luaL_checknumber(L, 2);
+            T                value{};
+            if constexpr (std::is_floating_point_v<T>)
+            {
+                value = static_cast<T>(number);
+            }
+            else
+            {
+                if (number != std::floor(number) ||
+                    number < static_cast<lua_Number>(std::numeric_limits<T>::min()) ||
+                    number > static_cast<lua_Number>(std::numeric_limits<T>::max()))
+                    return luaL_error(L, "wxl.net Writer: %s does not fit the field", lua_tostring(L, 2));
+                value = static_cast<T>(number);
+            }
+            writer.Put(&value, sizeof value);
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        int L_WriteBool(lua_State* L)
+        {
+            NetWriter&    writer = ToWriter(L);
+            const uint8_t value  = lua_toboolean(L, 2) ? 1 : 0;
+            writer.Put(&value, 1);
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        /// A guid as a script holds one: the "0x..." text, or a number.
+        uint64_t CheckGuid(lua_State* L, int index)
+        {
+            if (lua_type(L, index) == LUA_TNUMBER) return static_cast<uint64_t>(lua_tonumber(L, index));
+            const char* text = luaL_checkstring(L, index);
+            char*       end  = nullptr;
+            const unsigned long long value = std::strtoull(text, &end, 16);
+            if (!end || *end != '\0') luaL_argerror(L, index, "a guid: \"0x\" and up to sixteen hex digits");
+            return static_cast<uint64_t>(value);
+        }
+
+        int L_WriteGuid(lua_State* L)
+        {
+            NetWriter&     writer = ToWriter(L);
+            const uint64_t guid   = CheckGuid(L, 2);
+            writer.Put(&guid, sizeof guid);
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        int L_WritePackedGuid(lua_State* L)
+        {
+            NetWriter&     writer    = ToWriter(L);
+            const uint64_t guid      = CheckGuid(L, 2);
+            uint8_t        packed[9] = {};
+            size_t         n         = 1;
+            for (int i = 0; i < 8; ++i)
+            {
+                const uint8_t b = static_cast<uint8_t>(guid >> (8 * i));
+                if (!b) continue;
+                packed[0] |= static_cast<uint8_t>(1u << i);
+                packed[n++] = b;
+            }
+            writer.Put(packed, n);
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        int L_WriteVec3(lua_State* L)
+        {
+            NetWriter& writer = ToWriter(L);
+            luaL_checktype(L, 2, LUA_TTABLE);
+            for (const char* axis : {"x", "y", "z"})
+            {
+                lua_getfield(L, 2, axis);
+                const float value = static_cast<float>(luaL_checknumber(L, -1));
+                lua_pop(L, 1);
+                writer.Put(&value, sizeof value);
+            }
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        int L_WriteString(lua_State* L)
+        {
+            NetWriter&  writer = ToWriter(L);
+            size_t      size   = 0;
+            const char* text   = luaL_checklstring(L, 2, &size);
+            if (std::memchr(text, 0, size)) return luaL_argerror(L, 2, "a string without zero bytes; use Bytes for those");
+            std::string line(text, size);
+            line.push_back('\0');
+            writer.Put(line.data(), line.size());
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        int L_WriteBytes(lua_State* L)
+        {
+            NetWriter&  writer = ToWriter(L);
+            size_t      size   = 0;
+            const char* data   = luaL_checklstring(L, 2, &size);
+            writer.Put(data, size);
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        int L_WriteOk(lua_State* L)
+        {
+            lua_pushboolean(L, !ToWriter(L).failed);
+            return 1;
+        }
+
+        int L_WriteSize(lua_State* L)
+        {
+            lua_pushnumber(L, static_cast<lua_Number>(ToWriter(L).bytes.size()));
+            return 1;
+        }
+
+        int L_WriteData(lua_State* L)
+        {
+            const NetWriter& writer = ToWriter(L);
+            lua_pushlstring(L, writer.bytes.data(), writer.bytes.size());
+            return 1;
+        }
+
+        /// The metatables of the reader and the writer, made once per state.
+        void EnsureNetMeta(lua_State* L)
+        {
+            if (luaL_newmetatable(L, kNetReader))
+            {
+                static const luaL_Reg methods[] = {
+                    {"U8", &L_ReadNumber<uint8_t>},     {"U16", &L_ReadNumber<uint16_t>},
+                    {"U32", &L_ReadNumber<uint32_t>},   {"U64", &L_ReadNumber<uint64_t>},
+                    {"I8", &L_ReadNumber<int8_t>},      {"I16", &L_ReadNumber<int16_t>},
+                    {"I32", &L_ReadNumber<int32_t>},    {"I64", &L_ReadNumber<int64_t>},
+                    {"F32", &L_ReadNumber<float>},      {"F64", &L_ReadNumber<double>},
+                    {"Bool", &L_ReadBool},              {"Guid", &L_ReadGuid},
+                    {"PackedGuid", &L_ReadPackedGuid},  {"Vec3", &L_ReadVec3},
+                    {"String", &L_ReadString},          {"Bytes", &L_ReadBytes},
+                    {"Skip", &L_ReadSkip},              {"Ok", &L_ReadOk},
+                    {"AtEnd", &L_ReadAtEnd},            {"Remaining", &L_ReadRemaining},
+                    {"Position", &L_ReadPosition},      {"Size", &L_ReadSize},
+                    {"Data", &L_ReadData},              {nullptr, nullptr},
+                };
+                lua_newtable(L);
+                luaL_register(L, nullptr, methods);
+                lua_setfield(L, -2, "__index");
+                lua_pushcfunction(L, &L_NetDestroy<NetReader>);
+                lua_setfield(L, -2, "__gc");
+                lua_pushboolean(L, 0);
+                lua_setfield(L, -2, "__metatable");
+            }
+            lua_pop(L, 1);
+            if (luaL_newmetatable(L, kNetWriter))
+            {
+                static const luaL_Reg methods[] = {
+                    {"U8", &L_WriteNumber<uint8_t>},    {"U16", &L_WriteNumber<uint16_t>},
+                    {"U32", &L_WriteNumber<uint32_t>},  {"U64", &L_WriteNumber<uint64_t>},
+                    {"I8", &L_WriteNumber<int8_t>},     {"I16", &L_WriteNumber<int16_t>},
+                    {"I32", &L_WriteNumber<int32_t>},   {"I64", &L_WriteNumber<int64_t>},
+                    {"F32", &L_WriteNumber<float>},     {"F64", &L_WriteNumber<double>},
+                    {"Bool", &L_WriteBool},             {"Guid", &L_WriteGuid},
+                    {"PackedGuid", &L_WritePackedGuid}, {"Vec3", &L_WriteVec3},
+                    {"String", &L_WriteString},         {"Bytes", &L_WriteBytes},
+                    {"Ok", &L_WriteOk},                 {"Size", &L_WriteSize},
+                    {"Data", &L_WriteData},             {nullptr, nullptr},
+                };
+                lua_newtable(L);
+                luaL_register(L, nullptr, methods);
+                lua_setfield(L, -2, "__index");
+                lua_pushcfunction(L, &L_NetDestroy<NetWriter>);
+                lua_setfield(L, -2, "__gc");
+                lua_pushboolean(L, 0);
+                lua_setfield(L, -2, "__metatable");
+            }
+            lua_pop(L, 1);
+        }
+
+        void PushNetReader(lua_State* L, const void* data, size_t size)
+        {
+            EnsureNetMeta(L);
+            void* memory = lua_newuserdata(L, sizeof(NetReader));
+            auto* reader = new (memory) NetReader();
+            if (data && size) reader->bytes.assign(static_cast<const char*>(data), size);
+            luaL_getmetatable(L, kNetReader);
+            lua_setmetatable(L, -2);
+        }
+
+        /// wxl.net.Reader(bytes): a reader over a string, as a handler is handed one.
+        int L_NetReader(lua_State* L)
+        {
+            size_t      size = 0;
+            const char* data = luaL_checklstring(L, 1, &size);
+            PushNetReader(L, data, size);
+            return 1;
+        }
+
+        /// wxl.net.Writer([limit]): an empty body, bounded by MaxSend or a smaller limit.
+        int L_NetWriter(lua_State* L)
+        {
+            EnsureNetMeta(L);
+            size_t limit = WXL_NET_MAX_SEND;
+            if (!lua_isnoneornil(L, 1))
+            {
+                const lua_Number asked = luaL_checknumber(L, 1);
+                if (asked >= 0.0 && asked < static_cast<lua_Number>(limit)) limit = static_cast<size_t>(asked);
+            }
+            void* memory   = lua_newuserdata(L, sizeof(NetWriter));
+            auto* writer   = new (memory) NetWriter();
+            writer->limit  = limit;
+            luaL_getmetatable(L, kNetWriter);
+            lua_setmetatable(L, -2);
+            return 1;
+        }
+
+        // --- the service ---------------------------------------------------------------------
+
+        void WXL_CALL NetDispatch(void* user, uint32_t opcode, const void* data, uint32_t size)
+        {
+            const auto found = std::find_if(g_netClaims.begin(), g_netClaims.end(),
+                                            [&](const std::unique_ptr<NetClaim>& c) { return c.get() == user; });
+            if (found == g_netClaims.end()) return;
+            NetClaim&  claim = **found;
+            ScriptMod& mod   = *claim.mod;
+            NetHear(mod);
+            if (claim.fn == LUA_NOREF || !mod.Runs()) return;
+            const std::string what   = "in its wxl.net handler of " + Hex(opcode);
+            const NetReader*  reader = nullptr;
+            int               held   = LUA_NOREF;
+            CallBack(mod, claim.fn, what.c_str(), [&](lua_State* L) {
+                PushNetReader(L, data, size);
+                reader = static_cast<const NetReader*>(lua_touserdata(L, -1));
+                // Held until the check below: the function may drop its reader.
+                lua_pushvalue(L, -1);
+                held = luaL_ref(L, LUA_REGISTRYINDEX);
+                lua_pushnumber(L, opcode);
+                return 2;
+            });
+            if (lua_State* L = mod.State())
+            {
+                NetClaim* still = NetClaimOf(opcode);
+                if (still && still->mod == &mod && reader && reader->failed && !still->warned)
+                {
+                    still->warned = true;
+                    wxl::Log(WXL_LOG_WARN, kTag,
+                             "mod " + mod.Id() + ": malformed " + Hex(opcode) + " from the server: its handler read past the end of " +
+                                 std::to_string(size) + " bytes");
+                }
+                luaL_unref(L, LUA_REGISTRYINDEX, held);
+            }
+        }
+
+        int L_NetState(lua_State* L)
+        {
+            const wxl_net_api* api = Net();
+            if (!api) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            switch (api->state())
+            {
+            case WXL_NET_CONNECTING: lua_pushliteral(L, "connecting"); break;
+            case WXL_NET_CONNECTED: lua_pushliteral(L, "connected"); break;
+            case WXL_NET_AUTHENTICATED: lua_pushliteral(L, "authenticated"); break;
+            default: lua_pushliteral(L, "offline"); break;
+            }
+            return 1;
+        }
+
+        int L_NetClaim(lua_State* L)
+        {
+            ScriptMod&     mod    = Self(L);
+            const uint32_t opcode = CheckOpcode(L, 1, "Claim", "opcode");
+            const auto     refuse = [&](const std::string& why) {
+                wxl::Log(WXL_LOG_WARN, kTag, "mod " + mod.Id() + ": wxl.net.Claim refused " + Hex(opcode) + ": " + why);
+                return PushResultFailure(L, WXL_E_INVALID);
+            };
+            if (opcode > WXL_NET_OPCODE_MAX) return refuse("an opcode is at most 0xFFFF, the server writes it in 16 bits");
+            if (NetClaim* held = NetClaimOf(opcode))
+            {
+                if (held->mod == &mod)
+                {
+                    lua_pushboolean(L, 1);
+                    return 1;
+                }
+                return refuse(Hex(opcode) + " is claimed by " + held->mod->Id());
+            }
+            const host::Manifest& manifest = mod.Manifest();
+            if (opcode <= WXL_NET_STOCK_LIMIT && !manifest.net.stock)
+                return refuse("it is one of the client's own numbers (up to 0x520); a mod's own start at 0x521, and a "
+                              "tool that must use the client's says \"net\": { \"stock\": true } in its mod.json");
+            if (const Runtime* runtime = Runtime::Instance())
+                if (const host::DeclaredOpcodes* declared = runtime->Opcodes().Find(opcode))
+                    if (declared->mod != mod.Id())
+                        return refuse(Hex(opcode) + " is declared by " + declared->mod + " in its mod.json");
+            if (!manifest.net.opcodes.empty() && !manifest.net.Declares(opcode))
+                return refuse("this mod's mod.json lists its numbers in net.opcodes, and " + Hex(opcode) +
+                              " is not among them");
+            const wxl_net_api* api = Net();
+            if (!api || !wxl::detail::Carries(api, &wxl_net_api::set_handler)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->claim_opcode(opcode);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            auto claim    = std::make_unique<NetClaim>();
+            claim->mod    = &mod;
+            claim->opcode = opcode;
+            // The runtime hands every message of the number here, so the mod hears its server
+            // even before it sets a function.
+            api->set_handler(opcode, &NetDispatch, claim.get());
+            g_netClaims.push_back(std::move(claim));
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        void NetDrop(size_t index)
+        {
+            const std::unique_ptr<NetClaim> claim = std::move(g_netClaims[index]);
+            g_netClaims.erase(g_netClaims.begin() + static_cast<std::ptrdiff_t>(index));
+            if (const wxl_net_api* api = Net()) api->release_opcode(claim->opcode);
+            if (lua_State* L = claim->mod->State()) luaL_unref(L, LUA_REGISTRYINDEX, claim->fn);
+        }
+
+        int L_NetRelease(lua_State* L)
+        {
+            ScriptMod&     mod    = Self(L);
+            const uint32_t opcode = CheckOpcode(L, 1, "Release", "opcode");
+            for (size_t i = 0; i < g_netClaims.size(); ++i)
+            {
+                if (g_netClaims[i]->opcode != opcode || g_netClaims[i]->mod != &mod) continue;
+                NetDrop(i);
+                lua_pushboolean(L, 1);
+                return 1;
+            }
+            return PushResultFailure(L, WXL_E_NOT_FOUND);
+        }
+
+        int L_NetSetHandler(lua_State* L)
+        {
+            ScriptMod&     mod    = Self(L);
+            const uint32_t opcode = CheckOpcode(L, 1, "SetHandler", "opcode");
+            if (!lua_isnoneornil(L, 2)) luaL_checktype(L, 2, LUA_TFUNCTION);
+            NetClaim* claim = NetClaimOf(opcode);
+            if (!claim || claim->mod != &mod)
+            {
+                wxl::Log(WXL_LOG_WARN, kTag, "mod " + mod.Id() + ": wxl.net.SetHandler refused " + Hex(opcode) +
+                                                 ": claim it first with wxl.net.Claim");
+                return PushResultFailure(L, WXL_E_INVALID);
+            }
+            luaL_unref(L, LUA_REGISTRYINDEX, claim->fn);
+            claim->fn = LUA_NOREF;
+            if (!lua_isnoneornil(L, 2))
+            {
+                lua_pushvalue(L, 2);
+                claim->fn = luaL_ref(L, LUA_REGISTRYINDEX);
+            }
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_NetSetCompressed(lua_State* L)
+        {
+            ScriptMod&     mod        = Self(L);
+            const uint32_t opcode     = CheckOpcode(L, 1, "SetCompressed", "opcode");
+            const uint32_t compressed = CheckOpcode(L, 2, "SetCompressed", "compressed");
+            const NetClaim* plain     = NetClaimOf(opcode);
+            const NetClaim* packed    = compressed ? NetClaimOf(compressed) : nullptr;
+            if (!plain || plain->mod != &mod || (compressed && (!packed || packed->mod != &mod)))
+            {
+                wxl::Log(WXL_LOG_WARN, kTag, "mod " + mod.Id() + ": wxl.net.SetCompressed refused " + Hex(opcode) +
+                                                 " and " + Hex(compressed) + ": claim both numbers first");
+                return PushResultFailure(L, WXL_E_INVALID);
+            }
+            const wxl_net_api* api = Net();
+            if (!api || !wxl::detail::Carries(api, &wxl_net_api::set_compressed)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set_compressed(opcode, compressed);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_NetSend(lua_State* L)
+        {
+            ScriptMod&     mod    = Self(L);
+            const uint32_t opcode = CheckOpcode(L, 1, "Send", "opcode");
+            std::string    body;
+            if (const NetWriter* writer = static_cast<const NetWriter*>(luaL_testudata(L, 2, kNetWriter)))
+            {
+                if (writer->failed) return PushResultFailure(L, WXL_E_INVALID);
+                body = writer->bytes;
+            }
+            else if (!lua_isnoneornil(L, 2))
+            {
+                size_t      size = 0;
+                const char* data = luaL_checklstring(L, 2, &size);
+                body.assign(data, size);
+            }
+            const NetClaim* claim = NetClaimOf(opcode);
+            if (!claim || claim->mod != &mod) return PushResultFailure(L, WXL_E_INVALID);
+            // The send gate, for this Lua mod: the runtime keeps it for wxl.lua as a whole.
+            if (!NetHeard(mod)) return PushResultFailure(L, WXL_E_FAILED);
+            const wxl_net_api* api = Net();
+            if (!api) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->send(opcode, body.data(), static_cast<uint32_t>(body.size()));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_NetHeard(lua_State* L)
+        {
+            lua_pushboolean(L, NetHeard(Self(L)) ? 1 : 0);
+            return 1;
+        }
+
+        void ReleaseNet(ScriptMod& mod)
+        {
+            for (size_t i = g_netClaims.size(); i-- > 0;)
+                if (g_netClaims[i]->mod == &mod) NetDrop(i);
+            g_netHeard.erase(std::remove_if(g_netHeard.begin(), g_netHeard.end(),
+                                            [&](const auto& entry) { return entry.first == &mod; }),
+                             g_netHeard.end());
+        }
+
     } // namespace
 
     lua_CFunction Find(std::string_view service, std::string_view name)
@@ -4035,6 +4737,13 @@ namespace wxl::lua::shims
         if (service == "render" && name == "RestoreShader") return &L_RenderRestoreShader;
         if (service == "render" && name == "Dispatch") return &L_RenderDispatch;
         if (service == "render" && name == "BonePalette") return &L_RenderBonePalette;
+        if (service == "net" && name == "State") return &L_NetState;
+        if (service == "net" && name == "Claim") return &L_NetClaim;
+        if (service == "net" && name == "Release") return &L_NetRelease;
+        if (service == "net" && name == "SetHandler") return &L_NetSetHandler;
+        if (service == "net" && name == "SetCompressed") return &L_NetSetCompressed;
+        if (service == "net" && name == "Send") return &L_NetSend;
+        if (service == "net" && name == "Heard") return &L_NetHeard;
         if (service == "profile" && name == "Begin") return &profile::L_Begin;
         if (service == "profile" && name == "End") return &profile::L_End;
         if (service == "profile" && name == "Text") return &profile::L_Text;
@@ -4048,6 +4757,7 @@ namespace wxl::lua::shims
         ReleaseViewAndPointer(mod);
         ReleaseStorage(mod);
         ReleaseRelay(mod);
+        ReleaseNet(mod);
         RestoreShaders(mod);
         for (size_t i = g_folders.size(); i-- > 0;)
             if (std::find(g_folders[i].holders.begin(), g_folders[i].holders.end(), &mod) != g_folders[i].holders.end())
@@ -4060,6 +4770,15 @@ namespace wxl::lua::shims
             if (std::any_of(g_served[i].holders.begin(), g_served[i].holders.end(),
                             [&](const ServedName& holder) { return holder.mod == &mod; }))
                 LetGoServed(i, mod);
+    }
+
+    void AddExtras(lua_State* L, std::string_view service)
+    {
+        if (service != "net") return;
+        lua_pushcfunction(L, &L_NetReader);
+        lua_setfield(L, -2, "Reader");
+        lua_pushcfunction(L, &L_NetWriter);
+        lua_setfield(L, -2, "Writer");
     }
 
     void Start()

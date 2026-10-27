@@ -9,6 +9,7 @@
     "win-x64": "bin/x64/wxl-lua.dll",
     "win-x86": "bin/x86/wxl-lua.dll"
   },
+  "net": { "stock": true },
   "optional": [
     { "service": "wxl.object", "version": 1 }
   ]

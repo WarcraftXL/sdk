@@ -67,6 +67,29 @@
       "type": "string",
       "minLength": 1
     },
+    "net": {
+      "description": "The messages of the world connection the mod speaks (wxl.net). Read before any of the mod's code runs: a number another mod loaded earlier declares refuses this one.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "opcodes": {
+          "description": "The opcode numbers the mod claims, each a number, a string \"0x521\", or a range \"0x521-0x52A\". A mod that declares numbers can claim only these; another mod cannot claim them at all. Numbers up to 0x520 are the client's own and need \"stock\".",
+          "type": "array",
+          "items": {
+            "oneOf": [
+              { "type": "integer", "minimum": 0, "maximum": 65535 },
+              { "type": "string", "pattern": "^(0[xX][0-9A-Fa-f]{1,4}|[0-9]{1,5})(-(0[xX][0-9A-Fa-f]{1,4}|[0-9]{1,5}))?$" }
+            ]
+          },
+          "default": []
+        },
+        "stock": {
+          "description": "Lets the mod claim and send the client's own opcode numbers (up to 0x520). For tools; a game mod never needs it. Observing the client's own traffic through MessageReceived needs nothing.",
+          "type": "boolean",
+          "default": false
+        }
+      }
+    },
     "description": {
       "type": "string",
       "maxLength": 512
