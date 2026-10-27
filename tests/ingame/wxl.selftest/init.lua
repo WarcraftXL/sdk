@@ -45,7 +45,7 @@
 --      client's UnitCanAttack for the nearest unit (targeted for the question, then the target is
 --      given back); CanInteract and a game object's CanUse answer for everything in view.
 --  18. a highlight: wxl.highlight outlines the player for two seconds where the runtime draws
---      highlights (the stock client, the recompiled client on Vulkan), and the batches drawn again
+--      highlights (either client on Vulkan, the stock client on D3D9), and the batches drawn again
 --      are counted; elsewhere it must say why it draws none, and refuse as unsupported.
 --  19. the game's selection circles: the nearest unit is targeted, its circle counted drawn, then
 --      hidden by wxl.selectioncircle, drawn larger and blue for two seconds, and given back; the
@@ -70,11 +70,14 @@
 --      each add-on's; a verdict short of signed with the world up means a mod took it as signed
 --      (wxl.glue-unlock with a changed FrameXML), a NOTE. The clearing of loose folders was asked
 --      once, at the login screens.
---  24. drawing into the frame: wxl.gx names the device; wxl.render draws on the Vulkan renderer
---      (elsewhere it must say why not): a screen image is made and read, a full-screen pipeline
---      of the selftest's own SPIR-V tints the frame after the world for two seconds, the four
---      points of the frame come, a model batch is kept from ModelBatchDrawn, and a GPU zone is
---      opened and closed around the tint.
+--  24. drawing into the frame: wxl.gx names the device; wxl.render draws on the Vulkan renderer,
+--      on either client (on Direct3D 9 it must say why not): a screen image is made and read, a
+--      full-screen pipeline of the selftest's own SPIR-V tints the frame after the world for two
+--      seconds, the four points of the frame come, a model batch is kept from ModelBatchDrawn,
+--      and a GPU zone is opened and closed around the tint.
+--  25. compute and bone palettes: on the Vulkan renderer (either client) a compute dispatch fills
+--      a buffer the frame then shows orange for two seconds, and a palette of 300 matrices shows
+--      its last row green for two; on Direct3D 9 both are refused as unsupported.
 --  26. the ground: wxl.terrain answers the height under the player, the chunks loaded since the
 --      mod loaded were announced, then a brush of the vertices within three yards of a point six
 --      yards north (VerticesIn) is lowered three yards for two seconds: wxl.terrain's height and
@@ -1715,6 +1718,9 @@ step(function()
         return
     end
     local me = wxl.object.LocalPlayer()
+    if wxl.gx and wxl.gx.Api and wxl.gx.Api() == "vulkan" then
+        result("on the Vulkan device wxl.highlight draws (both clients)", hl.Supported() == true, tostring(hl.UnsupportedReason()))
+    end
     if not hl.Supported() then
         local why = hl.UnsupportedReason()
         local ok, err = hl.Set(me, 0xFF3030, 3, 12, 0.6)
@@ -2101,6 +2107,11 @@ step(function()
     local api = wxl.gx.Api()
     result("wxl.gx.Api names the client's device (" .. tostring(api) .. ")", type(api) == "string" and api ~= "none", tostring(api))
     local rd = wxl.render
+    -- Both clients draw through the Vulkan renderer under [gx] api = vulkan, the stock one too:
+    -- there it must draw; on Direct3D 9 it must say why it does not.
+    if api == "vulkan" then
+        result("on the Vulkan device wxl.render draws (both clients)", rd.Supported() == true, tostring(rd.UnsupportedReason()))
+    end
     if not rd.Supported() then
         local why = rd.UnsupportedReason()
         result("wxl.render draws nothing on " .. tostring(api) .. " and says why", api ~= "vulkan" and type(why) == "string" and #why > 0,
@@ -2260,7 +2271,13 @@ step(function()
         result("wxl.render.Dispatch and BonePalette", false, "this runtime is older than abi 0.1.34")
         return
     end
+    local api = wxl.gx and wxl.gx.Api and wxl.gx.Api()
+    if api == "vulkan" then
+        result("on the Vulkan device wxl.render dispatches and takes palettes (both clients)", rd.Supported() == true,
+               tostring(rd.UnsupportedReason()))
+    end
     if not rd.Supported() then
+        result("wxl.render refuses compute only off Vulkan (" .. tostring(api) .. ")", api ~= "vulkan", tostring(rd.UnsupportedReason()))
         local ok, why = rd.BonePalette({ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 })
         result("BonePalette answers unsupported where wxl.render draws nothing", ok == nil and why == "unsupported", tostring(why))
         local made, err = rd.CreatePipeline({ kind = "compute", compute = FILL_SPIRV })
