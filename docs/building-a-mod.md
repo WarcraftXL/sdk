@@ -1854,6 +1854,85 @@ look wins over its kind's; among mods the last set wins. `Reset(kinds, reactions
 `ResetObject(target)` and `ResetAll()` give back what your mod changed, and it all goes with the
 mod. `Drawn()` and `Hidden()` count the circles the last world frame drew and left out.
 
+### The ground: `wxl.terrain`
+
+`wxl::TerrainService` (abi `0.1.35`) reads the ground of the map the player is on and reshapes it
+while the game runs. The ground is the client's own grid: chunks of 145 vertices, a vertex about
+every 4.17 yards (2.08 counting the inner ones). A chunk is named by its column and row on the map
+(`chunk_x`, `chunk_y`, 0 to 1023), a vertex by its index in the chunk (0 to 144);
+`wxl/terrain/grid.hpp` (namespace `wxl::terrain`) has the grid's arithmetic, callable without the
+runtime: indices, rows and columns, world positions, the height of a triangle.
+
+```cpp
+using wxl::TerrainService;
+// What is under the aimed point.
+if (auto hit = TerrainService::Trace(eye, farAway))
+{
+    // Dig: every vertex within three yards of the point, half a yard lower each time, whichever
+    // chunks they are on.
+    std::vector<wxl_terrain_height> edits;
+    for (const wxl_terrain_vertex& v : TerrainService::VerticesIn(hit->point.x, hit->point.y, 3.0f))
+        if (v.loaded) edits.push_back({v.chunk_x, v.chunk_y, v.index, v.z - 0.5f});
+    TerrainService::SetHeights(edits);
+}
+const float under = TerrainService::Height(x, y).value_or(0.0f);         // as edited
+const float before = TerrainService::Height(x, y, true).value_or(0.0f);  // the map's own
+```
+
+**What follows an edit.** `SetHeights` takes absolute world heights and, before it returns, the
+client sees them everywhere: the ground drawn (its normals made again across the neighbouring
+chunks' edges, its vertex buffers filled again, its bounds and culling, under Direct3D 9 and the
+Vulkan renderer alike, its grass grown again on the new ground), the player's walking and falling,
+the camera's collision, and the client's own ray tests (`wxl::WorldService::Trace`, clicks). A
+player standing still on ground that went down falls; one moving meets the new ground at the next
+step. The edit is all or nothing: an entry off the grid, or a height that is not a number within
+`WXL_TERRAIN_HEIGHT_LIMIT`, refuses it whole with `WXL_E_INVALID` and a log line under `terrain`.
+Liquids keep their surface and map doodads (trees, rocks) stay where the map put them.
+
+**Regions.** `VerticesIn(x, y, radius)` lists every vertex within a radius (up to
+`WXL_TERRAIN_RADIUS_LIMIT`, 128 yards) of a point, each once whichever chunks the circle crosses:
+its chunk and index for `SetHeights`, its place, its height now (`z`) and before any edit
+(`original_z`), whether it is an inner vertex, and whether its chunk is loaded. A brush is that
+list, filtered and given heights: no chunk to split. `Vertices(chunk_x, chunk_y)` lists one chunk's
+145 instead, `Locate(x, y)` names the chunk, cell and nearest vertex of a point.
+
+**Edges.** A vertex on a chunk's edge is the same ground as its neighbour's (column 8 of one is
+column 0 of the next): set it through either chunk and both are set, so the ground never cracks.
+`VerticesIn` names it once, in the chunk whose cells it starts.
+`Reset` of a chunk takes your edits off its edge vertices in the neighbours too.
+
+**Owners and layers.** Your edits are your mod's, in layer 0 unless you name another
+(`SetHeights(edits, 1)`): keep a preview in one layer and what the player committed in another,
+and `ResetAll(1)` drops the preview alone. Where two mods (or two layers) set one vertex, the latest
+edit shows, and the one before comes back when it is reset. Everything your mod set comes off when
+it is disabled or unloads.
+
+**Streaming.** The client loads chunks as the player comes and frees them as the player goes. The
+runtime keeps your edits of a chunk that leaves and writes them back when it loads again, before
+`WorldScript::OnTerrainChunkLoaded(map, chunk_x, chunk_y, edited)`; `OnTerrainChunkUnloaded` says
+when one goes. A chunk not loaded can be edited: the edit waits for it. When the map unloads (a
+teleport to another map, a logout) every edit is dropped and `OnTerrainEditsCleared(map, chunks)` is
+raised; a teleport within the map keeps them. `Presence(x, y)` tells ground from a hole, a chunk
+not loaded, or no terrain at all (a map made of buildings alone, where edits answer
+`WXL_E_UNSUPPORTED`).
+
+**Cost.** An edit of a brush (a few to a few dozen vertices) costs the runtime a few microseconds
+plus the client's rebuild of the chunks it touched; `Stats()` answers what the last edit cost
+(`last_microseconds`) and the longest so far. A button held down that digs every 100 ms is well
+within a frame.
+
+**What is not there.** The resolution is the client's grid; holes, textures and the server's
+heights are not this service's: the server keeps its own ground, so a mod that reshapes it where a
+server checks movement must tell its server.
+
+**Drawing the grid.** To show the player the vertices a brush will move, draw lines between the
+positions `Vertices` answers, at `RenderScript::OnRenderPoint(WXL_RENDER_POINT_AFTER_OPAQUE_WORLD,
+...)`. On the recompiled client's Vulkan renderer, a `wxl.render` GRAPHICS pipeline with
+`WXL_RENDER_TOPOLOGY_LINES` reads the positions from a buffer of yours by address and the camera's
+matrix from its push constants. On Direct3D 9 (the stock client, or the recompiled client without
+`[gx] api = vulkan`), draw with `wxl::GxService`'s device (a line list, then
+`InvalidateState()`). No portable line service exists yet.
+
 ### Drawing into the frame: `wxl.render`
 
 On the runtime's Vulkan renderer (the recompiled client with `[gx] api = vulkan`), a mod draws

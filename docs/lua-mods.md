@@ -1738,6 +1738,71 @@ rings, the marker's pulse) still playing over it; the scale is the size against 
 what this mod changed, and it all goes when the mod reloads, is disabled or unloads. `Drawn()` and
 `Hidden()` count the circles the last world frame drew and left out.
 
+### The ground: `wxl.terrain`
+
+`wxl.terrain` (abi `0.1.35`) reads the ground of the map you are on and reshapes it while the game
+runs. The ground is the client's own grid: chunks of 145 vertices, one about every 4.17 yards (2.08
+counting the vertices in the middle of each square). A chunk is named by its column and row on the
+map (`chunk_x`, `chunk_y`, 0 to 1023), a vertex by its index in the chunk (0 to 144).
+
+```lua
+-- Dig where the camera looks: every vertex within three yards of the point, half a yard lower.
+local function dig(from, to)
+    local hit = wxl.terrain.Trace(from, to)
+    if not hit then return end
+    local edits = {}
+    for _, v in ipairs(wxl.terrain.VerticesIn(hit.point.x, hit.point.y, 3)) do
+        if v.loaded then
+            edits[#edits + 1] = { chunk_x = v.chunk_x, chunk_y = v.chunk_y, index = v.index, height = v.z - 0.5 }
+        end
+    end
+    return wxl.terrain.SetHeights(edits)
+end
+
+print(wxl.terrain.Height(x, y))          -- the ground under a point, as edited
+print(wxl.terrain.Height(x, y, true))    -- the map's own
+print(wxl.terrain.Presence(x, y))        -- "ground", "hole", "not_loaded" or "none"
+```
+
+`VerticesIn(x, y, radius)` lists every vertex within a radius (up to 128 yards) of a point, each
+once whichever chunks the circle crosses, as `{ chunk_x, chunk_y, index, x, y, z, original_z, inner,
+loaded }`: the brush is that list, nothing to split by chunk. `Vertices(chunk_x, chunk_y)` lists
+one chunk's vertices from index 0, so vertex `i` is at `[i + 1]`: rows of 9, each but the last
+followed by a row of 8 in the middle of the squares.
+
+**What follows an edit.** `SetHeights` takes absolute heights, all or none: an entry off the grid
+answers `nil, "invalid"` and sets nothing, with a line in the log under `terrain`. Before it returns,
+the ground is drawn anew (its light on the slopes, its grass grown again), you walk on it and fall
+into it, the camera bumps into it and your clicks land on it (`wxl.world.Trace` meets it too). If
+you stand still on ground that goes down, you fall; ground raised under you holds you at your next
+step. Water keeps its surface, and trees and rocks the map placed stay where they are. A vertex on a
+chunk's edge belongs to both chunks: setting it through either sets both.
+
+**Whose edits.** Your edits are your mod's: `Reset(chunk_x, chunk_y)` takes them off one chunk,
+`ResetAll()` off everywhere, and they come off when your mod is disabled, reloads or unloads. Where
+two mods set one vertex, the latest edit shows, and the other comes back when it is reset.
+
+**When chunks come and go.** The game loads the ground around you and frees it behind you. Your
+edits stay with the runtime and are back on a chunk when it loads again:
+
+```lua
+Observe("WorldScript", "OnTerrainChunkLoaded", function(map, chunk_x, chunk_y, edited) end)
+Observe("WorldScript", "OnTerrainChunkUnloaded", function(map, chunk_x, chunk_y, edited) end)
+Observe("WorldScript", "OnTerrainEditsCleared", function(map, chunks)
+    -- the map is going (another map, a logout): every edit was dropped
+end)
+```
+
+A teleport within the map keeps them. `Stats()` answers what the service holds and what the last
+edit cost (`last_microseconds`): a few microseconds for a brush, so an edit every 100 ms while a
+button is held is no trouble. The server keeps its own ground: a mod that digs where a server checks
+movement must tell its server.
+
+**Drawing a grid over the ground.** Lines between the positions `Vertices` answers, drawn at
+`OnRenderPoint("after_opaque_world")`: on the recompiled client's Vulkan renderer with a
+`wxl.render` pipeline of kind `"graphics"` and topology `"lines"` (the positions in a buffer of
+yours, the camera's matrix in the push constants). On Direct3D 9 a Lua mod has no way to draw yet.
+
 ### Drawing into the frame: `wxl.render`
 
 On the Vulkan renderer (the recompiled client with `[gx] api = vulkan`), `wxl.render` (abi
@@ -2200,6 +2265,10 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.cvar.Exists(name)`, `.Get(name)`, `.GetNumber(name)`, `.GetBool(name)`, `.GetDefault(name)`, `.Flags(name)` | whether a variable is registered; its value as text, a number or a switch; its default; what it is (abi `0.1.31`) |
 | `wxl.cvar.Set(name, value)`, `.SetNumber(name, value)`, `.SetBool(name, value)`, `.Reset(name)` | `true`: a variable given a value, or its default (abi `0.1.31`) |
 | `wxl.gx.Api()` | the device the client draws with: `"none"`, `"d3d9"`, `"d3d9ex"`, `"opengl"`, `"vulkan"` (abi `0.1.33`) |
+| `wxl.terrain.Height(x, y, original)`, `.Presence(x, y)` | the ground's height under a point, or `nil`; `"ground"`, `"hole"`, `"not_loaded"` or `"none"` (abi `0.1.35`) |
+| `wxl.terrain.VerticesIn(x, y, radius)` | every vertex within a radius, each once: `{ chunk_x, chunk_y, index, x, y, z, original_z, inner, loaded }` (abi `0.1.35`) |
+| `wxl.terrain.Trace(start, finish)`, `.Locate(x, y)`, `.Vertices(chunk_x, chunk_y, original)` | `{ point, normal, chunk_x, chunk_y, fraction }` where a segment meets the ground; `{ chunk_x, chunk_y, cell_row, cell_col, nearest, loaded }`; a chunk's 145 vertices; see [The ground](#the-ground-wxlterrain) (abi `0.1.35`) |
+| `wxl.terrain.SetHeights(heights)`, `.Reset(chunk_x, chunk_y)`, `.ResetAll()`, `.Stats()` | `true`: vertices set to heights, all or none (`{ chunk_x, chunk_y, index, height }` each), or this mod's edits taken off; what the service holds (abi `0.1.35`) |
 | `wxl.render.Supported()`, `.UnsupportedReason()` | whether the render service drives the client's device, and why not (abi `0.1.33`) |
 | `wxl.render.CreateImage(width, height, format, samples)`, `.CreateScreenImage(divisor, format, samples)`, `.CreateBuffer(size)` | an image or a buffer of the mod's: `image:ImageSlot()`, `:ImageWidth()`, `:ImageHeight()`, `buffer:WriteBuffer(offset, bytes)`, `:BufferAddress()`; see [Drawing into the frame](#drawing-into-the-frame-wxlrender) (abi `0.1.33`) |
 | `wxl.render.CreatePipeline(desc)`, `.Sampler(flags)` | a pipeline of the mod's SPIR-V (`pipeline:PipelineReady()`); a sampler's index (abi `0.1.33`) |
@@ -2453,6 +2522,8 @@ A few to start from:
 | `WorldScript` | `OnWorldClickRequest` | `button`, `hit`, `object`, `object_guid`, `point`, `targeting`, `refused` | a click in the world the game is about to act on (`hit`: `"none"`, `"ground"`, `"object"`, `"world_object"`, `"name_plate"`; `targeting` while a spell waits for its target), which an `Override` refuses (abi `0.1.26`) |
 | `LuaScript` | `OnInterfaceSignature` | `file`, `extra`, `verdict`, `accepted` | the client judged an interface's signature (`verdict`: `"missing"`, `"corrupt"`, `"modified"`, `"signed"`), which an `Override` has taken as signed (abi `0.1.32`) |
 | | `OnInterfaceCleanupRequest` | `refused` | the login screens start and the client is about to move loose interface folders aside, which an `Override` refuses (abi `0.1.32`) |
+| `WorldScript` | `OnTerrainChunkLoaded`, `OnTerrainChunkUnloaded` | `map`, `chunk_x`, `chunk_y`, `edited` | a chunk of the ground loaded (its edits back already) or is being freed (abi `0.1.35`) |
+| | `OnTerrainEditsCleared` | `map`, `chunks` | the map is unloading and every edit of its ground was dropped (abi `0.1.35`) |
 
 The families `PlayerScript`, `GlueScript` and `ChatScript`, and `WorldScript`'s `OnZoneChanged`,
 `OnMouseoverChanged` and `OnCVarChanged`, came with `0.1.6`: a mod that uses one asks for
