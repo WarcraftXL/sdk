@@ -1885,7 +1885,40 @@ spell circle), `"modulate"` multiplied into it: white leaves the ground as it is
 colour darkens it, as a stain, a scorch or a mark scored into the dirt (`fill_alpha` says how much).
 `feather` (yards) fades the inside out towards its border, `radial_fade` (0 to 1) from its centre
 outwards over that part of the radius (1: from the centre itself). They work with or without a
-picture. Pictures that suit the ground among the game's own:
+picture.
+
+**Pictures on boxes and cylinders** (abi `0.1.39`). A box's faces and a cylinder's side and ends
+take the same look, each face in its own frame: the picture stands up each side (on the top and
+bottom faces its top points along `facing`), and goes once around a cylinder, its seam behind it.
+`"fit"` and `"tile"` lay it on each face; `"world"` lays `uv_size` yards a picture along each face
+from the world's origin, so that boxes side by side join. `feather` fades each face towards its
+edges, `radial_fade` from its middle. A sphere's inside stays plain.
+
+To scroll a picture, keep the shape and change only its look each frame: `wxl.draw.SetStyle(shape,
+style)` with a new `uv_offset` builds nothing again, only the numbers the picture is drawn with.
+An immediate shape given each frame exactly as the frame before (same shape, same place) is not
+built again either; `Stats().reused` counts them.
+
+**Seeing what is hidden** (abi `0.1.39`). `occluded_alpha` (0 to 1) draws the part of a shape the
+scene hides (under the ground, behind a wall) at that part of its opacity, and the part that is seen
+as usual: a selection box sunk in the ground shows its buried half faintly. It works on lines,
+ground shapes and volumes, for a shape tested against the depth (not `"on_top"`), and draws the
+shape twice. `Stats().occluded` counts them.
+
+```lua
+-- A digging selection: a box between the ground and the level to dig to, its faces scrolling.
+local look = { color = 0xE8C060, width = 1.5, fill_alpha = 0.35, texture = "SPELLS\\T_VFX_RING_FF.BLP",
+               uv = "tile", uv_size = 0.5, blend = "add", occluded_alpha = 0.35 }
+local sel = wxl.draw.Add({ kind = "box", center = mid, size = { x = 3, y = 3, z = depth } }, look)
+local scroll = 0
+Observe("RenderScript", "OnFrameBegin", function()
+    scroll = (scroll + 0.004) % 1
+    look.uv_offset = { scroll, 0 }
+    wxl.draw.SetStyle(sel, look)
+end)
+```
+
+Pictures that suit the ground among the game's own:
 
 | Picture | What it is |
 |---|---|
@@ -1923,7 +1956,8 @@ draw up to 524288 vertices a frame; past that, shapes are left out of the frame 
 once a second. `wxl.draw.Stats()` answers what the last frame drew and what it cost on the CPU
 (`build_microseconds`): a few tens of microseconds for a grid, a cone and a ring; since abi
 `0.1.38` also `textured` (insides drawn with a picture, a feather, a fade or a blend),
-`textures` and `textures_loading` (pictures held, still loading) and `shadows`.
+`textures` and `textures_loading` (pictures held, still loading) and `shadows`; since `0.1.39`
+`occluded` and `reused`.
 
 The interface's own Lua (an add-on, a FrameXML file) has `WxlDraw(shape, style)`, the same tables
 as `Draw`, for the next frame of the world: call it from an `OnUpdate`.
@@ -2450,6 +2484,7 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.draw.Draw(shape, style)` | `true`: a shape drawn by the next frame only: a line, a circle, a ring, a sector, a rectangle, a polygon or a grid on the ground, a box, a sphere or a cylinder; see [Shapes in the world](#shapes-in-the-world-wxldraw) (abi `0.1.36`) |
 | `wxl.draw.Add(shape, style, duration)`, `.Update(shape, t)`, `.SetStyle(shape, t)`, `.Clear()`, `.Stats()` | a kept `wxl.Shape` (`shape:Move(center, facing)`, `:SetDuration(seconds)`, `:Attach(object, flags)`, `:Detach()`, `:Remove()`); what the last frame drew (abi `0.1.36`) |
 | `wxl.draw` style `texture`, `uv`, `blend`, `feather`, `radial_fade`, `softness`, `alpha_start`, `shadow_alpha`, shape `alphas` | pictures on the ground, soft and shadowed lines; see [Shapes in the world](#shapes-in-the-world-wxldraw) (abi `0.1.38`) |
+| `wxl.draw` style `occluded_alpha`; pictures on boxes and cylinders | what the scene hides of a shape, seen faintly; textured volumes (abi `0.1.39`) |
 | `wxl.animation.Play(unit, anim_id, flags, speed)`, `.Stop(unit)` | `true`: an AnimationData animation played on a unit as the game plays an emote, once or looped, or this mod's stopped; see [Animations on units](#animations-on-units-wxlanimation) (abi `0.1.37`) |
 | `wxl.animation.Playing(unit)`, `.Current(unit)` | the id a mod plays on a unit, or `nil`; the id its model shows now (abi `0.1.37`) |
 | `wxl.render.Supported()`, `.UnsupportedReason()` | whether the render service drives the client's device, and why not (abi `0.1.33`) |

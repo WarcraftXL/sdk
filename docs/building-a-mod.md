@@ -1990,6 +1990,15 @@ A C mod sets the fields of `wxl_draw_style` past `fade_out` (and `point_alphas` 
 `wxl_draw_shape`); every one left at 0 changes nothing, and a struct whose `struct_size` stops at
 `fade_out` (`WXL_DRAW_STYLE_SIZE_0136`) is still taken as the look it had.
 
+**Boxes, cylinders, and what is hidden** (abi `0.1.39`). A box's faces and a cylinder's side and
+ends take the same texture, `Uv`, `Blend`, `Feather` and `RadialFade`, each face in its own frame
+(the picture up each side, once around a cylinder; WORLD along each face's axes from the world's
+origin). `.Occluded(opacity)` (`occluded_alpha`) draws the part of a tested shape the scene hides at
+that part of its opacity, then the seen part as usual: two passes of the shape, for lines, ground
+shapes and volumes. Changing only a kept shape's style (`SetStyle`, its `uv_offset` each frame to
+scroll its picture) builds nothing again, and an immediate shape given as the frame before is not
+built again (`Stats().reused`). The style of abi 0.1.38 (`WXL_DRAW_STYLE_SIZE_0138`) is still taken.
+
 **Lifetimes.** `Draw` is for one frame; `Add(shape, style, duration)` keeps a shape and answers a
 handle (`WXL_HANDLE_NONE` when refused): `Update`, `Move`, `SetStyle`, `SetDuration`, `Attach`
 (offsets from the object's position, turned with it under `WXL_DRAW_ATTACH_TURN`; the shape goes
