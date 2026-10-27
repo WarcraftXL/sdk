@@ -1711,6 +1711,26 @@ int main()
                   FakeView::LayerAsked(4) == 1.0f && !FakeView::LastLook().extra_texture && FakeView::LastLook().params[2] == 0.0f,
               "a look carries the layer's extra texture and numbers, none unless answered");
         Check(TerrainService::SetLayerProvider(nullptr) == WXL_OK, "and null takes that one off too");
+        // abi 0.1.44: a chunk's layers past the client's four.
+        Check(TerrainService::SetLayerProvider([](void*, const wxl_terrain_layer*, wxl_terrain_layer_look*) {}, nullptr, 0,
+                                               [](void*, const wxl_terrain_chunk* chunk, wxl_terrain_extra_layers* out) {
+                                                   if (chunk->layers != 4) return;
+                                                   out->count            = 2;
+                                                   out->layer[0].texture = "tileset\\moss.blp";
+                                                   out->alpha[3]         = 200;
+                                               }) == WXL_OK &&
+                  FakeView::TerrainProvider().chunk_fn != nullptr,
+              "SetLayerProvider passes its chunk function");
+        static wxl_terrain_extra_layers extras;
+        extras = wxl_terrain_extra_layers{};
+        extras.struct_size = sizeof extras;
+        wxl_terrain_chunk chunk{};
+        chunk.struct_size = sizeof chunk;
+        chunk.layers      = 4;
+        FakeView::TerrainProvider().chunk_fn(nullptr, &chunk, &extras);
+        Check(extras.count == 2 && extras.alpha[3] == 200 && sizeof extras.alpha == 64 * 64 * 4,
+              "a chunk's answer: its extra layers and their 64 x 64 alpha maps, four a texel");
+        Check(TerrainService::SetLayerProvider(nullptr) == WXL_OK, "and null takes it off");
         const auto& calls = FakeView::TerrainCalls();
         Check(calls.size() == 3 && calls[0].layer == 0 && calls[0].heights.size() == 2 && calls[0].heights[1].index == 9 &&
                   calls[1].what == "reset" && calls[1].layer == 3 && calls[1].chunk_y == 512 && calls[2].what == "reset_all",
