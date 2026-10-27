@@ -2842,6 +2842,7 @@ print("textured " .. tostring(wxl.draw.Draw({ kind = "circle", radius = 4 },
                                             { fill_alpha = 0.9, fill_color = 0x606060, texture = { "Interface\\WXL\\x.blp", 0.5, 0.75 },
                                               uv = "world", uv_size = 4, uv_rotation = 0.3, uv_offset = { 0.1, 0.2 },
                                               blend = "modulate", feather = 1, radial_fade = 0.5, shadow_offset = { x = -2, y = 3 } })))
+print("xray " .. tostring(wxl.draw.Draw({ kind = "box", size = { 2, 2, 4 } }, { fill_alpha = 0.3, texture = "x.blp", occluded_alpha = 0.35 })))
 print("blend " .. tostring(select(2, pcall(wxl.draw.Draw, { kind = "circle", radius = 1 }, { blend = "screen" }))))
 print("alphas " .. tostring(select(2, pcall(wxl.draw.Draw, { kind = "line", points = { { 0, 0, 0 }, { 1, 0, 0 } }, alphas = { 1 } }))))
 )");
@@ -2891,6 +2892,9 @@ print("alphas " .. tostring(select(2, pcall(wxl.draw.Draw, { kind = "line", poin
                                         c.style.shadow_x == -2.0f && c.style.shadow_y == 3.0f);
             }
             Check(soft && textured, "the line's opacities and shadow, the texture and its frame reach the service as given");
+            bool xray = false;
+            for (const auto& c : calls) xray = xray || (c.kind == WXL_DRAW_BOX && std::fabs(c.style.occluded_alpha - 0.35f) < 1e-6f && c.texture == "x.blp");
+            Check(sink.Has("[wxl.shapes] xray true") && xray, "a textured box's occluded_alpha reaches the service (abi 0.1.39)");
             FakeView::DrawCalls().clear();
             host.Shutdown();
         }

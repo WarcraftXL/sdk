@@ -2642,6 +2642,7 @@ step(function()
         if s then looks.kept[#looks.kept + 1] = s end
         return s
     end
+    local up = function(p, h) return { x = p.x, y = p.y, z = p.z + h } end
     -- A spell's targeting ring laid on the ground, lit (added), turned a little.
     add("a textured ring", { kind = "ring", center = ahead(9, -7), radius = 4, inner = 2.5, facing = f },
         { alpha = 0, fill_alpha = 1, fill_color = 0x80C0FF, texture = "SPELLS\\T_VFX_HERO_CIRCLE.BLP", blend = "add", uv_rotation = 0.3 })
@@ -2662,10 +2663,31 @@ step(function()
         { color = 0xFFFFFF, width = 4, softness = 1.5, shadow_alpha = 0.6, shadow_offset = { 2, 2 } })
     local bad, why = dr.Draw({ kind = "circle", center = feet, radius = 2 }, { fill_alpha = 1, blend = 7 })
     result("a blend that is none is refused", bad == nil, tostring(why))
+    -- abi 0.1.39: a digging selection box half under the ground, its faces textured and scrolling,
+    -- seen through the ground; and a line dipping under it, seen through it too.
+    if wxl.runtime.abi_feature >= 39 then
+        local sel = { kind = "box", center = { x = ahead(17, 0).x, y = ahead(17, 0).y, z = feet.z - 0.5 }, size = { x = 3, y = 3, z = 3 }, facing = f }
+        local look = { color = 0xE8C060, alpha = 0.9, width = 1.5, fill_alpha = 0.35, texture = "SPELLS\\T_VFX_RING_FF.BLP", uv = "tile",
+                       uv_size = 0.5, blend = "add", feather = 0.3, occluded_alpha = 0.35 }
+        local box = add("a textured selection box seen through the ground", sel, look)
+        add("a line dipping under the ground, seen through it", { kind = "line", points = { up(ahead(6, 10), 1), up(ahead(12, 10), -3), up(ahead(18, 10), 1) } },
+            { color = 0x40FF80, width = 3, occluded_alpha = 0.4 })
+        local scroll = 0
+        looks.scroll = box and Observe("RenderScript", "OnFrameBegin", function()
+            scroll = (scroll + 0.01) % 1
+            look.uv_offset = { scroll, 0 }
+            look.fade_out = 1
+            dr.SetStyle(box, look)
+        end)
+        local tooFar, whyFar = dr.Draw(sel, { fill_alpha = 1, occluded_alpha = 2 })
+        result("an occluded opacity past 1 is refused", tooFar == nil, tostring(whyFar))
+    end
     print("look: for ten seconds then fading, in front of you: left a pale blue spell ring glowing on the ground, middle cracks" ..
           " darkening the ground with a soft border, right a charred patch fading out from its middle; further on a 6 x 6 grid of" ..
           " soft gold lines with a light shadow down and right over a darkened inside; on your left a white line on the ground" ..
-          " fading in from its start, shadowed; the same under Direct3D 9 and Vulkan")
+          " fading in from its start, shadowed; further on (abi 0.1.39) a gold box half sunk in the ground, its faces" ..
+          " a ring picture scrolling sideways, its buried half seen faintly through the ground, and on your left a green line" ..
+          " dipping under the ground, seen faintly where it is under; the same under Direct3D 9 and Vulkan")
     wait(2.5)
 end)
 
@@ -2676,6 +2698,10 @@ step(function()
     result("the textures are loaded and drawn", stats ~= nil and stats.textures >= 3 and stats.textures_loading == 0 and stats.textured >= 4,
            stats and string.format("%d textures, %d loading, %d insides", stats.textures, stats.textures_loading, stats.textured) or "no stats")
     result("the lines' shadows are drawn", stats ~= nil and stats.shadows >= 2, stats and tostring(stats.shadows) or "no stats")
+    if wxl.runtime.abi_feature >= 39 then
+        result("the box and the line are drawn through the ground too", stats ~= nil and stats.occluded >= 2,
+               stats and tostring(stats.occluded) or "no stats")
+    end
     if stats then
         print(string.format("NOTE wxl.draw's last frame with textures: %d shapes, %d vertices, %.0f us on the CPU", stats.drawn,
                             stats.vertices, stats.build_microseconds))
@@ -2686,6 +2712,10 @@ end)
 step(function()
     local dr = wxl.draw
     if #looks.kept == 0 or not dr then return end
+    if looks.scroll then
+        Unobserve(looks.scroll)
+        looks.scroll = nil
+    end
     dr.Clear()
     looks.kept = {}
 end)

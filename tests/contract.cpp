@@ -1772,6 +1772,19 @@ int main()
         Check(sizeof(wxl_draw_style) > WXL_DRAW_STYLE_SIZE_0136 && sizeof(wxl_draw_shape) > WXL_DRAW_SHAPE_SIZE_0136 &&
                   WXL_DRAW_STYLE_SIZE_0136 == 36u,
               "the styles and shapes of abi 0.1.36 are a prefix of today's");
+        // abi 0.1.39: a textured box seen through the ground.
+        FakeView::DrawCalls().clear();
+        Check(DrawService::Draw(DrawShape::Box(wxl_vec3{1, 2, 3}, wxl_vec3{2, 2, 4}),
+                                DrawStyle(0xE8C060).Fill(0.3f).Texture("SPELLS\\T_VFX_RING_FF.BLP").Uv(WXL_DRAW_UV_TILE, 0.5f, 0.5f, 0.0f, 0.25f)
+                                    .Feather(0.2f).Occluded(0.35f)) == WXL_OK,
+              "a textured box seen through the ground");
+        Check(FakeView::DrawCalls().size() == 1 && FakeView::DrawCalls()[0].kind == WXL_DRAW_BOX &&
+                  std::fabs(FakeView::DrawCalls()[0].style.occluded_alpha - 0.35f) < 1e-6f && FakeView::DrawCalls()[0].style.uv_offset_x == 0.25f,
+              "its occluded opacity and its picture's frame as built");
+        // abi 0.1.38's style ended at radial_fade, padded: today's is larger on both architectures.
+        constexpr size_t old38 = (offsetof(wxl_draw_style, occluded_alpha) + alignof(wxl_draw_style) - 1) / alignof(wxl_draw_style) * alignof(wxl_draw_style);
+        Check(WXL_DRAW_STYLE_SIZE_0138 > WXL_DRAW_STYLE_SIZE_0136 && sizeof(wxl_draw_style) > old38,
+              "the styles of abi 0.1.38 are a prefix of today's, and smaller");
     }
 
     Section("animations played on units");

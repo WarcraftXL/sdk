@@ -224,7 +224,12 @@ over a light black shadow, its inside scored darker; on the left a white line on
 in from its start, shadowed. Watch it: the pictures lie on the slopes and keep still as you move,
 the stain darkens the ground rather than covering it, the borders are soft, the shadows sit a pixel
 or two down and right of the lines. `Stats` must say the three textures loaded and drawn and the
-shadows drawn (the CPU's cost is printed as a NOTE); a blend that is none must be refused.
+shadows drawn (the CPU's cost is printed as a NOTE); a blend that is none must be refused. From abi
+0.1.39 it adds a gold box half sunk in the ground beyond the grid, its faces a ring picture
+(`SPELLS\T_VFX_RING_FF.BLP`, added as light) scrolling sideways (`SetStyle` with a new `uv_offset`
+each frame), and a green line dipping under the ground on the left: their buried parts must show
+faintly through the ground (`occluded_alpha`), and `Stats` must count both as drawn through it; an
+occluded opacity past 1 must be refused.
 
 ## Building it
 
