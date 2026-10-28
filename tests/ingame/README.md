@@ -164,7 +164,7 @@ Phase 23 checks the interface's signatures (abi 0.1.32), on both clients. The se
 `InterfaceSignature` from the moment it loads: FrameXML.toc must have been judged when the world
 loaded, hashed with Bindings.xml, and the phase prints the client's verdict for it, for
 GlueXML.toc and for each add-on. With the game's own interface the verdict is `signed`; with a
-changed FrameXML (Dawnlight's in Patch-5.MPQ) it is `modified`, and since the world is up a mod
+changed FrameXML (a game's own, in a patch archive) it is `modified`, and since the world is up a mod
 took it as signed: `wxl.glue-unlock`, whose log says so (a NOTE, not a failure).
 `InterfaceCleanupRequest` must have been asked once, at the login screens.
 
