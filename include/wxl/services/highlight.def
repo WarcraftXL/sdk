@@ -1,0 +1,32 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.highlight as data: one row per member of wxl_highlight_api, in member order. The shapes and
+// their columns are described in wxl/services/rows.hpp.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including highlight.def"
+#endif
+
+WXL_API_SERVICE(highlight, WXL_HIGHLIGHT_SERVICE, WXL_HIGHLIGHT_SERVICE_VERSION, (0, 1, 27), open,
+                "A world object outlined and lit by a glow, where it is seen, never through a wall. Main thread only.")
+
+WXL_API(highlight, supported, Supported, boolean, (), generated, generated,
+        "Whether this runtime draws highlights on the device it runs now.")
+WXL_API(highlight, unsupported_reason, UnsupportedReason, str, (), generated, generated,
+        "Why highlights are not drawn, in a sentence for a log; empty when they are.")
+WXL_API(highlight, set, Set, result, (object target, u32 color, f32 outline, f32 glow, f32 glow_strength), shim, generated,
+        "Highlights an object until cleared: color 0xRRGGBB, outline and glow in pixels of a 1080-line picture (up to 16 and 64, 0 for none), glow_strength 0 to 1. Called again, changes the style.")
+WXL_API(highlight, clear, Clear, result, (object target), shim, generated,
+        "Takes this mod's highlight off an object.")
+WXL_API(highlight, clear_all, ClearAll, none, (), shim, generated,
+        "Takes off every highlight of this mod.")
+WXL_API(highlight, drawn, Drawn, u32, (), generated, generated,
+        "How many batches of highlighted objects the last frame with highlights drew again.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

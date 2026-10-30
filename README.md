@@ -5,7 +5,7 @@
 **The contract a WarcraftXL mod is written against**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![ABI](https://img.shields.io/badge/ABI-0.1.20-blue.svg)](include/wxl/abi.h)
+[![ABI](https://img.shields.io/badge/ABI-0.1.46-blue.svg)](include/wxl/abi.h)
 [![C++](https://img.shields.io/badge/C%2B%2B-17%20and%20up-blue.svg)](#-getting-started)
 [![Header only](https://img.shields.io/badge/header--only-yes-lightgrey.svg)](include/wxl)
 
@@ -206,14 +206,27 @@ Beyond events, a runtime publishes services, and a mod asks for the ones it need
 |---|---|---|
 | `wxl.object` | units, players, game objects | yes |
 | `wxl.script` | the client's Lua | yes |
-| `wxl.storage` | archives and files, and folders a mod adds to them | yes |
+| `wxl.storage` | archives and files, folders, providers and bytes a mod adds to them, content hashes, overrides, reloads | yes |
+| `wxl.relay` | services mods publish for each other, answered later on the main thread | yes |
 | `wxl.data` | the client's databases, served from a mod's files | yes |
-| `wxl.net` | messages to and from the server | yes; no runtime publishes it yet |
+| `wxl.net` | opcode numbers of the mod's own on the world connection: claimed, received through a handler (compressed ones inflated), sent once the server has spoken | yes |
 | `wxl.ui` | frames and the interface | yes; no runtime publishes it yet |
-| `wxl.point` | functions of the engine: run code before, instead of or after them | yes; a few exist on one runtime, and say so |
+| `wxl.point` | functions of the engine: run code before, instead of or after them, those the stock client inlined included (`wxl/deinlined.def`) | yes; one that exists on one runtime only says so |
 | `wxl.m2file` | a parsed model file's arrays, read and pointed the runtime's way, for a mod that teaches the client a model format | yes |
 | `wxl.m2` | the models objects draw with, and models a mod makes and hangs on them | yes |
-| `wxl.gx` | the client's D3D9 device, to draw a model batch again (`ModelBatchDrawn`) | yes |
+| `wxl.gx` | which device the client draws with, and its D3D9 device, to draw a model batch again (`ModelBatchDrawn`) | yes |
+| `wxl.engine` | the layout hash of each engine structure of `engine/`, as the runtime lays it out | yes |
+| `wxl.camera` | the world camera: where it is, and placing it instead of the client each frame | yes |
+| `wxl.input` | the pointer held at the centre of the window, for a mod that steers with the mouse | yes |
+| `wxl.world` | the world's geometry: the first point of it on a segment | yes |
+| `wxl.pose` | a unit's head turned over its animation | yes |
+| `wxl.imgui` | Dear ImGui and ImPlot drawn in the game's frame, for a native mod's windows | yes |
+| `wxl.cvar` | console variables: a mod's settings registered where the game keeps its own, read and set by the console and the interface, saved in Config.wtf, per account or per character | yes |
+| `wxl.terrain` | the ground of the map: its height, rays against it, its grid, and its vertices set to other heights, which the client draws, walks on and collides with | yes |
+| `wxl.animation` | an animation of the game played on a unit (a mining swing, an attack, a cast), once or looped, through the client's own animation of units and seen on this client only | yes |
+| `wxl.draw` | shapes drawn in the world: lines, circles, rings, sectors, rectangles, polygons and grids lying on the ground, boxes, spheres and cylinders; for a frame, kept, or following an object; the game's textures on them, soft and shadowed lines; particles (bursts and kept emitters, bouncing on the terrain, soft sprites) | yes, on Direct3D 9 and the Vulkan renderer alike |
+| `wxl.render` | drawing into the game's frame on the Vulkan renderer: the frame's points, images, buffers, pipelines of SPIR-V, compute dispatches, bone palettes, the game's model batches drawn again, its shaders replaced | yes; a Direct3D 9 device says it does not draw |
+| `wxl.vk` | the Vulkan device and the frame's command buffer, for a mod that records its own commands | no: the Vulkan renderer only |
 | `wxl.hook` | hook points a runtime names and keeps working | yes |
 | `wxl.hook.raw` | a detour at a raw address | no: runtimes that load into a shipped binary |
 | `wxl.patch` | bytes written into the image | no: runtimes that load into a shipped binary |
@@ -221,6 +234,7 @@ Beyond events, a runtime publishes services, and a mod asks for the ones it need
 Each service has a typed facade with its name and version sealed in -- `wxl::ObjectService`,
 `wxl::ScriptService`, `wxl::StorageService`, `wxl::DataService`, `wxl::NetService`,
 `wxl::UiService`, `wxl::PointService`, `wxl::M2FileService`, `wxl::M2Service`, `wxl::GxService`,
+`wxl::EngineService`, `wxl::CVarService`, `wxl::TerrainService`, `wxl::AnimationService`, `wxl::DrawService`, `wxl::RenderService`, `wxl::VkService`,
 `wxl::HookService`, `wxl::RawHookService`, `wxl::PatchService` -- taking and
 returning C++ types. `wxl::Service<T>` is still there for the raw table. Lua mods reach the same
 services as `wxl.storage`, `wxl.data`, `wxl.script`, `wxl.hook`, `wxl.patch` and `wxl.m2`, built from the
@@ -261,6 +275,13 @@ include/wxl/
     services/      one C header per service, its table (<service>.def: every member with the
                    kinds it takes and answers) and one .hpp with its typed facade; rows.hpp
                    reads the tables, for wxl.lua's modules and the facades' plain methods
+    points.def     the engine points of wxl.point, generated from core's points.txt
+    deinlined.def  the points the stock client inlined and its runtime makes real again, each
+                   with the functions it was inlined into (a row for each)
+engine/            the engine headers (wxl::engine::CM2Shared, CGUnit_C, M2Data...): the client's
+                   structures laid out for x86 and x64, each with its layout hash, generated from
+                   the client fork; check.hpp, the load-time check of those hashes; under their
+                   own NOTICE.md, not this license
 host/              the mod host: discovery, manifests, load order, registry, event bus
 runtime/           service scaffolding every runtime shares: handles, wxl.object over a table of
                    reads (object_reads.def) each runtime implements
@@ -284,12 +305,13 @@ tests/ingame/      the same against a real client: test mods and wxl.selftest, w
                    from the game and logs PASS or FAIL per check
 ```
 
-A mod links `wxl::sdk` and nothing else. A runtime links `wxl::host` and `wxl::runtime` too, and
+A mod links `wxl::sdk` and nothing else; one that reads the engine's structures links
+`wxl::engine` too. A runtime links `wxl::host` and `wxl::runtime` too, and
 supplies only the bindings that reach its own client.
 
 ## 🔢 Versioning
 
-`major.minor.feature`, in [`abi.h`](include/wxl/abi.h): today `0.1.20`.
+`major.minor.feature`, in [`abi.h`](include/wxl/abi.h): today `0.1.46`.
 
 - **Major** changes when an existing field, signature or id changes meaning. A runtime refuses a
   mod built against a different major.
@@ -332,7 +354,9 @@ Event ids and stage numbers are appended, never renumbered, never removed.
 
 **Contributors.** Tyrallis brought the model services (`wxl.m2file`, `wxl.m2`, `wxl.gx`), the
 character appearance seams behind `AppearanceChanged`, and the recompiled client's skins over 65535
-indices and textures over 4 MB (sdk, core and client pull requests #1).
+indices and textures over 4 MB (sdk, core and client pull requests #1), then `wxl.m2`'s models of
+the world and bone watchers, the cast's ground point, and the recompiled client's additive blend,
+retail animation ids, Ogg Vorbis sounds and later bodies' geosets (pull requests #4).
 
 ## 📄 License
 
@@ -340,6 +364,11 @@ MIT. See [LICENSE](LICENSE).
 
 These headers compile into whoever includes them, so they are deliberately permissive: a mod built
 against this SDK carries no obligation from it.
+
+The engine headers under `engine/include/wxl/engine/` are the exception: they describe the 3.3.5a
+client's own structures, generated from its decompilation, and no license is granted over them.
+See [engine/NOTICE.md](engine/NOTICE.md). `deps/` holds unordered_dense (MIT) and xxHash (BSD-2,
+used by the tests to check the layout hashes), each with its license file.
 
 <div align="center">
 

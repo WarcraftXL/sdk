@@ -19,7 +19,70 @@
 --      asset events seen since the start;
 --  11. models: the loader's events and the appearance changes phase 4 caused, then wxl.m2 hangs a
 --      murloc on the player's head and takes it off again, and ModelBatchDrawn counts the batches
---      drawn meanwhile, for two seconds.
+--      drawn meanwhile, for two seconds;
+--  12. the model loader's points: wxl.test-points attaches to CM2Shared::FinishLoading and to
+--      M2Init (inlined in the stock client into FinishLoading and FinishLoadingLowPrioritySequence,
+--      de-inlined by its runtime from both), models the starting zones rarely show are asked for,
+--      and both handlers must fire, M2Init once in each FinishLoading and once per sequence read
+--      later, and read the models through the engine headers while the models still parse;
+--  13. the asset bricks: FileMissing for a texture nobody has, a file served under a path of its
+--      own, an override, content hashes (served bytes, an archive's file, asynchronously), textures
+--      and the player's model read again, a service of its own through wxl.relay, then
+--      wxl.test-assets' downloader: a pending texture fetched on its thread, served under a path the
+--      selftest chose, put in place by an override, a request cancelled;
+--  14. the camera: wxl.camera places it ten yards above the head for two seconds while wxl.input
+--      holds the pointer, then gives both back; a trace meets the ground under the player,
+--      IsOutdoors agrees with the client's IsIndoors, and wxl.action.Face turns the player and back;
+--  15. the mouse look kept out: MouselookStart while wxl.input blocks it leaves the game out of
+--      its mouse look, and works again once the block is given back; wxl.pose turns the player's
+--      head for a second and gives it back; ImGuiFrame is raised by the runtime;
+--  16. models of the world: wxl.m2 makes a murloc in the world's scene and places it on the
+--      ground three yards in front of the player, plays its animation, fades it, reads where the
+--      player's head is in the world, then takes it away; wxl.test-bones watches the bones of the
+--      character models for a second; the casts seen since the start say where a ground spell
+--      landed;
+--  17. reticle targeting's bricks: the runtime raises WorldClickRequest; CanAttack agrees with the
+--      client's UnitCanAttack for the nearest unit (targeted for the question, then the target is
+--      given back); CanInteract and a game object's CanUse answer for everything in view.
+--  18. a highlight: wxl.highlight outlines the player for two seconds where the runtime draws
+--      highlights (either client on Vulkan, the stock client on D3D9), and the batches drawn again
+--      are counted; elsewhere it must say why it draws none, and refuse as unsupported.
+--  19. the game's selection circles: the nearest unit is targeted, its circle counted drawn, then
+--      hidden by wxl.selectioncircle, drawn larger and blue for two seconds, and given back; the
+--      target the player had comes back after.
+--  20. a rolled camera and a pointer held off the centre: wxl.camera draws the client's own view
+--      rolled 0.3 rad (the horizon leans) for two seconds and reads the roll back, wxl.input holds
+--      the pointer a tenth of the screen above the centre and reads the point back, then both are
+--      given back and the camera draws level again.
+--  21. textures from SVG and PNG: wxl.texture makes a reticle of the selftest's own SVG at 64
+--      pixels wide, red with a darker outline twice as wide, and a disc of its PNG; a frame in
+--      the middle of the screen shows them for two seconds each through SetTexture, the
+--      interface's WxlTexture answers the same path for the same request, another colour and an
+--      outline taken off give new paths, and a missing file and a group on a PNG are refused.
+--  22. console variables: wxl.cvar registers one saved in Config.wtf and ranged, sets it and the
+--      interface's GetCVar reads it back; the interface's SetCVar changes it and OnCVarChanged
+--      follows, a value outside the range is refused, a reset brings the default back; a read-only
+--      one refuses SetCVar; the interface's WxlRegisterCVar registers one of its own. The value
+--      the last launch saved (in Config.wtf, and the character's) must come back: a NOTE, since
+--      the first launch with this phase has none, and a launch that did not end cleanly saved none.
+--  23. the interface's signatures: every InterfaceSignature since the mod loaded; FrameXML.toc
+--      must have been judged (with Bindings.xml), and its verdict is printed, as GlueXML.toc's and
+--      each add-on's; a verdict short of signed with the world up means a mod took it as signed
+--      (wxl.glue-unlock with a changed FrameXML), a NOTE. The clearing of loose folders was asked
+--      once, at the login screens.
+--  24. drawing into the frame: wxl.gx names the device; wxl.render draws on the Vulkan renderer,
+--      on either client (on Direct3D 9 it must say why not): a screen image is made and read, a
+--      full-screen pipeline of the selftest's own SPIR-V tints the frame after the world for two
+--      seconds, the four points of the frame come, a model batch is kept from ModelBatchDrawn,
+--      and a GPU zone is opened and closed around the tint.
+--  25. compute and bone palettes: on the Vulkan renderer (either client) a compute dispatch fills
+--      a buffer the frame then shows orange for two seconds, and a palette of 300 matrices shows
+--      its last row green for two; on Direct3D 9 both are refused as unsupported.
+--  26. the ground: wxl.terrain answers the height under the player, the chunks loaded since the
+--      mod loaded were announced, then a brush of the vertices within three yards of a point six
+--      yards north (VerticesIn) is lowered three yards for two seconds: wxl.terrain's height and
+--      trace and the client's own ray test (wxl.world.Trace) meet the dip, the original height
+--      stays readable, and a reset gives the ground back.
 --
 -- Each check is one line in the log: PASS, FAIL, SKIP (what it needs is not there: a class
 -- without a cast-time spell, say) or NOTE (an event the server may not send). The chat box shows
@@ -761,26 +824,16 @@ step(function()
         result("wxl.point.Points", false, tostring(why))
         return
     end
-    result("wxl.point lists the six points of W1", #points >= 6, #points .. " listed")
+    result("wxl.point lists the seven points", #points >= 7, #points .. " listed")
     local byName = {}
     for _, p in ipairs(points) do byName[p.name] = p end
     for _, name in ipairs({ "CGCamera::UpdateCallback", "CM2Cache::CreateShared", "CGWorldFrame::RenderWorld",
-                            "vFrameScript_SignalEvent", "NetClient::ProcessMessage" }) do
+                            "vFrameScript_SignalEvent", "NetClient::ProcessMessage", "CM2Shared::FinishLoading",
+                            "M2Init(uint8_t*,uint32_t,M2Data&)" }) do
         local p = byName[name]
-        result("point " .. name .. " is here", p ~= nil and p.point ~= 0 and flag(p.flags, 4),
+        local id = p and wxl.point.Find(name)
+        result("point " .. name .. " is here", p ~= nil and p.point ~= 0 and flag(p.flags, 4) and id == p.point,
                p and (p.absent ~= "" and p.absent or p.signature) or "not listed")
-    end
-    local finish = byName["CM2Shared::FinishLoading"]
-    if finish then
-        local id, reason = wxl.point.Find(finish.name)
-        if flag(finish.flags, 4) then
-            result("CM2Shared::FinishLoading is a point here (x64)", id == finish.point, tostring(reason))
-        else
-            result("CM2Shared::FinishLoading is absent here, x64 only (x86)",
-                   id == nil and finish.absent:find("x64 only", 1, true) == 1, finish.absent)
-        end
-    else
-        result("CM2Shared::FinishLoading is listed", false, "not listed")
     end
 end)
 
@@ -1077,12 +1130,1714 @@ step(function()
     hat = nil
 end)
 
+-- 12. A de-inlined point --------------------------------------------------------------------------
+
+-- Models the starting zones rarely show, so that at least one is read while the points are armed.
+local POINT_MODELS = { "Creature\\Ragnaros\\Ragnaros.m2", "Creature\\Illidan\\Illidan.m2",
+                       "Creature\\KelThuzad\\KelThuzad.m2", "Creature\\Arthaslichking\\ArthasLichKing.m2" }
+local pointModels, parsedBefore, sequencesBefore = {}, 0, 0
+
+step(function()
+    print("phase 12: the model loader's points, M2Init de-inlined on the stock client")
+    -- wxl.test-points registers its functions in the client's Lua, where they are called.
+    local asked, present = ask("return TestPointsArm ~= nil")
+    if not (asked and present) then
+        result("wxl.test-points is loaded", false, "TestPointsArm is not registered in the client's Lua")
+        return
+    end
+    local ok, armed, why = ask("return TestPointsArm()")
+    result("CM2Shared::FinishLoading and M2Init(uint8_t*,uint32_t,M2Data&) attached", ok and armed == true,
+           ok and tostring(why) or tostring(armed))
+    if not (ok and armed) then return end
+    parsedBefore, sequencesBefore = modelCount.ModelParsed, modelCount.ModelSequenceLoad
+    local body = wxl.m2.ObjectModel(wxl.object.LocalPlayer())
+    for _, path in ipairs(POINT_MODELS) do
+        local model = body and wxl.m2.CreateModel(body, path)
+        if model then pointModels[#pointModels + 1] = model end
+    end
+    result("models of the mod's own asked for while the points are attached", #pointModels > 0,
+           #pointModels .. " of " .. #POINT_MODELS)
+    wait(3)
+end)
+
+step(function()
+    local asked, counts = ask("local f, i, n, v, s, a, b = TestPointsCounts() " ..
+                              "return string.format('%d|%d|%s|%d|%d|%d|%d', f or 0, i or 0, n or '', v or 0, " ..
+                              "s or 0, a or 0, b or 0)")
+    if not (asked and type(counts) == "string") then return end
+    local f, i, n, v, z, a, b = counts:match("^(%d+)|(%d+)|(.-)|(%d+)|(%d+)|(%d+)|(%d+)$")
+    local finishes, inits, name, version, size = tonumber(f), tonumber(i), n, tonumber(v), tonumber(z)
+    local fromFinish, fromSequences = tonumber(a) or 0, tonumber(b) or 0
+    local sequences = modelCount.ModelSequenceLoad - sequencesBefore
+    result("a handler on CM2Shared::FinishLoading fired (" .. tostring(finishes) .. " model(s))",
+           (finishes or 0) > 0, "no model finished loading in three seconds")
+    -- M2Init has two parents on both clients: every FinishLoading checks its model's header once,
+    -- and every sequence read later (FinishLoadingLowPrioritySequence) once more.
+    result("a handler on M2Init fired (" .. tostring(inits) .. "): " .. fromFinish .. " in FinishLoading, " ..
+           fromSequences .. " for sequences read later, de-inlined from both on the stock client",
+           (inits or 0) > 0 and inits >= finishes and fromFinish == finishes,
+           "FinishLoading " .. tostring(finishes))
+    if sequences > 0 then
+        result("M2Init fired once per sequence read later (ModelSequenceLoad " .. sequences .. ")",
+               fromSequences == sequences, fromSequences .. " outside FinishLoading")
+    else
+        note("M2Init for sequences read later", false, "no sequence was read later while the points were attached")
+    end
+    result("the handlers read the model through the engine headers: " .. tostring(name),
+           version == 264 and (size or 0) > 0 and type(name) == "string" and name ~= "",
+           string.format("version %s, %s bytes", tostring(version), tostring(size)))
+    result("models still parse with the recompiled FinishLoading (ModelParsed " ..
+           (modelCount.ModelParsed - parsedBefore) .. ")", modelCount.ModelParsed > parsedBefore)
+    run("TestPointsDisarm()")
+    for _, model in ipairs(pointModels) do model:Release() end
+    pointModels = {}
+end)
+
+-- 13. The asset bricks ------------------------------------------------------------------------------
+
+-- The names the client looked for and nobody had, those of this run only (the client probes many
+-- optional files of its own).
+local missing = {}
+Observe("AssetScript", "OnFileMissing", function(path, kind, open, pending, loader)
+    local low = path:lower()
+    if not (low:find("wxltest", 1, true) or low:find("wxlselftest", 1, true)) then return end
+    missing[#missing + 1] = { path = path, kind = kind, open = open, pending = pending }
+end)
+
+local function missingText(list)
+    local shown = {}
+    for _, m in ipairs(list) do
+        shown[#shown + 1] = string.format("%s (%s, %s%s)", m.path, tostring(m.kind), m.open and "open" or "exists",
+                                          m.pending and ", pending" or "")
+    end
+    return #shown > 0 and table.concat(shown, "; ") or "none"
+end
+
+local function anyMissing(test)
+    for _, m in ipairs(missing) do
+        if test(m) then return m end
+    end
+    return nil
+end
+
+local BASE = "Interface\\FrameXML\\FrameXML.toc"
+local QUESTION, BAG = "Interface\\Icons\\INV_Misc_QuestionMark.blp", "Interface\\Icons\\INV_Misc_Bag_08.blp"
+-- A texture larger than the interface's atlas takes (square, 64 pixels or less), so read again in
+-- place, and another of the same size to put in its place.
+local FRAME, ELITE = "Interface\\TargetingFrame\\UI-TargetingFrame.blp", "Interface\\TargetingFrame\\UI-TargetingFrame-Elite.blp"
+local LATER, FETCHED = "Interface\\WxlTest\\Later.blp", "Interface\\WxlSelfTest\\Fetched.blp"
+local hashed, echoNow, echoLater, echoRequest, echoNobody, fetched, cancelledCount, cppMissing, neverAnswered
+local neverRequest
+
+step(function()
+    print("phase 13: names nobody has, content hashes, overrides, reloads, the relay")
+    local s = wxl.storage
+    if not (s and s.HashFile) then
+        result("wxl.storage.HashFile", false, "this runtime has no asset bricks")
+        return
+    end
+    missing = {}
+    run("WxlSelfTestNone = WxlSelfTestNone or UIParent:CreateTexture() " ..
+        "WxlSelfTestNone:SetTexture('Interface\\\\WxlSelfTest\\\\NoSuchTexture')")
+    local before = #missing
+    s.Exists("Interface\\WxlSelfTest\\NoSuchFile.blp")
+    result("a mod's own wxl.storage lookup raises no FileMissing", #missing == before)
+    wait(0.5)
+end)
+
+step(function()
+    local seen = anyMissing(function(m) return m.kind == "texture" and m.path:lower():find("nosuchtexture", 1, true) end)
+    result("FileMissing: the texture the client asked for and no layer has", seen ~= nil, missingText(missing))
+
+    local s        = wxl.storage
+    local original = s.Read(BASE)
+    if not original then
+        skip("overrides and hashes", BASE .. " is not in this client's archives")
+        return
+    end
+    local mine = "Interface\\WxlSelfTest\\FrameXML.toc"
+    result("a path of the mod's own: nothing there yet", s.Exists(mine) == false)
+    s.Serve(mine, "override text", 0)
+    result("served at 0 under a new path, the copy lives beside the client's file",
+           s.Read(mine) == "override text" and s.Read(BASE) == original)
+    local h = s.HashFile(mine)
+    result("HashFile of served bytes: the MD5 of what is served, layer served",
+           h ~= nil and h.md5 == "b43a45b5805955f0f335c0e884f18fd7" and h.layer == "served",
+           h and (h.md5 .. " " .. h.layer .. " " .. h.source) or "none")
+    local hu = s.HashFile(BASE)
+    result("HashFile of the client's file: an archive's, its size and its MPQ",
+           hu ~= nil and hu.layer == "archive" and #hu.md5 == 32 and hu.size == #original,
+           hu and (hu.md5 .. " " .. hu.size .. " " .. hu.source) or "none")
+    result("OverrideFile: the client's file reads as the mod's copy",
+           s.OverrideFile(BASE, mine) == true and s.Read(BASE) == "override text" and s.HashFile(BASE).layer == "served")
+    local restored = s.RestoreFile(BASE)
+    local again, why = s.RestoreFile(BASE)
+    result("RestoreFile: the client's own file again; once", restored == true and s.Read(BASE) == original and
+           again == nil and why == "not_found")
+    s.Unserve(mine)
+
+    hashed = nil
+    local request = s.HashFileAsync(BASE, function(hash, reason) hashed = hash or reason end, true)
+    result("HashFileAsync answers a request number at once", type(request) == "number")
+    waitFor(function() return hashed ~= nil end, 5)
+end)
+
+step(function()
+    local s = wxl.storage
+    if s.HashFile and s.Read(BASE) then
+        local hu = s.HashFile(BASE)
+        result("and its answer comes later, on the main thread, the same MD5", type(hashed) == "table" and hu ~= nil and
+               hashed.md5 == hu.md5, type(hashed) == "table" and hashed.md5 or tostring(hashed))
+    end
+    -- A texture on screen, read again from another file.
+    run("WxlSelfTestIcon = WxlSelfTestIcon or UIParent:CreateTexture(nil, 'OVERLAY') WxlSelfTestIcon:SetWidth(64) " ..
+        "WxlSelfTestIcon:SetHeight(64) WxlSelfTestIcon:SetPoint('CENTER', -80, 0) " ..
+        "WxlSelfTestIcon:SetTexture('Interface\\\\Icons\\\\INV_Misc_QuestionMark') WxlSelfTestIcon:Show()")
+    run("WxlSelfTestFrame = WxlSelfTestFrame or UIParent:CreateTexture(nil, 'OVERLAY') WxlSelfTestFrame:SetWidth(256) " ..
+        "WxlSelfTestFrame:SetHeight(128) WxlSelfTestFrame:SetPoint('CENTER', -220, 120) " ..
+        "WxlSelfTestFrame:SetTexture('Interface\\\\TargetingFrame\\\\UI-TargetingFrame') WxlSelfTestFrame:Show()")
+    wait(1)
+end)
+
+step(function()
+    local s = wxl.storage
+    s.OverrideFile(FRAME, ELITE)
+    local r, why = s.ReloadAsset(FRAME)
+    result("ReloadAsset of a texture the client holds: read again in place (up left of the screen's centre, " ..
+           "the target frame shows its elite dragon for two seconds)", r ~= nil and r.textures > 0,
+           r and (r.textures .. " texture(s), " .. r.busy .. " still loading") or why)
+    s.OverrideFile(QUESTION, BAG)
+    local icon, iconWhy = s.ReloadAsset(QUESTION)
+    result("ReloadAsset of an icon, held in the interface's atlas: unsupported", icon == nil and iconWhy == "unsupported",
+           tostring(icon and icon.textures or iconWhy))
+    local unsupported, reason = s.ReloadAsset("World\\wmo\\Azeroth\\Buildings\\Inn\\Inn.wmo")
+    result("ReloadAsset of a map object: unsupported", unsupported == nil and reason == "unsupported", tostring(reason))
+    wait(2)
+end)
+
+step(function()
+    local s = wxl.storage
+    s.RestoreFile(QUESTION)
+    s.RestoreFile(FRAME)
+    s.ReloadAsset(FRAME)
+    run("WxlSelfTestIcon:Hide() WxlSelfTestFrame:Hide()")
+    local asked, race, sex = ask("return select(2, UnitRace('player')), UnitSex('player')")
+    if not asked or type(race) ~= "string" then
+        skip("ReloadAsset of the player's model", "the client did not say the player's race")
+        return
+    end
+    local gender = sex == 3 and "Female" or "Male"
+    local path   = "Character\\" .. race .. "\\" .. gender .. "\\" .. race .. gender .. ".m2"
+    local r, why = s.ReloadAsset(path)
+    result("ReloadAsset of the player's model: dropped from the model cache and the player made again (it blinks)",
+           r ~= nil and r.models > 0 and r.objects > 0,
+           path .. ": " .. (r and (r.models .. " file(s), " .. r.objects .. " unit(s)") or tostring(why)))
+end)
+
+step(function()
+    local relay = wxl.relay
+    echoNow, echoLater, echoRequest = nil, nil, nil
+    result("wxl.relay.Publish: a Lua mod publishes a service", relay.Publish("wxl.selftest.echo", function(request, method, a)
+        if method == "now" then return "echo " .. tostring(a) end
+        echoRequest = request
+    end) == true and relay.Published("WXL.SELFTEST.ECHO") == true)
+    relay.Call("wxl.selftest.echo", "now", { "hi" }, function(ok, v) echoNow = { ok, v } end)
+    relay.Call("wxl.selftest.echo", "later", nil, function(ok, v) echoLater = { ok, v } end)
+    waitFor(function() return echoNow ~= nil and echoRequest ~= nil end, 3)
+end)
+
+step(function()
+    local relay = wxl.relay
+    result("a service that returns values answers at once: true and them", echoNow ~= nil and echoNow[1] == true and
+           echoNow[2] == "echo hi", echoNow and tostring(echoNow[2]) or "never answered")
+    result("one that returns nothing answers later through Answer", echoRequest ~= nil and echoLater == nil and
+           relay.Answer(echoRequest, "done") == true)
+    waitFor(function() return echoLater ~= nil end, 3)
+end)
+
+step(function()
+    local relay = wxl.relay
+    result("and the answer reaches the caller at a later update", echoLater ~= nil and echoLater[1] == true and
+           echoLater[2] == "done", echoLater and tostring(echoLater[2]) or "never answered")
+    relay.Unpublish("wxl.selftest.echo")
+    echoNobody = nil
+    relay.Call("wxl.selftest.echo", "now", { "x" }, function(ok, why) echoNobody = { ok, why } end)
+    waitFor(function() return echoNobody ~= nil end, 3)
+end)
+
+step(function()
+    local nobody = echoNobody
+    result("a service taken back answers nothing: the caller is told not_found", nobody ~= nil and nobody[1] == false and
+           nobody[2] == "not_found", nobody and tostring(nobody[2]) or "never answered")
+    if not wxl.relay.Published("wxl.test-assets.fetch") then
+        skip("a C++ mod's service: a download under a path of the selftest's", "wxl.test-assets is not in Mods")
+        return
+    end
+    -- The client asks for a texture the downloader has not yet: missing, and pending.
+    missing = {}
+    run("WxlSelfTestLater = WxlSelfTestLater or UIParent:CreateTexture(nil, 'OVERLAY') WxlSelfTestLater:SetWidth(64) " ..
+        "WxlSelfTestLater:SetHeight(64) WxlSelfTestLater:SetPoint('CENTER', 80, 0) " ..
+        "WxlSelfTestLater:SetTexture('Interface\\\\WxlTest\\\\Later') WxlSelfTestLater:Show()")
+    fetched = nil
+    wxl.relay.Call("wxl.test-assets.fetch", "fetch", { LATER, FETCHED }, function(ok, path, md5, size)
+        fetched = { ok, path, md5, size }
+    end)
+    waitFor(function() return fetched ~= nil end, 5)
+end)
+
+step(function()
+    if not wxl.relay.Published("wxl.test-assets.fetch") then return end
+    local s    = wxl.storage
+    local seen = anyMissing(function(m) return m.path:lower() == LATER:lower() and m.pending end)
+    result("FileMissing for a name a provider has not yet: pending", seen ~= nil, missingText(missing))
+    result("wxl.relay: a C++ service answers later from a thread of its own, the file served under the path asked",
+           fetched ~= nil and fetched[1] == true and fetched[2] == FETCHED,
+           fetched and (tostring(fetched[2]) .. " " .. tostring(fetched[4]) .. " bytes") or "never answered")
+    if not (fetched and fetched[1]) then return end
+    local h = s.HashFile(FETCHED)
+    result("HashFile of a provider's file: the MD5 the downloader reported, layer provider",
+           h ~= nil and h.md5 == fetched[3] and h.layer == "provider" and h.source == "wxl.test-assets",
+           h and (h.md5 .. " " .. h.layer .. " " .. h.source) or "none")
+    result("the name it was fetched for is not replaced: nobody has it", s.Exists(LATER) == false)
+    run("WxlSelfTestFetched = WxlSelfTestFetched or UIParent:CreateTexture(nil, 'OVERLAY') " ..
+        "WxlSelfTestFetched:SetWidth(64) WxlSelfTestFetched:SetHeight(64) WxlSelfTestFetched:SetPoint('CENTER', 160, 0) " ..
+        "WxlSelfTestFetched:SetTexture('Interface\\\\WxlSelfTest\\\\Fetched') WxlSelfTestFetched:Show()")
+    result("OverrideFile puts the fetched file in place of the missing one", s.OverrideFile(LATER, FETCHED) == true and
+           s.Exists(LATER) == true)
+    run("WxlSelfTestLater:SetTexture(nil) WxlSelfTestLater:SetTexture('Interface\\\\WxlTest\\\\Later')")
+    print("NOTE look: right of the screen's centre, two bags for three seconds -- the fetched file by its own " ..
+          "path, and by the name it overrides")
+    neverAnswered, cancelledCount = false, nil
+    -- Handed to the C++ service at the runtime's next update; cancelled after that, the service is told.
+    neverRequest = wxl.relay.Call("wxl.test-assets.fetch", "never", nil, function() neverAnswered = true end)
+    wait(0.5)
+end)
+
+step(function()
+    if not neverRequest then return end
+    result("Cancel: a request taken back by its caller", wxl.relay.Cancel(neverRequest) == true)
+    neverRequest = nil
+    wait(3)
+end)
+
+step(function()
+    if not wxl.relay.Published("wxl.test-assets.fetch") then return end
+    wxl.relay.Call("wxl.test-assets.fetch", "cancelled", nil, function(ok, n) cancelledCount = n end)
+    wxl.relay.Call("wxl.test-assets.fetch", "missing", nil, function(ok, path, kind, open, pending, count)
+        cppMissing = { path = path, kind = kind, open = open, pending = pending, count = count }
+    end)
+    waitFor(function() return cancelledCount ~= nil and cppMissing ~= nil end, 3)
+end)
+
+step(function()
+    if not wxl.relay.Published("wxl.test-assets.fetch") then return end
+    result("the C++ service is told of the cancel, and the caller never answered", (cancelledCount or 0) >= 1 and
+           not neverAnswered, "cancelled " .. tostring(cancelledCount))
+    result("a C++ mod's OnFileMissing saw the names nobody had", cppMissing ~= nil and (cppMissing.count or 0) > 0,
+           cppMissing and string.format("%d, last %s kind %s", cppMissing.count, tostring(cppMissing.path),
+                                        tostring(cppMissing.kind)) or "no answer")
+    wxl.storage.RestoreFile(LATER)
+    run("WxlSelfTestLater:Hide() WxlSelfTestFetched:Hide()")
+end)
+
+-- 14. The camera, the pointer and the world ------------------------------------------------------
+
+local cameraFrames, placedSeen, mouseMoves = 0, nil, 0
+local cameraId, motionId, placedAt, frameEndId = nil, nil, nil, nil
+local faceFrom, faceTo = nil, nil
+
+step(function()
+    print("phase 14: the camera, the pointer and the world")
+    local camera = wxl.camera
+    if not (camera and camera.Position) then
+        result("wxl.camera", false, "this runtime has no camera service")
+        return
+    end
+    local position, fov, pivot = camera.Position(), camera.Fov(), camera.Pivot()
+    result("wxl.camera.Position, Fov and Pivot read the world camera", position ~= nil and fov ~= nil and pivot ~= nil,
+           string.format("%s %s %s", tostring(position and position.z), tostring(fov), tostring(pivot and pivot.z)))
+    result("wxl.camera.Cinematic: none while playing", camera.Cinematic() == false)
+    if not pivot then return end
+    -- Ten yards above the head, looking down: set at every update, read back at the next.
+    placedAt = { x = pivot.x, y = pivot.y, z = pivot.z + 10 }
+    -- The view is written right after OnCameraUpdate, so it is read back at the frame's end, once the
+    -- frame was drawn from it.
+    cameraId = Observe("RenderScript", "OnCameraUpdate", function()
+        cameraFrames = cameraFrames + 1
+        camera.SetView(placedAt, { x = 0.01, y = 0, z = -1 }, 0)
+    end)
+    frameEndId = Observe("RenderScript", "OnFrameEnd", function()
+        local now = camera.Position()
+        if now and math.abs(now.z - placedAt.z) < 0.01 then placedSeen = true end
+    end)
+    motionId = Observe("WorldScript", "OnMouseMotion", function() mouseMoves = mouseMoves + 1 end)
+    local held, why = wxl.input.CaptureCursor(true)
+    result("wxl.input.CaptureCursor(true)", held == true and wxl.input.CursorCaptured() == true, tostring(why))
+    note("wxl.input.PointerOverWorld at the centre", wxl.input.PointerOverWorld() == true,
+         "a frame of the interface may stand at the centre of the screen")
+    wait(2)
+end)
+
+step(function()
+    if not cameraId then return end
+    Unobserve(cameraId)
+    Unobserve(frameEndId)
+    cameraId, frameEndId = nil, nil
+    local camera = wxl.camera
+    result("event CameraUpdate (" .. cameraFrames .. " in two seconds)", cameraFrames > 10)
+    result("wxl.camera.SetView: the camera is where the view put it", placedSeen == true)
+    result("wxl.camera.ReleaseView", camera.ReleaseView() == true)
+    wxl.input.CaptureCursor(false)
+    result("wxl.input.CaptureCursor(false) lets the pointer go", wxl.input.CursorCaptured() == false)
+    Unobserve(motionId)
+    note("event MouseMotion (" .. mouseMoves .. " while held)", mouseMoves > 0, "nobody moved the mouse")
+
+    local me = wxl.object.LocalPlayer()
+    local feet = me and me:Position()
+    if feet then
+        local ground = wxl.world.Trace({ x = feet.x, y = feet.y, z = feet.z + 3 }, { x = feet.x, y = feet.y, z = feet.z - 10 })
+        result("wxl.world.Trace meets the ground under the player", ground ~= nil and math.abs(ground.z - feet.z) < 2,
+               ground and string.format("%.2f under %.2f", ground.z, feet.z) or "nothing met")
+        local sky = wxl.world.Trace({ x = feet.x, y = feet.y, z = feet.z + 500 }, { x = feet.x, y = feet.y, z = feet.z + 501 })
+        result("and nothing in the empty sky", sky == nil)
+        local outdoors = me:IsOutdoors()
+        local asked, indoors = ask("return IsIndoors()")
+        result("Unit:IsOutdoors agrees with the client's IsIndoors", type(outdoors) == "boolean" and asked and
+               (outdoors == (indoors == nil)), tostring(outdoors) .. " / IsIndoors " .. tostring(indoors))
+        faceFrom = me:Facing()
+        if faceFrom then
+            faceTo = (faceFrom + 0.5) % (2 * math.pi)
+            local done, why = wxl.action.Face(faceTo)
+            result("wxl.action.Face answers true", done == true, tostring(why))
+            wait(0.5)
+        end
+    end
+end)
+
+step(function()
+    if not faceTo then return end
+    local me  = wxl.object.LocalPlayer()
+    local now = me and me:Facing()
+    result("wxl.action.Face turned the player", now ~= nil and math.abs(now - faceTo) < 0.01,
+           string.format("%s, asked %.3f", tostring(now), faceTo))
+    wxl.action.Face(faceFrom)
+end)
+
+-- 15. The mouse look kept out, a head turned, Dear ImGui ----------------------------------------
+
+step(function()
+    print("phase 15: the mouse look kept out, a head turned, the runtime's Dear ImGui")
+    local input = wxl.input
+    if not (input and input.BlockMouseLook) then
+        result("wxl.input.BlockMouseLook", false, "this runtime is older than abi 0.1.25")
+        return
+    end
+    local ok, why = input.BlockMouseLook(true)
+    result("wxl.input.BlockMouseLook(true)", ok == true and input.MouseLookBlocked() == true, tostring(why))
+    run("MouselookStart()")
+    local asked, looking = ask("return IsMouselooking()")
+    result("MouselookStart while blocked leaves the game out of its mouse look", asked and not looking,
+           "IsMouselooking " .. tostring(looking))
+    run("MouselookStop()")
+    input.BlockMouseLook(false)
+    result("the block is given back", input.MouseLookBlocked() == false)
+    run("MouselookStart()")
+    asked, looking = ask("return IsMouselooking()")
+    result("and MouselookStart works again", asked and looking ~= nil, "IsMouselooking " .. tostring(looking))
+    run("MouselookStop()")
+
+    local me = wxl.object.LocalPlayer()
+    local turned, why2 = wxl.pose.Head(me, 0.6, 0.2, 0.1)
+    result("wxl.pose.Head turns the player's head (look: left and up, for a second)", turned == true, tostring(why2))
+    note("event ImGuiFrame is raised by this runtime", wxl.runtime.Raises("RenderScript", "OnImGuiFrame") == true,
+         "an older runtime")
+    wait(1)
+end)
+
+step(function()
+    if not (wxl.pose and wxl.pose.ReleaseHead) then return end
+    local released, why = wxl.pose.ReleaseHead(wxl.object.LocalPlayer())
+    result("wxl.pose.ReleaseHead gives the head back", released == true, tostring(why))
+end)
+
+-- 16. Models of the world, bone watchers, the cast's ground point -------------------------------------
+
+-- The casts that named a destination since the start (a ground spell, a blink): the point and the
+-- transport it was measured on. The args after miss_reasons came with abi 0.1.21.
+local destinations = 0
+local lastDestination
+local function onCast(...)
+    local args = { ... }
+    if args[17] == true and type(args[18]) == "table" then
+        destinations = destinations + 1
+        lastDestination = string.format("spell %d at %.1f %.1f %.1f", args[6] or 0, args[18].x, args[18].y, args[18].z)
+    end
+end
+Observe("ObjectScript", "OnSpellCastStart", onCast)
+Observe("ObjectScript", "OnSpellCastGo", onCast)
+
+local placed
+
+step(function()
+    print("phase 16: models of the world, bone watchers, the cast's ground point")
+    local m2 = wxl.m2
+    if not (m2 and m2.CreateWorldModel) then
+        result("wxl.m2.CreateWorldModel", false, "this runtime is older than abi 0.1.21")
+        return
+    end
+    local me = wxl.object.LocalPlayer()
+    local at, facing = me:Position(), me:Facing()
+    if not (at and facing) then
+        skip("models of the world", "the player has no position")
+        return
+    end
+    local ground, why = m2.GroundHeight(at, 3, 10)
+    result("wxl.m2.GroundHeight under the player", type(ground) == "number" and math.abs(ground - at.z) < 3,
+           ground and string.format("%.2f, the player at %.2f", ground, at.z) or tostring(why))
+    local body = m2.ObjectModel(me)
+    local head = body and m2.AttachmentWorld(body, 11)
+    result("wxl.m2.AttachmentWorld: the player's head in the world", type(head) == "table" and head.z > at.z,
+           head and string.format("%.2f %.2f %.2f", head.x, head.y, head.z) or "none")
+
+    placed = m2.CreateWorldModel("Creature\\Murloc\\Murloc.m2")
+    result("wxl.m2.CreateWorldModel: a model of the world's scene", placed ~= nil)
+    if not placed then return end
+    local x, y = at.x + 3 * math.cos(facing), at.y + 3 * math.sin(facing)
+    local z = m2.GroundHeight({ x = x, y = y, z = at.z }, 3, 10) or at.z
+    local ok, why2 = placed:Place({ position = { x = x, y = y, z = z }, yaw = facing + math.pi })
+    result("Model:Place three yards in front of the player, facing it (look: a murloc for two seconds)",
+           ok == true, tostring(why2))
+    result("Model:PlayAnimation (stand)", placed:PlayAnimation(0, 1) == true)
+    wait(1)
+end)
+
+step(function()
+    if not placed then return end
+    local m2 = wxl.m2
+    result("wxl.m2.ModelLoaded: the placed model has loaded", m2.ModelLoaded(placed) == true)
+    local length = m2.AnimationLength(placed, 0)
+    result("wxl.m2.AnimationLength of its stand", type(length) == "number" and length > 0, tostring(length))
+    placed:SetAlpha(0.5)
+    placed:SetEmitting(false)
+    result("Model:SetAlpha and SetEmitting (look: it fades to half)", true)
+
+    local asked, present = ask("return TestBonesArm ~= nil")
+    if asked and present then
+        local ok, armed = ask("return TestBonesArm()")
+        result("wxl.test-bones watches the bones of character models", ok and armed == true, tostring(armed))
+    else
+        result("wxl.test-bones is loaded", false, "TestBonesArm is not registered in the client's Lua")
+    end
+    wait(1)
+end)
+
+step(function()
+    local asked, counts = ask("return TestBonesCounts and TestBonesCounts()")
+    if asked and type(counts) == "string" then
+        local files, frames, bones, root, matrices = counts:match("^(%d+)|(%d+)|(%d+)|(-?%d+)|(%d)$")
+        result("the bone watcher took the character files (" .. tostring(files) .. ") and was handed " ..
+               tostring(frames) .. " frame(s)", (tonumber(files) or 0) > 0 and (tonumber(frames) or 0) > 0, counts)
+        result("each frame had its matrices, and BoneInfo read the root bone (parent -1)",
+               matrices == "1" and root == "-1" and (tonumber(bones) or 0) > 0, counts)
+        run("TestBonesDisarm()")
+    end
+    if placed then
+        placed:Release()
+        placed = nil
+        result("Model:Release takes the model out of the world", true)
+    end
+    note("a cast named its ground point (" .. destinations .. " since the start)", destinations > 0,
+         "only a ground-targeted spell or a blink names one" .. (lastDestination and (": " .. lastDestination) or ""))
+    if lastDestination then print("     " .. lastDestination) end
+end)
+
+-- 17. Reticle targeting's bricks: the click before the game acts, what the player can do -----------
+
+local previousTarget
+
+step(function()
+    print("phase 17: the click before the game acts, what the player can do with what is there")
+    local me = wxl.object.LocalPlayer()
+    if not (me and me.CanAttack) then
+        result("Unit:CanAttack", false, "this runtime is older than abi 0.1.26")
+        return
+    end
+    result("the runtime raises WorldClickRequest", wxl.runtime.Raises("WorldScript", "OnWorldClickRequest") == true)
+
+    -- The nearest other unit, whatever it is.
+    local nearest, best
+    for _, unit in ipairs(wxl.object.InView("Unit")) do
+        local d = unit:Distance(me)
+        if d and (not best or d < best) then nearest, best = unit, d end
+    end
+    local interacting, usable, units, objects = 0, 0, 0, 0
+    for _, unit in ipairs(wxl.object.InView("Unit")) do
+        local can = unit:CanInteract()
+        if type(can) == "boolean" then units = units + 1 end
+        if can then interacting = interacting + 1 end
+    end
+    for _, object in ipairs(wxl.object.InView("GameObject")) do
+        local can = object:CanUse()
+        if type(can) == "boolean" then objects = objects + 1 end
+        if can then usable = usable + 1 end
+    end
+    result("Unit:CanInteract answers for every unit in view (" .. interacting .. " of " .. units .. " offer something)",
+           units == #wxl.object.InView("Unit"))
+    result("GameObject:CanUse answers for every game object in view (" .. usable .. " of " .. objects .. " usable)",
+           objects == #wxl.object.InView("GameObject"))
+    if not nearest then
+        skip("Unit:CanAttack against UnitCanAttack", "no unit in view")
+        return
+    end
+    local asked, guid = ask("return UnitGUID('target')")
+    previousTarget = asked and guid or nil
+    wxl.action.Target(nearest)
+    local ok, client = ask("return UnitCanAttack('player', 'target') and true or false")
+    local mine = nearest:CanAttack()
+    result("Unit:CanAttack agrees with UnitCanAttack for the nearest unit (" .. tostring(nearest:Name()) .. ")",
+           ok and mine == client, "CanAttack " .. tostring(mine) .. ", UnitCanAttack " .. tostring(client))
+    wait(0.5)
+end)
+
+step(function()
+    if previousTarget then
+        local target = wxl.object.FromGuid(previousTarget)
+        if target then wxl.action.Target(target) else wxl.action.ClearTarget() end
+    else
+        wxl.action.ClearTarget()
+    end
+end)
+
+-- 18. A highlight -------------------------------------------------------------------------------
+
+step(function()
+    print("phase 18: an object highlighted, where it is seen")
+    local hl = wxl.highlight
+    if not (hl and hl.Supported) then
+        result("wxl.highlight", false, "this runtime is older than abi 0.1.27")
+        return
+    end
+    local me = wxl.object.LocalPlayer()
+    if wxl.gx and wxl.gx.Api and wxl.gx.Api() == "vulkan" then
+        result("on the Vulkan device wxl.highlight draws (both clients)", hl.Supported() == true, tostring(hl.UnsupportedReason()))
+    end
+    if not hl.Supported() then
+        local why = hl.UnsupportedReason()
+        local ok, err = hl.Set(me, 0xFF3030, 3, 12, 0.6)
+        result("wxl.highlight draws none here, says why and refuses as unsupported", type(why) == "string" and #why > 0 and
+               ok == nil and err == "unsupported", tostring(why))
+        return
+    end
+    result("wxl.highlight.Set on the player (look: a red outline and a glow around the character for two seconds, " ..
+           "hidden where a wall is in front)", hl.Set(me, 0xFF3030, 3, 12, 0.6) == true)
+    wait(2)
+end)
+
+step(function()
+    local hl = wxl.highlight
+    if not (hl and hl.Supported and hl.Supported()) then return end
+    local me    = wxl.object.LocalPlayer()
+    local drawn = hl.Drawn()
+    result("the player's batches were drawn again (" .. tostring(drawn) .. " in the last frame; 0 in first person)",
+           (drawn or 0) > 0)
+    result("Clear takes the highlight off", hl.Clear(me) == true)
+    result("a second Clear finds none", select(2, hl.Clear(me)) == "not_found")
+end)
+
+-- 19. The game's selection circles ---------------------------------------------------------------
+
+local circleTarget -- what the player had targeted before phase 19
+
+step(function()
+    print("phase 19: the game's selection circles hidden and restyled")
+    local sc = wxl.selectioncircle
+    if not (sc and sc.Hide) then
+        result("wxl.selectioncircle", false, "this runtime is older than abi 0.1.28")
+        return
+    end
+    local named, err = pcall(sc.Hide, "nope")
+    result("a kind that does not exist is an error naming it", not named and tostring(err):find("nope", 1, true) ~= nil)
+    local me = wxl.object.LocalPlayer()
+    local nearest, best
+    for _, unit in ipairs(wxl.object.InView("Unit")) do
+        local d = unit:Distance(me)
+        if d and (not best or d < best) then nearest, best = unit, d end
+    end
+    if not nearest then
+        skip("the target's circle", "no unit in view")
+        return
+    end
+    local asked, guid = ask("return UnitGUID('target')")
+    circleTarget = asked and guid or false
+    wxl.action.Target(nearest)
+    wait(0.5)
+end)
+
+step(function()
+    local sc = wxl.selectioncircle
+    if not (sc and sc.Hide) or circleTarget == nil then return end
+    local _, shown = ask("return GetCVar('ObjectSelectionCircle')")
+    result("the target's circle is drawn (" .. tostring(sc.Drawn()) .. " in the last frame; ObjectSelectionCircle " ..
+           tostring(shown) .. ")", sc.Drawn() > 0)
+    result("Hide(\"target\") answers true", sc.Hide("target") == true)
+    wait(0.3)
+end)
+
+step(function()
+    local sc = wxl.selectioncircle
+    if not (sc and sc.Hide) or circleTarget == nil then return end
+    result("the hidden circle is not drawn (look: no circle under the target)", sc.Drawn() == 0 and sc.Hidden() > 0,
+           "drawn " .. sc.Drawn() .. ", hidden " .. sc.Hidden())
+    result("SetStyle draws it larger and blue (look: for two seconds)",
+           sc.SetStyle("target", nil, { color = 0xFF3080FF, scale = 1.6 }) == true)
+    wait(2)
+end)
+
+step(function()
+    local sc = wxl.selectioncircle
+    if not (sc and sc.Hide) or circleTarget == nil then return end
+    result("the restyled circle is drawn", sc.Drawn() > 0 and sc.Hidden() == 0)
+    sc.ResetAll()
+    result("ResetObject finds nothing this mod changed", select(2, sc.ResetObject(wxl.object.LocalPlayer())) == "not_found")
+    local target = circleTarget and wxl.object.FromGuid(circleTarget)
+    if target then wxl.action.Target(target) else wxl.action.ClearTarget() end
+end)
+
+-- 20. A rolled camera, a pointer off the centre -------------------------------------------------
+
+local rollId, rollEndId, rollSeen, rollFrames = nil, nil, nil, 0
+local ROLL = 0.3
+
+step(function()
+    print("phase 20: a rolled camera and a pointer held off the centre")
+    local camera, input = wxl.camera, wxl.input
+    if not (camera and camera.SetViewRolled and input and input.CaptureCursorAt) then
+        result("wxl.camera.SetViewRolled", false, "this runtime is older than abi 0.1.29")
+        return
+    end
+    local bad = select(2, input.CaptureCursorAt(0.5, 1.5))
+    result("CaptureCursorAt refuses a point off the window", bad == "invalid", tostring(bad))
+    -- The client's own camera, rolled: set at every update from where the client put it, read at
+    -- the frame's end once the frame was drawn from it.
+    rollId = Observe("RenderScript", "OnCameraUpdate", function()
+        local at, forward = camera.Position(), camera.Forward()
+        if at and forward then camera.SetViewRolled(at, forward, 0, ROLL) end
+    end)
+    rollEndId = Observe("RenderScript", "OnFrameEnd", function()
+        rollFrames = rollFrames + 1
+        rollSeen = camera.Roll()
+    end)
+    local held, why = input.CaptureCursorAt(0.5, 0.4)
+    local point = input.CapturePoint()
+    result("CaptureCursorAt holds the pointer and CapturePoint reads it back", held == true and point ~= nil and
+           math.abs(point.x - 0.5) < 1e-6 and math.abs(point.y - 0.4) < 1e-6,
+           tostring(why) .. " " .. tostring(point and point.y))
+    print("look: the horizon leans, its right end up, for two seconds; the mouseover is a tenth of the screen above the centre")
+    wait(2)
+end)
+
+step(function()
+    if not rollId then return end
+    Unobserve(rollId)
+    rollId = nil
+    local camera, input = wxl.camera, wxl.input
+    result("SetViewRolled: the camera draws with the roll set (" .. rollFrames .. " frames)",
+           rollSeen ~= nil and math.abs(rollSeen - ROLL) < 1e-3, tostring(rollSeen))
+    result("ReleaseView gives the rolled view back", camera.ReleaseView() == true)
+    input.CaptureCursor(false)
+    result("CaptureCursor(false) lets the pointer go: held nowhere", select(2, input.CapturePoint()) == "not_found")
+    rollSeen = nil
+    wait(0.3)
+end)
+
+step(function()
+    if not rollEndId then return end
+    Unobserve(rollEndId)
+    rollEndId = nil
+    note("the client's own camera draws level again", rollSeen ~= nil and math.abs(rollSeen) < 1e-3,
+         "on a vehicle or a transport the client may roll its camera itself: " .. tostring(rollSeen))
+end)
+
+-- 21. Textures from SVG and PNG ---------------------------------------------------------------
+
+local tex = {} -- what phase 21 made: paths and texture coordinates
+
+-- Shows a texture in a frame of the given size in the middle of the screen: whether the client
+-- found the file (SetTexture answers 1), and the region's size.
+local function show(path, w, h, right, bottom)
+    return ask(string.format([[
+        local f = WxlSelfTestTexture or CreateFrame("Frame", "WxlSelfTestTexture", UIParent)
+        f:SetFrameStrata("TOOLTIP")
+        f:SetPoint("CENTER", 0, 120)
+        f:SetSize(%d, %d)
+        f.t = f.t or f:CreateTexture(nil, "OVERLAY")
+        f.t:SetAllPoints(f)
+        local found = f.t:SetTexture(%q)
+        f.t:SetTexCoord(0, %.9g, 0, %.9g)
+        f:Show()
+        return found, f.t:GetWidth() .. "x" .. f.t:GetHeight()]], w, h, path, right, bottom))
+end
+
+step(function()
+    print("phase 21: textures made from an SVG and a PNG")
+    local t = wxl.texture
+    if not (t and t.Make) then
+        result("wxl.texture", false, "this runtime is older than abi 0.1.30")
+        return
+    end
+    local path, right, bottom, tw, th = t.Make(".\\assets\\reticle.svg", 64, nil,
+        { fill = "ff4040ff", outline = { color = "000000cc", width = 2 } })
+    result("Make draws the reticle at 64 pixels wide, its height in proportion", path ~= nil and tw == 64 and th == 64 and
+           right == 1 and math.abs(bottom - 40 / 64) < 1e-6, tostring(path) .. " " .. tostring(right) .. " " .. tostring(bottom))
+    if not path then return end
+    tex.red, tex.right, tex.bottom = path, right, bottom
+    local ok, found, size = show(path, 64, 40, right, bottom)
+    result("SetTexture finds it, the region is 64 x 40 (look: a red reticle with a dark outline above the centre, " ..
+           "two seconds)", ok and found == 1 and size == "64x40", tostring(found) .. " " .. tostring(size))
+    local again = t.Make(".\\assets\\reticle.svg", 64, nil, { outline = { width = 2, color = "000000cc" }, fill = "#ff4040" })
+    result("the same request answers the same path", again == path, tostring(again))
+    local asked, fromUi = ask("return WxlTexture('Mods\\\\wxl.selftest\\\\assets\\\\reticle.svg', 64, nil, " ..
+                              "{ fill = 'ff4040ff', outline = { color = '000000cc', width = 2 } })")
+    result("the interface's WxlTexture answers the same path for the same request", asked and fromUi == path, tostring(fromUi))
+    local okMissing, none, why = ask("return WxlTexture('Interface\\\\AddOns\\\\Nobody\\\\none.svg', 16, 16)")
+    result("WxlTexture answers nil and why for a file nobody has", okMissing and none == nil and
+           tostring(why):find("no file", 1, true) ~= nil, tostring(why))
+    wait(2)
+end)
+
+step(function()
+    local t = wxl.texture
+    if not (t and t.Make) or not tex.red then return end
+    local blue = t.Make(".\\assets\\reticle.svg", 64, nil, { fill = 0xFF4080FF, outline = { width = 0 } })
+    result("another colour and the outline taken off give another path", blue ~= nil and blue ~= tex.red, tostring(blue))
+    if blue then
+        local ok, found = show(blue, 64, 40, tex.right, tex.bottom)
+        result("SetTexture finds it (look: the reticle blue, with no outline, two seconds)", ok and found == 1)
+    end
+    wait(2)
+end)
+
+step(function()
+    local t = wxl.texture
+    if not (t and t.Make) or not tex.red then return end
+    local disc, right, bottom = t.Make(".\\assets\\disc.png", 48, 48, nil, "ffffffc0")
+    result("a PNG resampled to 48 x 48 in a 64 x 64 texture", disc ~= nil and math.abs(right - 0.75) < 1e-6, tostring(disc))
+    if disc then
+        local ok, found = show(disc, 48, 48, right, bottom)
+        result("SetTexture finds it (look: a disc shading red to white, slightly see-through, two seconds)", ok and found == 1)
+    end
+    local _, why = t.Make(".\\assets\\disc.png", 48, 48, { fill = "ff0000" })
+    result("a group on a PNG is refused, and says why", tostring(why):find("PNG", 1, true) ~= nil, tostring(why))
+    local _, none = t.Make(".\\assets\\none.svg", 16, 16)
+    result("a missing file is refused, and named", tostring(none):find("none.svg", 1, true) ~= nil, tostring(none))
+    wait(2)
+end)
+
+step(function()
+    local t = wxl.texture
+    if not (t and t.Make) or not tex.red then return end
+    run("if WxlSelfTestTexture then WxlSelfTestTexture:Hide() end")
+    local stats = t.Stats()
+    result("Stats counts what was made", stats ~= nil and stats.textures >= 3 and stats.resident >= 1 and stats.reused >= 1,
+           stats and (stats.textures .. " textures, " .. stats.bytes .. " bytes, " .. stats.reused .. " reused") or "nil")
+end)
+
+-- 22. Console variables -----------------------------------------------------------------------
+
+-- A flag of wxl.cvar.Flags' mask (1 saved, 256 the client's, 512 the interface's).
+local function hasFlag(mask, bit) return mask ~= nil and math.floor(mask / bit) % 2 == 1 end
+
+-- Registered when the mod loads: before the client reads Config.wtf on a cold start, which is the
+-- registration that waits and is made just before the file is read.
+local CVAR_SAVED, CVAR_CHAR = "wxlSelfTest_saved", "wxlSelfTest_char"
+if wxl.cvar and wxl.cvar.Register then
+    wxl.cvar.Register(CVAR_SAVED, "0", "saved", "wxl.selftest: the token the last launch saved")
+end
+
+step(function()
+    print("phase 22: console variables")
+    local cvar = wxl.cvar
+    if not (cvar and cvar.Register) then
+        result("wxl.cvar", false, "this runtime is older than abi 0.1.31")
+        return
+    end
+    -- What the last launch saved: its token, in Config.wtf and in the character's settings.
+    local savedToken = cvar.Get(CVAR_SAVED)
+    note("the value the last launch saved came back from Config.wtf", savedToken ~= nil and savedToken ~= "0",
+         "none saved yet (the first launch with this phase, or the last did not end cleanly): " .. tostring(savedToken))
+    result("Register a character's variable", cvar.Register(CVAR_CHAR, "0", "character") == true)
+    local charToken = cvar.Get(CVAR_CHAR)
+    note("the character's value the last session saved came back", charToken ~= nil and charToken ~= "0",
+         "none saved yet for this character, or the server keeps no account data: " .. tostring(charToken))
+    local token = tostring(os.time())
+    result("both get a new token, written at the next clean exit (" .. token .. ")",
+           cvar.Set(CVAR_SAVED, token) == true and cvar.Set(CVAR_CHAR, token) == true)
+    print("next launch: the two NOTEs above must read PASS, with the token " .. token)
+
+    -- A setting of the mod, ranged; the interface reads and sets it.
+    local name = "wxlSelfTest_scale"
+    result("Register a saved variable and its range", cvar.Register(name, 1, { "saved" }, "wxl.selftest: a scale") == true and
+           cvar.SetRange(name, 0.5, 3) == true)
+    result("SetNumber, and the interface's GetCVar reads it", cvar.SetNumber(name, 2) == true and
+           select(2, ask("return GetCVar('" .. name .. "')")) == "2", tostring(select(2, ask("return GetCVar('" .. name .. "')"))))
+    local seen
+    local id = Observe("WorldScript", "OnCVarChanged", function(changed, _, value)
+        if changed == name then seen = value end
+    end)
+    local okSet = ask("SetCVar('" .. name .. "', '2.5')")
+    result("the interface's SetCVar changes it, and OnCVarChanged follows", okSet and cvar.GetNumber(name) == 2.5 and seen == "2.5",
+           tostring(cvar.Get(name)) .. " " .. tostring(seen))
+    ask("SetCVar('" .. name .. "', '9')")
+    result("a value outside the range is refused, from the interface too", cvar.Get(name) == "2.5", tostring(cvar.Get(name)))
+    local okDefault, fallback = ask("return GetCVarDefault('" .. name .. "')")
+    result("the interface's GetCVarDefault reads the default", okDefault and fallback == "1", tostring(fallback))
+    result("Reset gives the default back", cvar.Reset(name) == true and cvar.Get(name) == "1")
+    Unobserve(id)
+
+    -- Read-only: the interface is refused, the mod is not.
+    local locked = "wxlSelfTest_locked"
+    cvar.Register(locked, "on", "read_only")
+    local okLocked, why = ask("SetCVar('" .. locked .. "', 'off')")
+    result("the interface's SetCVar is refused a read-only variable", not okLocked and tostring(why):find("read%-only") ~= nil,
+           tostring(why))
+    result("its mod sets it, and GetBool reads it", cvar.SetBool(locked, false) == true and cvar.GetBool(locked) == false)
+
+    -- The interface's own registration.
+    local okUi, made = ask("return WxlRegisterCVar('wxlSelfTestUi_on', '1', 'saved', 'registered by the interface')")
+    local flags = cvar.Flags("wxlSelfTestUi_on")
+    result("the interface's WxlRegisterCVar registers one, saved and the interface's", okUi and made == true and
+           hasFlag(flags, 1) and hasFlag(flags, 512), tostring(made) .. " " .. tostring(flags))
+    local refused = select(2, cvar.Register("wxlSelfTestUi_on", "0"))
+    result("a mod is refused the interface's name", refused == "invalid", tostring(refused))
+    local client = select(2, cvar.Register("farclip", "1"))
+    result("and the client's own", client == "invalid", tostring(client))
+    result("Flags tells the client's own variables", hasFlag(cvar.Flags("farclip"), 256))
+end)
+
+-- 23. The interface's signatures --------------------------------------------------------------
+
+-- The interface's signatures, observed from the start: the login screens' GlueXML.toc and its
+-- clearing of loose folders come before the first phase, FrameXML.toc with every entry into the
+-- world and every /reload.
+local signatures, cleanups = {}, 0
+if wxl.runtime.Raises and wxl.runtime.Raises("LuaScript", "OnInterfaceSignature") then
+    Observe("LuaScript", "OnInterfaceSignature", function(file, extra, verdict)
+        local name = file:match("([^\\/]+)$") or file
+        local seen = signatures[name] or { count = 0 }
+        seen.count, seen.verdict, seen.extra = seen.count + 1, verdict, extra
+        signatures[name] = seen
+    end)
+    Observe("LuaScript", "OnInterfaceCleanupRequest", function() cleanups = cleanups + 1 end)
+end
+
+step(function()
+    print("phase 23: the interface's signatures")
+    if not (wxl.runtime.Raises and wxl.runtime.Raises("LuaScript", "OnInterfaceSignature")) then
+        result("InterfaceSignature", false, "this runtime is older than abi 0.1.32")
+        return
+    end
+    local frame = signatures["FrameXML.toc"]
+    result("the gate answered for FrameXML.toc", frame ~= nil and frame.count > 0,
+           "no check of FrameXML.toc was seen since the mod loaded")
+    if frame then
+        print("FrameXML.toc: the client's verdict is " .. tostring(frame.verdict) .. ", " .. frame.count ..
+              " check(s), hashed with " .. tostring(frame.extra))
+        result("FrameXML.toc is hashed with Bindings.xml", tostring(frame.extra):lower():find("bindings.xml", 1, true) ~= nil,
+               tostring(frame.extra))
+        -- The world is up, so the client took FrameXML: a verdict short of signed was answered.
+        note("FrameXML.toc is the client's own (signed)", frame.verdict == "signed",
+             "verdict " .. tostring(frame.verdict) .. ": a changed FrameXML, loaded because a mod took it as signed (wxl.glue-unlock)")
+    end
+    local glue = signatures["GlueXML.toc"]
+    note("GlueXML.toc was judged at the login screens", glue ~= nil,
+         "not seen: the mod loads after the login screens started, or the client skipped them")
+    if glue then print("GlueXML.toc: the client's verdict is " .. tostring(glue.verdict)) end
+    note("the clearing of loose interface folders was asked once", cleanups == 1, tostring(cleanups) .. " time(s)")
+    local addOns = 0
+    for name, seen in pairs(signatures) do
+        if name ~= "FrameXML.toc" and name ~= "GlueXML.toc" then
+            addOns = addOns + 1
+            print("add-on " .. name .. ": " .. tostring(seen.verdict))
+        end
+    end
+    print(addOns .. " add-on(s) judged")
+end)
+
+-- 24. Drawing into the frame ---------------------------------------------------------------------
+
+-- A fragment program over the whole pass writing its push constants' colour (glslang -V
+-- --target-env vulkan1.3 of: #include "wxl/render/render.glsl", layout(push_constant) uniform Push
+-- { vec4 color; } pc; layout(location = 0) in vec2 uv; layout(location = 0) out vec4 outColor;
+-- void main() { outColor = pc.color; }).
+local TINT_SPIRV =
+    "\3\2\35\7\0\6\1\0\11\0\8\0\29\0\0\0\0\0\0\0\17\0\2\0\1\0\0\0\17\0\2\0\182\20\0\0\11\0\6\0\1\0\0" ..
+    "\0\71\76\83\76\46\115\116\100\46\52\53\48\0\0\0\0\14\0\3\0\0\0\0\0\1\0\0\0\15\0\10\0\4\0\0\0\4\0" ..
+    "\0\0\109\97\105\110\0\0\0\0\9\0\0\0\12\0\0\0\21\0\0\0\25\0\0\0\28\0\0\0\16\0\3\0\4\0\0\0\7\0\0\0" ..
+    "\3\0\3\0\2\0\0\0\204\1\0\0\4\0\8\0\71\76\95\69\88\84\95\110\111\110\117\110\105\102\111\114\109" ..
+    "\95\113\117\97\108\105\102\105\101\114\0\4\0\11\0\71\76\95\69\88\84\95\115\97\109\112\108\101" ..
+    "\114\108\101\115\115\95\116\101\120\116\117\114\101\95\102\117\110\99\116\105\111\110\115\0\0\0" ..
+    "\0\4\0\10\0\71\76\95\71\79\79\71\76\69\95\99\112\112\95\115\116\121\108\101\95\108\105\110\101" ..
+    "\95\100\105\114\101\99\116\105\118\101\0\0\4\0\8\0\71\76\95\71\79\79\71\76\69\95\105\110\99\108" ..
+    "\117\100\101\95\100\105\114\101\99\116\105\118\101\0\5\0\4\0\4\0\0\0\109\97\105\110\0\0\0\0\5\0" ..
+    "\5\0\9\0\0\0\111\117\116\67\111\108\111\114\0\0\0\0\5\0\4\0\10\0\0\0\80\117\115\104\0\0\0\0\6\0" ..
+    "\5\0\10\0\0\0\0\0\0\0\99\111\108\111\114\0\0\0\5\0\3\0\12\0\0\0\112\99\0\0\5\0\4\0\21\0\0\0\117" ..
+    "\73\109\97\103\101\115\0\5\0\5\0\25\0\0\0\117\83\97\109\112\108\101\114\115\0\0\0\5\0\3\0\28\0\0" ..
+    "\0\117\118\0\0\71\0\4\0\9\0\0\0\30\0\0\0\0\0\0\0\71\0\3\0\10\0\0\0\2\0\0\0\72\0\5\0\10\0\0\0\0\0" ..
+    "\0\0\35\0\0\0\0\0\0\0\71\0\4\0\21\0\0\0\33\0\0\0\0\0\0\0\71\0\4\0\21\0\0\0\34\0\0\0\0\0\0\0\71\0" ..
+    "\4\0\25\0\0\0\33\0\0\0\1\0\0\0\71\0\4\0\25\0\0\0\34\0\0\0\0\0\0\0\71\0\4\0\28\0\0\0\30\0\0\0\0\0" ..
+    "\0\0\19\0\2\0\2\0\0\0\33\0\3\0\3\0\0\0\2\0\0\0\22\0\3\0\6\0\0\0\32\0\0\0\23\0\4\0\7\0\0\0\6\0\0" ..
+    "\0\4\0\0\0\32\0\4\0\8\0\0\0\3\0\0\0\7\0\0\0\59\0\4\0\8\0\0\0\9\0\0\0\3\0\0\0\30\0\3\0\10\0\0\0\7" ..
+    "\0\0\0\32\0\4\0\11\0\0\0\9\0\0\0\10\0\0\0\59\0\4\0\11\0\0\0\12\0\0\0\9\0\0\0\21\0\4\0\13\0\0\0" ..
+    "\32\0\0\0\1\0\0\0\43\0\4\0\13\0\0\0\14\0\0\0\0\0\0\0\32\0\4\0\15\0\0\0\9\0\0\0\7\0\0\0\25\0\9\0" ..
+    "\18\0\0\0\6\0\0\0\1\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\1\0\0\0\0\0\0\0\29\0\3\0\19\0\0\0\18\0\0\0\32" ..
+    "\0\4\0\20\0\0\0\0\0\0\0\19\0\0\0\59\0\4\0\20\0\0\0\21\0\0\0\0\0\0\0\26\0\2\0\22\0\0\0\29\0\3\0" ..
+    "\23\0\0\0\22\0\0\0\32\0\4\0\24\0\0\0\0\0\0\0\23\0\0\0\59\0\4\0\24\0\0\0\25\0\0\0\0\0\0\0\23\0\4" ..
+    "\0\26\0\0\0\6\0\0\0\2\0\0\0\32\0\4\0\27\0\0\0\1\0\0\0\26\0\0\0\59\0\4\0\27\0\0\0\28\0\0\0\1\0\0" ..
+    "\0\54\0\5\0\2\0\0\0\4\0\0\0\0\0\0\0\3\0\0\0\248\0\2\0\5\0\0\0\65\0\5\0\15\0\0\0\16\0\0\0\12\0\0" ..
+    "\0\14\0\0\0\61\0\4\0\7\0\0\0\17\0\0\0\16\0\0\0\62\0\3\0\9\0\0\0\17\0\0\0\253\0\1\0\56\0\1\0" .. ""
+
+local render = { points = {}, kept = false, batches = 0, drawn = 0, refused = nil }
+
+step(function()
+    print("phase 24: drawing into the frame (wxl.render)")
+    if not (wxl.gx and wxl.gx.Api and wxl.render and wxl.render.Supported) then
+        result("wxl.render", false, "this runtime is older than abi 0.1.33")
+        return
+    end
+    local api = wxl.gx.Api()
+    result("wxl.gx.Api names the client's device (" .. tostring(api) .. ")", type(api) == "string" and api ~= "none", tostring(api))
+    local rd = wxl.render
+    -- Both clients draw through the Vulkan renderer under [gx] api = vulkan, the stock one too:
+    -- there it must draw; on Direct3D 9 it must say why it does not.
+    if api == "vulkan" then
+        result("on the Vulkan device wxl.render draws (both clients)", rd.Supported() == true, tostring(rd.UnsupportedReason()))
+    end
+    if not rd.Supported() then
+        local why = rd.UnsupportedReason()
+        result("wxl.render draws nothing on " .. tostring(api) .. " and says why", api ~= "vulkan" and type(why) == "string" and #why > 0,
+               tostring(why))
+        local made, err = rd.CreateScreenImage(1, 1, 0)
+        result("and makes no image", made == nil, tostring(err))
+        return
+    end
+    result("wxl.render draws on the Vulkan renderer", api == "vulkan", tostring(api))
+    local image = rd.CreateScreenImage(2, 1, 1)
+    local w, h = image and image:ImageWidth(), image and image:ImageHeight()
+    result("a screen image half the frame's size, with a slot", image ~= nil and (w or 0) > 0 and (h or 0) > 0 and
+           image:ImageSlot() ~= 0xFFFFFFFF, tostring(w) .. "x" .. tostring(h))
+    render.image = image
+    local pipeline, why = rd.CreatePipeline({ kind = "fullscreen", name = "selftest tint", fragment = TINT_SPIRV, blend = "alpha" })
+    result("a full-screen pipeline of the selftest's SPIR-V", pipeline ~= nil and pipeline:PipelineReady() == true, tostring(why))
+    render.pipeline = pipeline
+    render.points.ids = {
+        Observe("RenderScript", "OnRenderPoint", function(point, frame, width, height, samples)
+            render.points[point] = (render.points[point] or 0) + 1
+            render.size = width .. "x" .. height .. ", " .. samples .. " sample(s)"
+            if point ~= "after_world" or not render.pipeline or not render.tinting then return end
+            wxl.profile.GpuZoneBegin("selftest tint")
+            if rd.Begin({ colors = { "scene_color" } }) then
+                local ok, err = rd.Fullscreen(render.pipeline, { 0.2, 0.4, 1.0, 0.15 })
+                if ok then render.drawn = render.drawn + 1 else render.refused = err end
+                rd.End()
+            end
+            wxl.profile.GpuZoneEnd()
+        end),
+        Observe("RenderScript", "OnModelBatchDrawn", function(...)
+            render.batches = render.batches + 1
+            if render.kept then return end
+            local batch = select(16, ...)
+            render.kept = batch ~= nil and rd.KeepBatch(batch) ~= nil
+        end),
+    }
+    render.tinting = true
+    print("look: the world tinted blue for two seconds, the interface not")
+    wait(2)
+end)
+
+step(function()
+    if not render.points.ids then return end
+    render.tinting = false
+    for _, id in ipairs(render.points.ids) do Unobserve(id) end
+    for _, point in ipairs({ "after_opaque_world", "after_liquids", "after_world", "after_ui" }) do
+        result("RenderPoint " .. point .. " comes each frame (" .. tostring(render.points[point] or 0) .. " in two seconds)",
+               (render.points[point] or 0) > 0, render.size)
+    end
+    result("the tint was drawn at after_world (" .. render.drawn .. " frames)", render.drawn > 0, tostring(render.refused))
+    result("a model batch was kept from ModelBatchDrawn (" .. render.batches .. " batches seen)", render.kept == true)
+    result("the scene's colour is copied into a texture inside a point only",
+           wxl.render.SceneColorSlot() == 0xFFFFFFFF)
+    if render.pipeline then render.pipeline:DestroyPipeline() end
+    if render.image then render.image:DestroyImage() end
+    render.pipeline, render.image = nil, nil
+end)
+
+-- 25. Compute and bone palettes -----------------------------------------------------------------
+
+-- A compute program filling `count` rows at an address with one colour (glslang -V --target-env
+-- vulkan1.3 of: layout(local_size_x = 64) in; layout(buffer_reference, std430,
+-- buffer_reference_align = 16) writeonly buffer Rows { vec4 rows[]; }; layout(push_constant)
+-- uniform Push { uvec2 rows; uint count; uint rgba; } pc; void main() { if
+-- (gl_GlobalInvocationID.x < pc.count) Rows(pc.rows).rows[gl_GlobalInvocationID.x] =
+-- unpackUnorm4x8(pc.rgba); }), and a fragment program over the whole pass writing row `index` at
+-- an address (#include "wxl/render/render.glsl", layout(push_constant) uniform Push { uvec2 rows;
+-- uint index; } pc; void main() { outColor = WxlRows(pc.rows).rows[pc.index]; }).
+local FILL_SPIRV =
+    "\3\2\35\7\0\6\1\0\11\0\8\0\48\0\0\0\0\0\0\0\17\0\2\0\1\0\0\0\17\0\2\0\227\20\0\0\11\0\6\0\1\0\0" ..
+    "\0\71\76\83\76\46\115\116\100\46\52\53\48\0\0\0\0\14\0\3\0\228\20\0\0\1\0\0\0\15\0\7\0\5\0\0\0\4" ..
+    "\0\0\0\109\97\105\110\0\0\0\0\9\0\0\0\17\0\0\0\16\0\6\0\4\0\0\0\17\0\0\0\64\0\0\0\1\0\0\0\1\0\0" ..
+    "\0\3\0\3\0\2\0\0\0\204\1\0\0\4\0\7\0\71\76\95\69\88\84\95\98\117\102\102\101\114\95\114\101\102" ..
+    "\101\114\101\110\99\101\0\4\0\9\0\71\76\95\69\88\84\95\98\117\102\102\101\114\95\114\101\102\101" ..
+    "\114\101\110\99\101\95\117\118\101\99\50\0\0\0\5\0\4\0\4\0\0\0\109\97\105\110\0\0\0\0\5\0\8\0\9" ..
+    "\0\0\0\103\108\95\71\108\111\98\97\108\73\110\118\111\99\97\116\105\111\110\73\68\0\0\0\5\0\4\0" ..
+    "\15\0\0\0\80\117\115\104\0\0\0\0\6\0\5\0\15\0\0\0\0\0\0\0\114\111\119\115\0\0\0\0\6\0\5\0\15\0\0" ..
+    "\0\1\0\0\0\99\111\117\110\116\0\0\0\6\0\5\0\15\0\0\0\2\0\0\0\114\103\98\97\0\0\0\0\5\0\3\0\17\0" ..
+    "\0\0\112\99\0\0\5\0\4\0\35\0\0\0\82\111\119\115\0\0\0\0\6\0\5\0\35\0\0\0\0\0\0\0\114\111\119\115" ..
+    "\0\0\0\0\71\0\4\0\9\0\0\0\11\0\0\0\28\0\0\0\71\0\3\0\15\0\0\0\2\0\0\0\72\0\5\0\15\0\0\0\0\0\0\0" ..
+    "\35\0\0\0\0\0\0\0\72\0\5\0\15\0\0\0\1\0\0\0\35\0\0\0\8\0\0\0\72\0\5\0\15\0\0\0\2\0\0\0\35\0\0\0" ..
+    "\12\0\0\0\71\0\4\0\34\0\0\0\6\0\0\0\16\0\0\0\71\0\3\0\35\0\0\0\2\0\0\0\72\0\4\0\35\0\0\0\0\0\0\0" ..
+    "\25\0\0\0\72\0\5\0\35\0\0\0\0\0\0\0\35\0\0\0\0\0\0\0\19\0\2\0\2\0\0\0\33\0\3\0\3\0\0\0\2\0\0\0" ..
+    "\21\0\4\0\6\0\0\0\32\0\0\0\0\0\0\0\23\0\4\0\7\0\0\0\6\0\0\0\3\0\0\0\32\0\4\0\8\0\0\0\1\0\0\0\7\0" ..
+    "\0\0\59\0\4\0\8\0\0\0\9\0\0\0\1\0\0\0\43\0\4\0\6\0\0\0\10\0\0\0\0\0\0\0\32\0\4\0\11\0\0\0\1\0\0" ..
+    "\0\6\0\0\0\23\0\4\0\14\0\0\0\6\0\0\0\2\0\0\0\30\0\5\0\15\0\0\0\14\0\0\0\6\0\0\0\6\0\0\0\32\0\4\0" ..
+    "\16\0\0\0\9\0\0\0\15\0\0\0\59\0\4\0\16\0\0\0\17\0\0\0\9\0\0\0\21\0\4\0\18\0\0\0\32\0\0\0\1\0\0\0" ..
+    "\43\0\4\0\18\0\0\0\19\0\0\0\1\0\0\0\32\0\4\0\20\0\0\0\9\0\0\0\6\0\0\0\20\0\2\0\23\0\0\0\43\0\4\0" ..
+    "\18\0\0\0\27\0\0\0\0\0\0\0\32\0\4\0\28\0\0\0\9\0\0\0\14\0\0\0\39\0\3\0\31\0\0\0\229\20\0\0\22\0" ..
+    "\3\0\32\0\0\0\32\0\0\0\23\0\4\0\33\0\0\0\32\0\0\0\4\0\0\0\29\0\3\0\34\0\0\0\33\0\0\0\30\0\3\0\35" ..
+    "\0\0\0\34\0\0\0\32\0\4\0\31\0\0\0\229\20\0\0\35\0\0\0\43\0\4\0\18\0\0\0\39\0\0\0\2\0\0\0\32\0\4" ..
+    "\0\43\0\0\0\229\20\0\0\33\0\0\0\43\0\4\0\6\0\0\0\45\0\0\0\64\0\0\0\43\0\4\0\6\0\0\0\46\0\0\0\1\0" ..
+    "\0\0\44\0\6\0\7\0\0\0\47\0\0\0\45\0\0\0\46\0\0\0\46\0\0\0\54\0\5\0\2\0\0\0\4\0\0\0\0\0\0\0\3\0\0" ..
+    "\0\248\0\2\0\5\0\0\0\65\0\5\0\11\0\0\0\12\0\0\0\9\0\0\0\10\0\0\0\61\0\4\0\6\0\0\0\13\0\0\0\12\0" ..
+    "\0\0\65\0\5\0\20\0\0\0\21\0\0\0\17\0\0\0\19\0\0\0\61\0\4\0\6\0\0\0\22\0\0\0\21\0\0\0\176\0\5\0" ..
+    "\23\0\0\0\24\0\0\0\13\0\0\0\22\0\0\0\247\0\3\0\26\0\0\0\0\0\0\0\250\0\4\0\24\0\0\0\25\0\0\0\26\0" ..
+    "\0\0\248\0\2\0\25\0\0\0\65\0\5\0\28\0\0\0\29\0\0\0\17\0\0\0\27\0\0\0\61\0\4\0\14\0\0\0\30\0\0\0" ..
+    "\29\0\0\0\124\0\4\0\31\0\0\0\36\0\0\0\30\0\0\0\65\0\5\0\11\0\0\0\37\0\0\0\9\0\0\0\10\0\0\0\61\0" ..
+    "\4\0\6\0\0\0\38\0\0\0\37\0\0\0\65\0\5\0\20\0\0\0\40\0\0\0\17\0\0\0\39\0\0\0\61\0\4\0\6\0\0\0\41" ..
+    "\0\0\0\40\0\0\0\12\0\6\0\33\0\0\0\42\0\0\0\1\0\0\0\64\0\0\0\41\0\0\0\65\0\6\0\43\0\0\0\44\0\0\0" ..
+    "\36\0\0\0\27\0\0\0\38\0\0\0\62\0\5\0\44\0\0\0\42\0\0\0\2\0\0\0\16\0\0\0\249\0\2\0\26\0\0\0\248\0" ..
+    "\2\0\26\0\0\0\253\0\1\0\56\0\1\0"
+
+local ROWS_SPIRV =
+    "\3\2\35\7\0\6\1\0\11\0\8\0\42\0\0\0\0\0\0\0\17\0\2\0\1\0\0\0\17\0\2\0\182\20\0\0\17\0\2\0\227\20" ..
+    "\0\0\11\0\6\0\1\0\0\0\71\76\83\76\46\115\116\100\46\52\53\48\0\0\0\0\14\0\3\0\228\20\0\0\1\0\0\0" ..
+    "\15\0\10\0\4\0\0\0\4\0\0\0\109\97\105\110\0\0\0\0\9\0\0\0\14\0\0\0\34\0\0\0\38\0\0\0\41\0\0\0\16" ..
+    "\0\3\0\4\0\0\0\7\0\0\0\3\0\3\0\2\0\0\0\204\1\0\0\4\0\7\0\71\76\95\69\88\84\95\98\117\102\102\101" ..
+    "\114\95\114\101\102\101\114\101\110\99\101\0\4\0\9\0\71\76\95\69\88\84\95\98\117\102\102\101\114" ..
+    "\95\114\101\102\101\114\101\110\99\101\95\117\118\101\99\50\0\0\0\4\0\8\0\71\76\95\69\88\84\95" ..
+    "\110\111\110\117\110\105\102\111\114\109\95\113\117\97\108\105\102\105\101\114\0\4\0\11\0\71\76" ..
+    "\95\69\88\84\95\115\97\109\112\108\101\114\108\101\115\115\95\116\101\120\116\117\114\101\95\102" ..
+    "\117\110\99\116\105\111\110\115\0\0\0\0\4\0\10\0\71\76\95\71\79\79\71\76\69\95\99\112\112\95\115" ..
+    "\116\121\108\101\95\108\105\110\101\95\100\105\114\101\99\116\105\118\101\0\0\4\0\8\0\71\76\95" ..
+    "\71\79\79\71\76\69\95\105\110\99\108\117\100\101\95\100\105\114\101\99\116\105\118\101\0\5\0\4\0" ..
+    "\4\0\0\0\109\97\105\110\0\0\0\0\5\0\5\0\9\0\0\0\111\117\116\67\111\108\111\114\0\0\0\0\5\0\4\0" ..
+    "\12\0\0\0\80\117\115\104\0\0\0\0\6\0\5\0\12\0\0\0\0\0\0\0\114\111\119\115\0\0\0\0\6\0\5\0\12\0\0" ..
+    "\0\1\0\0\0\105\110\100\101\120\0\0\0\5\0\3\0\14\0\0\0\112\99\0\0\5\0\4\0\22\0\0\0\87\120\108\82" ..
+    "\111\119\115\0\6\0\5\0\22\0\0\0\0\0\0\0\114\111\119\115\0\0\0\0\5\0\4\0\34\0\0\0\117\73\109\97" ..
+    "\103\101\115\0\5\0\5\0\38\0\0\0\117\83\97\109\112\108\101\114\115\0\0\0\5\0\3\0\41\0\0\0\117\118" ..
+    "\0\0\71\0\4\0\9\0\0\0\30\0\0\0\0\0\0\0\71\0\3\0\12\0\0\0\2\0\0\0\72\0\5\0\12\0\0\0\0\0\0\0\35\0" ..
+    "\0\0\0\0\0\0\72\0\5\0\12\0\0\0\1\0\0\0\35\0\0\0\8\0\0\0\71\0\4\0\21\0\0\0\6\0\0\0\16\0\0\0\71\0" ..
+    "\3\0\22\0\0\0\2\0\0\0\72\0\4\0\22\0\0\0\0\0\0\0\24\0\0\0\72\0\5\0\22\0\0\0\0\0\0\0\35\0\0\0\0\0" ..
+    "\0\0\71\0\4\0\34\0\0\0\33\0\0\0\0\0\0\0\71\0\4\0\34\0\0\0\34\0\0\0\0\0\0\0\71\0\4\0\38\0\0\0\33" ..
+    "\0\0\0\1\0\0\0\71\0\4\0\38\0\0\0\34\0\0\0\0\0\0\0\71\0\4\0\41\0\0\0\30\0\0\0\0\0\0\0\19\0\2\0\2" ..
+    "\0\0\0\33\0\3\0\3\0\0\0\2\0\0\0\22\0\3\0\6\0\0\0\32\0\0\0\23\0\4\0\7\0\0\0\6\0\0\0\4\0\0\0\32\0" ..
+    "\4\0\8\0\0\0\3\0\0\0\7\0\0\0\59\0\4\0\8\0\0\0\9\0\0\0\3\0\0\0\21\0\4\0\10\0\0\0\32\0\0\0\0\0\0\0" ..
+    "\23\0\4\0\11\0\0\0\10\0\0\0\2\0\0\0\30\0\4\0\12\0\0\0\11\0\0\0\10\0\0\0\32\0\4\0\13\0\0\0\9\0\0" ..
+    "\0\12\0\0\0\59\0\4\0\13\0\0\0\14\0\0\0\9\0\0\0\21\0\4\0\15\0\0\0\32\0\0\0\1\0\0\0\43\0\4\0\15\0" ..
+    "\0\0\16\0\0\0\0\0\0\0\32\0\4\0\17\0\0\0\9\0\0\0\11\0\0\0\39\0\3\0\20\0\0\0\229\20\0\0\29\0\3\0" ..
+    "\21\0\0\0\7\0\0\0\30\0\3\0\22\0\0\0\21\0\0\0\32\0\4\0\20\0\0\0\229\20\0\0\22\0\0\0\43\0\4\0\15\0" ..
+    "\0\0\24\0\0\0\1\0\0\0\32\0\4\0\25\0\0\0\9\0\0\0\10\0\0\0\32\0\4\0\28\0\0\0\229\20\0\0\7\0\0\0\25" ..
+    "\0\9\0\31\0\0\0\6\0\0\0\1\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\1\0\0\0\0\0\0\0\29\0\3\0\32\0\0\0\31\0\0" ..
+    "\0\32\0\4\0\33\0\0\0\0\0\0\0\32\0\0\0\59\0\4\0\33\0\0\0\34\0\0\0\0\0\0\0\26\0\2\0\35\0\0\0\29\0" ..
+    "\3\0\36\0\0\0\35\0\0\0\32\0\4\0\37\0\0\0\0\0\0\0\36\0\0\0\59\0\4\0\37\0\0\0\38\0\0\0\0\0\0\0\23" ..
+    "\0\4\0\39\0\0\0\6\0\0\0\2\0\0\0\32\0\4\0\40\0\0\0\1\0\0\0\39\0\0\0\59\0\4\0\40\0\0\0\41\0\0\0\1" ..
+    "\0\0\0\54\0\5\0\2\0\0\0\4\0\0\0\0\0\0\0\3\0\0\0\248\0\2\0\5\0\0\0\65\0\5\0\17\0\0\0\18\0\0\0\14" ..
+    "\0\0\0\16\0\0\0\61\0\4\0\11\0\0\0\19\0\0\0\18\0\0\0\124\0\4\0\20\0\0\0\23\0\0\0\19\0\0\0\65\0\5" ..
+    "\0\25\0\0\0\26\0\0\0\14\0\0\0\24\0\0\0\61\0\4\0\10\0\0\0\27\0\0\0\26\0\0\0\65\0\6\0\28\0\0\0\29" ..
+    "\0\0\0\23\0\0\0\16\0\0\0\27\0\0\0\61\0\6\0\7\0\0\0\30\0\0\0\29\0\0\0\2\0\0\0\16\0\0\0\62\0\3\0\9" ..
+    "\0\0\0\30\0\0\0\253\0\1\0\56\0\1\0"
+
+-- Push constants as bytes: 32-bit words, little end first; an address as two of them.
+local function u32(n)
+    n = n % 4294967296
+    return string.char(n % 256, math.floor(n / 256) % 256, math.floor(n / 65536) % 256, math.floor(n / 16777216) % 256)
+end
+local function addressBytes(n) return u32(n % 4294967296) .. u32(math.floor(n / 4294967296)) end
+
+local compute = { dispatched = 0, palettes = 0, mode = nil }
+
+step(function()
+    print("phase 25: compute and bone palettes (wxl.render)")
+    local rd = wxl.render
+    if not (rd and rd.Dispatch and rd.BonePalette) then
+        result("wxl.render.Dispatch and BonePalette", false, "this runtime is older than abi 0.1.34")
+        return
+    end
+    local api = wxl.gx and wxl.gx.Api and wxl.gx.Api()
+    if api == "vulkan" then
+        result("on the Vulkan device wxl.render dispatches and takes palettes (both clients)", rd.Supported() == true,
+               tostring(rd.UnsupportedReason()))
+    end
+    if not rd.Supported() then
+        result("wxl.render refuses compute only off Vulkan (" .. tostring(api) .. ")", api ~= "vulkan", tostring(rd.UnsupportedReason()))
+        local ok, why = rd.BonePalette({ 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0 })
+        result("BonePalette answers unsupported where wxl.render draws nothing", ok == nil and why == "unsupported", tostring(why))
+        local made, err = rd.CreatePipeline({ kind = "compute", compute = FILL_SPIRV })
+        result("and no compute pipeline is made", made == nil, tostring(err))
+        return
+    end
+    local fill, why = rd.CreatePipeline({ kind = "compute", name = "selftest fill", compute = FILL_SPIRV })
+    result("a compute pipeline of the selftest's SPIR-V", fill ~= nil and fill:PipelineReady() == true, tostring(why))
+    local rows, rowsWhy = rd.CreatePipeline({ kind = "fullscreen", name = "selftest rows", fragment = ROWS_SPIRV, blend = "alpha" })
+    result("a full-screen pipeline reading rows by address", rows ~= nil, tostring(rowsWhy))
+    local buffer = rd.CreateBuffer(64 * 16)
+    result("a buffer a dispatch fills", buffer ~= nil)
+    if not (fill and rows and buffer) then return end
+    compute.fill, compute.rows, compute.buffer = fill, rows, buffer
+    -- 300 matrices, past the client's 256 bones: the last row of the last one green, a fifth opaque.
+    compute.matrices = {}
+    for i = 1, 300 * 12 do compute.matrices[i] = 0 end
+    compute.matrices[299 * 12 + 10], compute.matrices[299 * 12 + 12] = 1, 0.2
+    -- Orange, a fifth opaque, as unpackUnorm4x8 reads it.
+    local orange = 255 + 128 * 256 + 51 * 16777216
+    compute.id = Observe("RenderScript", "OnRenderPoint", function(point)
+        if point ~= "after_world" or not compute.mode then return end
+        if compute.mode == "dispatch" then
+            local at = compute.buffer:BufferAddress()
+            if not at or at == 0 then return end
+            local ok, err = rd.Dispatch(compute.fill, 1, 1, 1, addressBytes(at) .. u32(64) .. u32(orange))
+            if ok then compute.dispatched = compute.dispatched + 1 else compute.refused = err end
+            if rd.Begin({ colors = { "scene_color" } }) then
+                if compute.inPass == nil then compute.inPass = select(2, rd.Dispatch(compute.fill, 1, 1, 1)) or "accepted" end
+                rd.Fullscreen(compute.rows, addressBytes(at) .. u32(17))
+                rd.End()
+            end
+        else
+            local at, err = rd.BonePalette(compute.matrices)
+            if not at then
+                compute.refused = err
+                return
+            end
+            compute.palettes = compute.palettes + 1
+            if rd.Begin({ colors = { "scene_color" } }) then
+                rd.Fullscreen(compute.rows, addressBytes(at) .. u32(299 * 3 + 2))
+                rd.End()
+            end
+        end
+    end)
+    compute.mode = "dispatch"
+    print("look: the world tinted orange for two seconds (a buffer a dispatch filled), then green for two (a palette of 300 matrices)")
+    wait(2)
+end)
+
+step(function()
+    if not compute.id then return end
+    compute.mode = "palette"
+    wait(2)
+end)
+
+step(function()
+    if not compute.id then return end
+    compute.mode = nil
+    Unobserve(compute.id)
+    result("a dispatch filled the buffer each frame (" .. compute.dispatched .. " in two seconds)", compute.dispatched > 0, tostring(compute.refused))
+    result("a dispatch inside a pass is refused", compute.inPass == "invalid", tostring(compute.inPass))
+    result("a palette of 300 matrices was written each frame (" .. compute.palettes .. " in two seconds)", compute.palettes > 0,
+           tostring(compute.refused))
+    local outside, why = wxl.render.Dispatch(compute.fill, 1, 1, 1)
+    result("a dispatch outside a point is refused", outside == nil and why == "invalid", tostring(why))
+    compute.fill:DestroyPipeline()
+    compute.rows:DestroyPipeline()
+    compute.buffer:DestroyBuffer()
+    compute.fill, compute.rows, compute.buffer = nil, nil, nil
+end)
+
+-- Phase 26: the ground (wxl.terrain) ------------------------------------------------------------
+
+-- The chunks announced since the mod loaded: the world loads around the player before phase 1.
+local ground = { loaded = 0, unloaded = 0, edited = 0 }
+if wxl.runtime.Raises and wxl.runtime.Raises("WorldScript", "OnTerrainChunkLoaded") then
+    Observe("WorldScript", "OnTerrainChunkLoaded", function(map, x, y, edited)
+        ground.loaded = ground.loaded + 1
+        if edited then ground.edited = ground.edited + 1 end
+    end)
+    Observe("WorldScript", "OnTerrainChunkUnloaded", function() ground.unloaded = ground.unloaded + 1 end)
+end
+
+step(function()
+    print("phase 26: the ground (wxl.terrain)")
+    local tr = wxl.terrain
+    if not (tr and tr.SetHeights) then
+        result("wxl.terrain", false, "this runtime is older than abi 0.1.35")
+        return
+    end
+    result("TerrainChunkLoaded announced the chunks around the player (" .. ground.loaded .. " loaded, " ..
+           ground.unloaded .. " unloaded)", ground.loaded > 0)
+    local me = wxl.object.LocalPlayer()
+    local feet = me and me:Position()
+    if not feet then
+        skip("the ground", "no player in the world")
+        return
+    end
+    local presence = tr.Presence(feet.x, feet.y)
+    if presence ~= "ground" then
+        skip("the ground", "there is no ground under the player here (" .. tostring(presence) ..
+             "): a map without terrain, or a hole; stand outdoors on the ground")
+        return
+    end
+    local h = tr.Height(feet.x, feet.y)
+    if h and math.abs(h - feet.z) < 1 then
+        result("the ground's height under the player is where the player stands", true, string.format("%.2f", h))
+    else
+        print(string.format("NOTE the ground's height under the player is %.2f, the player at %.2f: standing on something else",
+                            h or -1, feet.z))
+    end
+    -- A brush in world space: every vertex within three yards of a point six yards north, each
+    -- lowered three yards; one vertex on a chunk's edge or not, VerticesIn names each once.
+    local cx, cy = feet.x + 6, feet.y
+    local brush = tr.VerticesIn(cx, cy, 3)
+    local edits, centre, seen, once = {}, nil, {}, true
+    for _, v in ipairs(brush) do
+        local key = string.format("%.2f %.2f", v.x, v.y)
+        once = once and not seen[key]
+        seen[key] = true
+        if v.loaded then
+            edits[#edits + 1] = { chunk_x = v.chunk_x, chunk_y = v.chunk_y, index = v.index, height = v.z - 3 }
+            if not centre or (v.x - cx) ^ 2 + (v.y - cy) ^ 2 < (centre.x - cx) ^ 2 + (centre.y - cy) ^ 2 then centre = v end
+        end
+    end
+    result("VerticesIn lists the brush's vertices, each once (" .. #brush .. ")", #brush >= 3 and once and centre ~= nil)
+    if not centre then return end
+    local v = centre
+    ground.v = v
+    local ok, why = tr.SetHeights(edits)
+    result("SetHeights lowers the brush three yards", ok == true, tostring(why))
+    local now, before = tr.Height(v.x, v.y), tr.Height(v.x, v.y, true)
+    result("the height there follows the edit", now ~= nil and math.abs(now - (v.z - 3)) < 0.05,
+           string.format("%.2f, expected %.2f", now or -1, v.z - 3))
+    result("and the original height stays readable", before ~= nil and math.abs(before - v.original_z) < 0.05,
+           string.format("%.2f", before or -1))
+    local again = tr.VerticesIn(v.x, v.y, 0.01)[1]
+    result("VerticesIn reads the edited height and the original", again ~= nil and math.abs(again.z - (v.z - 3)) < 0.05 and
+           math.abs(again.original_z - v.original_z) < 0.05)
+    local hit = tr.Trace({ x = v.x, y = v.y, z = v.z + 5 }, { x = v.x, y = v.y, z = v.z - 10 })
+    result("wxl.terrain.Trace meets the dip", hit ~= nil and math.abs(hit.point.z - (v.z - 3)) < 0.05 and hit.normal.z > 0,
+           hit and string.format("%.2f", hit.point.z) or "no hit")
+    local client = wxl.world.Trace({ x = v.x, y = v.y, z = v.z + 5 }, { x = v.x, y = v.y, z = v.z - 10 })
+    result("the client's own ray test (wxl.world.Trace) meets the dip", client ~= nil and math.abs(client.z - (v.z - 3)) < 0.1,
+           client and string.format("%.2f", client.z) or "no hit")
+    local stats = tr.Stats()
+    if stats then
+        print(string.format("NOTE the edit wrote %d vertices in %d chunks in %d us (longest so far %d us)", stats.last_vertices,
+                            stats.last_chunks, stats.last_microseconds, stats.max_microseconds))
+    end
+    print("look: a dip three yards deep and six wide, six yards north of you, for two seconds, its light on the slopes")
+    wait(2)
+end)
+
+step(function()
+    local v = ground.v
+    if not v then return end
+    local tr = wxl.terrain
+    result("ResetAll takes the brush off", tr.ResetAll() == true)
+    local now = tr.Height(v.x, v.y)
+    result("and the ground is back", now ~= nil and math.abs(now - v.z) < 0.05, string.format("%.2f", now or -1))
+    result("nothing is left to reset", select(2, tr.ResetAll()) == "not_found")
+    ground.v = nil
+end)
+
+-- Phase 27: shapes in the world (wxl.draw) -------------------------------------------------------
+
+local shapes = { kept = {}, frame = nil, frames = 0 }
+
+step(function()
+    print("phase 27: shapes in the world (wxl.draw)")
+    local dr = wxl.draw
+    if not (dr and dr.Add) then
+        result("wxl.draw", false, "this runtime is older than abi 0.1.36")
+        return
+    end
+    local supported = dr.Supported()
+    result("wxl.draw draws on this device", supported == true, dr.UnsupportedReason())
+    if not supported then return end
+    local me = wxl.object.LocalPlayer()
+    local feet = me and me:Position()
+    if not feet then
+        skip("shapes in the world", "no player in the world")
+        return
+    end
+    local f = me:Facing() or 0
+    local function ahead(d, side)
+        side = side or 0
+        return { x = feet.x + d * math.cos(f) - side * math.sin(f), y = feet.y + d * math.sin(f) + side * math.cos(f), z = feet.z }
+    end
+    local seconds = 6
+    local function add(name, shape, style)
+        style.fade_out = 1
+        local s, why = dr.Add(shape, style, seconds)
+        result("Add keeps " .. name, s ~= nil, tostring(why))
+        if s then shapes.kept[#shapes.kept + 1] = s end
+        return s
+    end
+    -- On the ground, in a fan in front of the player: a filled circle, a ring, a cone, a rectangle,
+    -- a concave polygon; a line along the ground; in the air, a box, a sphere and a cylinder.
+    add("a circle", { kind = "circle", center = ahead(8, -8), radius = 3 }, { color = 0xFF4040, fill_alpha = 0.35, width = 2 })
+    add("a ring", { kind = "ring", center = ahead(8, 0), radius = 3, inner = 2 }, { color = 0x40FF40, fill_alpha = 0.35, width = 2 })
+    add("a cone", { kind = "sector", center = ahead(2, 0), radius = 12, facing = f, angle = 0.8 },
+        { color = 0xFF8000, fill_alpha = 0.2, width = 3, pulse = 1 })
+    add("a rectangle", { kind = "rectangle", center = ahead(8, 8), length = 6, width = 3, facing = f + 0.5 },
+        { color = 0x4080FF, fill_alpha = 0.35, width = 2 })
+    add("a polygon", { kind = "polygon", center = ahead(16, 0), points = { { 0, 0, 0 }, { 4, 0, 0 }, { 4, 4, 0 }, { 2, 1, 0 }, { 0, 4, 0 } } },
+        { color = 0xFFFF40, fill_alpha = 0.35, width = 2 })
+    add("a line on the ground", { kind = "line", points = { ahead(4, -12), ahead(14, -12), ahead(14, 12) }, on_ground = true },
+        { color = 0xFFFFFF, width = 4 })
+    local up = function(p, h) return { x = p.x, y = p.y, z = p.z + h } end
+    add("a box", { kind = "box", center = up(ahead(16, -8), 2), size = { x = 2, y = 2, z = 2 }, facing = f, pitch = 0.3 },
+        { color = 0x40FFFF, fill_alpha = 0.25, width = 2 })
+    add("a sphere", { kind = "sphere", center = up(ahead(16, 8), 2), radius = 1.5 }, { color = 0xFF40FF, fill_alpha = 0.25, width = 1.5 })
+    add("a cylinder, on top of everything", { kind = "cylinder", center = up(ahead(24, 0), 2), radius = 1.5, height = 4 },
+        { color = 0xFFFFFF, fill_alpha = 0.15, width = 1.5, depth = "on_top" })
+    local ring = add("a ring under the player", { kind = "ring", radius = 1.5, inner = 1.2 }, { color = 0x00FFFF, fill_alpha = 0.5, width = 1 })
+    if ring then result("Attach makes it follow the player", ring:Attach(me, 1) == true) end
+    -- Each frame, a grid on the terrain's own cells under the player (immediate mode).
+    shapes.frames = 0
+    shapes.frame = Observe("RenderScript", "OnFrameBegin", function()
+        local at = me:Position()
+        if not at then return end
+        if dr.Draw({ kind = "grid", center = at, length = 16, width = 16, spacing = 4.1666665 }, { color = 0xC0C0C0, alpha = 0.6, width = 1 }) then
+            shapes.frames = shapes.frames + 1
+        end
+    end)
+    local bad, why = dr.Draw({ kind = "circle", center = feet, radius = 0 })
+    result("a shape of no radius is refused", bad == nil and why == "invalid", tostring(why))
+    print("look: in front of you for six seconds then fading: a red disc, a green ring, an orange cone beating, a blue rectangle," ..
+          " a yellow concave polygon, a white line along the ground, a cyan box tilted, a magenta sphere, a white cylinder seen" ..
+          " through walls; a cyan ring under you that follows you; a grey grid on the ground's cells under you; all lying on the" ..
+          " slopes, hidden behind walls and units except the cylinder, the same under Direct3D 9 and Vulkan")
+    wait(3)
+end)
+
+step(function()
+    local dr = wxl.draw
+    if not (dr and dr.Stats and shapes.frame) then return end
+    local stats = dr.Stats()
+    result("the frames draw the shapes", stats ~= nil and stats.drawn >= 10 and stats.vertices > 0,
+           stats and string.format("%d shapes, %d vertices", stats.drawn, stats.vertices) or "no stats")
+    result("the immediate grid is drawn every frame", shapes.frames > 10 and stats ~= nil and stats.immediate == 1,
+           tostring(shapes.frames) .. " frames")
+    if stats then
+        print(string.format("NOTE wxl.draw's last frame: %d shapes, %d vertices, %.0f us on the CPU (the most %.0f us), %.0f us in Draw calls",
+                            stats.drawn, stats.vertices, stats.build_microseconds, stats.max_build_microseconds, stats.immediate_microseconds))
+    end
+    wait(4.5)
+end)
+
+step(function()
+    local dr = wxl.draw
+    if not (dr and dr.Stats and shapes.frame) then return end
+    Unobserve(shapes.frame)
+    shapes.frame = nil
+    local stats = dr.Stats()
+    result("kept shapes go when their duration runs out", stats ~= nil and stats.shapes == 0,
+           stats and tostring(stats.shapes) .. " left" or "no stats")
+    dr.Clear()
+    shapes.kept = {}
+end)
+
+-- Phase 28: animations on units (wxl.animation) ---------------------------------------------------
+
+local anims = { ended = {}, observer = nil }
+
+step(function()
+    print("phase 28: an animation played on the player (wxl.animation)")
+    local an = wxl.animation
+    if not (an and an.Play) then
+        result("wxl.animation", false, "this runtime is older than abi 0.1.37")
+        return
+    end
+    local me = wxl.object.LocalPlayer()
+    if not me then
+        skip("animations on units", "no player in the world")
+        return
+    end
+    anims.ended = {}
+    anims.observer = Observe("ObjectScript", "OnUnitAnimationEnded", function(unit, anim_id, reason, looped)
+        anims.ended[#anims.ended + 1] = { anim_id = anim_id, reason = reason, looped = looped }
+    end)
+    local bad, why = an.Play(me, 600)
+    result("an id past AnimationData's is refused", bad == nil and why == "invalid", tostring(why))
+    local ok, err = an.Play(me, 62)
+    result("Play swings the player once (EmoteWork, the mining swing)", ok == true, tostring(err))
+    result("Playing answers it", an.Playing(me) == 62, tostring(an.Playing(me)))
+    local shown = an.Current(me)
+    result("the model shows it (or the animation it falls back to)", shown ~= nil and shown ~= 0, tostring(shown))
+    print("look: stand still: your character swings once as when mining, then stands again")
+    wait(4)
+end)
+
+step(function()
+    local an = wxl.animation
+    if not (an and anims.observer) then return end
+    local first = anims.ended[1]
+    result("the one-shot ends by itself, finished", first ~= nil and first.anim_id == 62 and first.reason == "finished" and first.looped == false,
+           first and (first.anim_id .. " " .. first.reason) or "no OnUnitAnimationEnded (did you move?)")
+    result("and the player is handed back to the game", an.Playing(wxl.object.LocalPlayer()) == nil)
+    anims.ended = {}
+    local ok, err = an.Play(wxl.object.LocalPlayer(), 62, 1, 1.5)
+    result("a loop at one and a half times the speed", ok == true, tostring(err))
+    print("look: you swing again and again, faster, for three seconds; walk a step: your legs walk, the swing comes back when you stop")
+    wait(3)
+end)
+
+step(function()
+    local an = wxl.animation
+    if not (an and anims.observer) then return end
+    local me = wxl.object.LocalPlayer()
+    result("the loop is still played after its length", #anims.ended == 0 and an.Playing(me) == 62,
+           #anims.ended > 0 and anims.ended[1].reason or "")
+    result("Stop ends it", an.Stop(me) == true)
+    local again, why = an.Stop(me)
+    result("and only once", again == nil and why == "not_found", tostring(why))
+    wait(0.5)
+end)
+
+step(function()
+    local an = wxl.animation
+    if not (an and anims.observer) then return end
+    local last = anims.ended[#anims.ended]
+    result("OnUnitAnimationEnded says stopped, looped", last ~= nil and last.reason == "stopped" and last.looped == true,
+           last and last.reason or "nothing")
+    Unobserve(anims.observer)
+    anims.observer = nil
+end)
+
+-- Phase 29: textured ground shapes, soft lines and shadows (wxl.draw, abi 0.1.38) ----------------
+
+local looks = { kept = {} }
+
+step(function()
+    print("phase 29: textured ground shapes, soft lines and shadows (wxl.draw)")
+    local dr = wxl.draw
+    if not (dr and dr.Add) or wxl.runtime.abi_feature < 38 then
+        result("wxl.draw's textures", false, "this runtime is older than abi 0.1.38")
+        return
+    end
+    if not dr.Supported() then
+        skip("textured ground shapes", dr.UnsupportedReason())
+        return
+    end
+    local me = wxl.object.LocalPlayer()
+    local feet = me and me:Position()
+    if not feet then
+        skip("textured ground shapes", "no player in the world")
+        return
+    end
+    local f = me:Facing() or 0
+    local function ahead(d, side)
+        side = side or 0
+        return { x = feet.x + d * math.cos(f) - side * math.sin(f), y = feet.y + d * math.sin(f) + side * math.cos(f), z = feet.z }
+    end
+    local function add(name, shape, style)
+        style.fade_out = 1
+        local s, why = dr.Add(shape, style, 10)
+        result("Add keeps " .. name, s ~= nil, tostring(why))
+        if s then looks.kept[#looks.kept + 1] = s end
+        return s
+    end
+    local up = function(p, h) return { x = p.x, y = p.y, z = p.z + h } end
+    -- A spell's targeting ring laid on the ground, lit (added), turned a little.
+    add("a textured ring", { kind = "ring", center = ahead(9, -7), radius = 4, inner = 2.5, facing = f },
+        { alpha = 0, fill_alpha = 1, fill_color = 0x80C0FF, texture = "SPELLS\\T_VFX_HERO_CIRCLE.BLP", blend = "add", uv_rotation = 0.3 })
+    -- Cracks multiplied into the ground: a stain, darker where the picture is dark.
+    add("a modulated stain", { kind = "circle", center = ahead(9, 0), radius = 3.5 },
+        { alpha = 0, fill_alpha = 0.9, color = 0xFFFFFF, texture = "SPELLS\\CrackedGround.blp", blend = "modulate", feather = 0.75 })
+    -- Scorched ground in the world's frame, feathered at its border and fading from the centre.
+    add("a feathered disc", { kind = "circle", center = ahead(9, 7), radius = 3.5 },
+        { alpha = 0, fill_alpha = 1, texture = "TILESET\\BURNINGSTEPPS\\BurningSteppsCharcoal01.blp", uv = "world", uv_size = 4,
+          feather = 1.5, radial_fade = 0.4 })
+    -- A digging grid: soft gold lines over a light black shadow, its inside scored dark.
+    add("a soft gold grid with a shadow", { kind = "grid", center = ahead(17, 0), length = 6, width = 6, spacing = 1, facing = f },
+        { color = 0xE8C060, alpha = 0.9, width = 1.5, softness = 1, shadow_alpha = 0.5, fill_alpha = 0.25, fill_color = 0x605040,
+          blend = "modulate", feather = 0.5 })
+    -- A line fading in from its start, every point's opacity given.
+    add("a line fading along", { kind = "line", points = { ahead(4, -10), ahead(14, -10), ahead(24, -10) }, alphas = { 0, 1, 0.3 },
+                                 on_ground = true },
+        { color = 0xFFFFFF, width = 4, softness = 1.5, shadow_alpha = 0.6, shadow_offset = { 2, 2 } })
+    local bad, why = dr.Draw({ kind = "circle", center = feet, radius = 2 }, { fill_alpha = 1, blend = 7 })
+    result("a blend that is none is refused", bad == nil, tostring(why))
+    -- abi 0.1.39: a digging selection box half under the ground, its faces textured and scrolling,
+    -- seen through the ground; and a line dipping under it, seen through it too.
+    if wxl.runtime.abi_feature >= 39 then
+        local sel = { kind = "box", center = { x = ahead(17, 0).x, y = ahead(17, 0).y, z = feet.z - 0.5 }, size = { x = 3, y = 3, z = 3 }, facing = f }
+        local look = { color = 0xE8C060, alpha = 0.9, width = 1.5, fill_alpha = 0.35, texture = "SPELLS\\T_VFX_RING_FF.BLP", uv = "tile",
+                       uv_size = 0.5, blend = "add", feather = 0.3, occluded_alpha = 0.35 }
+        local box = add("a textured selection box seen through the ground", sel, look)
+        add("a line dipping under the ground, seen through it", { kind = "line", points = { up(ahead(6, 10), 1), up(ahead(12, 10), -3), up(ahead(18, 10), 1) } },
+            { color = 0x40FF80, width = 3, occluded_alpha = 0.4 })
+        local scroll = 0
+        looks.scroll = box and Observe("RenderScript", "OnFrameBegin", function()
+            scroll = (scroll + 0.01) % 1
+            look.uv_offset = { scroll, 0 }
+            look.fade_out = 1
+            dr.SetStyle(box, look)
+        end)
+        local tooFar, whyFar = dr.Draw(sel, { fill_alpha = 1, occluded_alpha = 2 })
+        result("an occluded opacity past 1 is refused", tooFar == nil, tostring(whyFar))
+    end
+    -- abi 0.1.40: particles. Clods thrown up beside the box that bounce and settle, a dust puff, and
+    -- a stream of golden sparks following the player, added as light; a masked crack glowing white.
+    if wxl.runtime.abi_feature >= 40 then
+        local at = ahead(12, -4)
+        local ok, why = dr.Emit({ center = up(at, 0.1), burst = 16, spread = 0.7, speed = { 3, 6 }, life = { 1.2, 1.8 },
+                                  size = { 0.15, 0.3 }, spin = { -6, 6 }, gravity = 19.29, ground = "bounce", restitution = 0.35,
+                                  friction = 0.6 },
+                                { texture = "SPELLS\\CrackedGround.blp", mask = true, softness = 0.15,
+                                  keys = { { t = 0, size = 1, color = 0x6B5235, alpha = 1 }, { t = 1, size = 0.6, color = 0x5A4430, alpha = 0 } } })
+        result("Emit throws clods that bounce", ok == true, tostring(why))
+        dr.Emit({ spawn = "disc", center = at, extent = { x = 0.4, y = 0, z = 0 }, burst = 10, spread = 1.2, speed = { 0.4, 1.2 },
+                  life = 0.5, size = { 0.5, 0.9 }, drag = 2.5 },
+                { softness = 0.4, keys = { { t = 0, size = 0.6, color = 0x9A8A70, alpha = 0.45 }, { t = 1, size = 2.6, color = 0x8A7A60, alpha = 0 } } })
+        local sparks, whySparks = dr.AddEmitter({ center = { x = 0, y = 0, z = 1 }, rate = 40, spread = 0.5, speed = { 1, 2 }, life = 0.8,
+                                                  size = { 0.08, 0.15 }, gravity = 4 },
+                                                { blend = "add", mode = "stretched", stretch = 0.05,
+                                                  keys = { { t = 0, color = 0xFFD070, alpha = 1 }, { t = 1, size = 0.3, color = 0xFF6020, alpha = 0 } } })
+        result("AddEmitter keeps a stream of sparks", sparks ~= nil, tostring(whySparks))
+        if sparks then
+            result("it follows the player", sparks:Follow(me, 1) == true)
+            looks.sparks = sparks
+        end
+        add("a crack glowing white (mask)", { kind = "circle", center = ahead(9, -12), radius = 1.5 },
+            { alpha = 0, fill_alpha = 1, color = 0xFFFFFF, texture = "SPELLS\\CrackedGround.blp", mask = true, blend = "add", texture_blur = 1,
+              radial_fade = 0.5 })
+        local bad, whyBad = dr.Emit({ burst = 0 })
+        result("an empty burst is refused", bad == nil, tostring(whyBad))
+        -- Golden rays fanning up out of the ground, soft to their sides, a shimmer scrolling along them.
+        local base = ahead(14, 6)
+        local rays = {}
+        for i = 1, 6 do
+            local a  = f + (i - 3.5) * 0.35
+            local to = { x = base.x + 3 * math.cos(a), y = base.y + 3 * math.sin(a), z = base.z + 9 }
+            local ray = add("a golden ray " .. i, { kind = "beam", points = { base, to }, widths = { 0.8, 2.2 }, alphas = { 0.9, 0 } },
+                            { alpha = 0, fill_alpha = 1, fill_color = 0xFFD070, blend = "add", feather = 1,
+                              texture = "SPELLS\\TEXTURES\\Beam_WebGlowWhite.blp", mask = true, uv = "tile", uv_size = { 1, 0.3 } })
+            rays[#rays + 1] = ray
+        end
+        local shimmer = 0
+        looks.shimmer = Observe("RenderScript", "OnFrameBegin", function()
+            shimmer = (shimmer + 0.006) % 1
+            for i, ray in ipairs(rays) do
+                dr.SetStyle(ray, { alpha = 0, fill_alpha = 1, fill_color = 0xFFD070, blend = "add", feather = 1, fade_out = 1,
+                                   texture = "SPELLS\\TEXTURES\\Beam_WebGlowWhite.blp", mask = true, uv = "tile", uv_size = { 1, 0.3 },
+                                   uv_offset = { 0, shimmer + i * 0.17 } })
+            end
+        end)
+    end
+    print("look: for ten seconds then fading, in front of you: left a pale blue spell ring glowing on the ground, middle cracks" ..
+          " darkening the ground with a soft border, right a charred patch fading out from its middle; further on a 6 x 6 grid of" ..
+          " soft gold lines with a light shadow down and right over a darkened inside; on your left a white line on the ground" ..
+          " fading in from its start, shadowed; further on (abi 0.1.39) a gold box half sunk in the ground, its faces" ..
+          " a ring picture scrolling sideways, its buried half seen faintly through the ground, and on your left a green line" ..
+          " dipping under the ground, seen faintly where it is under; (abi 0.1.40) clods of earth thrown up near the box," ..
+          " bouncing once and settling, a dust puff spreading and fading, golden sparks streaming from you as you move," ..
+          " a crack on your left glowing white and soft, and six golden rays fanning up out of the ground on your right," ..
+          " soft to their sides, shimmering upwards, fading at their tops and as you look along them; the same under Direct3D 9 and Vulkan")
+    wait(2.5)
+end)
+
+step(function()
+    local dr = wxl.draw
+    if #looks.kept == 0 or not dr then return end
+    local stats = dr.Stats()
+    result("the textures are loaded and drawn", stats ~= nil and stats.textures >= 3 and stats.textures_loading == 0 and stats.textured >= 4,
+           stats and string.format("%d textures, %d loading, %d insides", stats.textures, stats.textures_loading, stats.textured) or "no stats")
+    result("the lines' shadows are drawn", stats ~= nil and stats.shadows >= 2, stats and tostring(stats.shadows) or "no stats")
+    if wxl.runtime.abi_feature >= 39 then
+        result("the box and the line are drawn through the ground too", stats ~= nil and stats.occluded >= 2,
+               stats and tostring(stats.occluded) or "no stats")
+    end
+    if wxl.runtime.abi_feature >= 40 and looks.sparks then
+        result("the sparks are alive and drawn", stats ~= nil and stats.particles > 0 and stats.particle_draws >= 1 and stats.emitters >= 1,
+               stats and string.format("%d alive, %d draws, %d emitters", stats.particles, stats.particle_draws, stats.emitters) or "no stats")
+        if stats then
+            print(string.format("NOTE wxl.draw's particles: %d alive, %.0f us on the CPU", stats.particles, stats.particle_microseconds))
+        end
+    end
+    if stats then
+        print(string.format("NOTE wxl.draw's last frame with textures: %d shapes, %d vertices, %.0f us on the CPU", stats.drawn,
+                            stats.vertices, stats.build_microseconds))
+    end
+    wait(8.5)
+end)
+
+step(function()
+    local dr = wxl.draw
+    if #looks.kept == 0 or not dr then return end
+    if looks.scroll then
+        Unobserve(looks.scroll)
+        looks.scroll = nil
+    end
+    if looks.sparks then
+        looks.sparks:Stop()
+        looks.sparks = nil
+    end
+    if looks.shimmer then
+        Unobserve(looks.shimmer)
+        looks.shimmer = nil
+    end
+    dr.Clear()
+    looks.kept = {}
+end)
+
 -- The end ----------------------------------------------------------------------------------------
 
 step(function()
     local summary = string.format("done: %d passed, %d failed, %d skipped", passed, failed, skipped)
     print(summary)
     chat(summary .. (failed == 0 and "" or " (the log says which)"))
+end)
+
+-- Phase 30: opcodes of the mod's own (wxl.net, abi 0.1.41) ----------------------------------------
+--
+-- Offline as far as the server goes: no server module answers 0xFF00-0xFF03, so the send gate
+-- stays closed and nothing reaches the server (which would close the connection on them).
+
+step(function()
+    print("phase 30: opcodes of the mod's own (wxl.net)")
+    local net = wxl.net
+    if wxl.runtime.abi_feature < 41 or not (net and net.Claim) then
+        result("wxl.net", false, "this runtime is older than abi 0.1.41")
+        return
+    end
+    result("the session is accepted", net.State() == "authenticated", tostring(net.State()))
+    result("the client's numbers end at 0x520", net.ReservedOpcodeLimit() == 0x520, tostring(net.ReservedOpcodeLimit()))
+    result("a body is at most 10000 bytes", net.MaxSend() == 10000, tostring(net.MaxSend()))
+    result("there is a connection", net.Connection() > 0, tostring(net.Connection()))
+    result("a declared number claims", net.Claim(0xFF00) == true and net.Claim(0xFF01) == true and net.Claim(0xFF02) == true)
+    local outside, why1 = net.Claim(0xFF10)
+    result("a number outside mod.json's net.opcodes is refused", outside == nil and why1 == "invalid", tostring(why1))
+    local stock, why2 = net.Claim(0x12E)
+    result("a number of the client's own is refused without stock", stock == nil and why2 == "invalid", tostring(why2))
+    local past, why3 = net.Claim(0x10000)
+    result("a number past 0xFFFF is refused", past == nil and why3 == "invalid", tostring(why3))
+    local heard = 0
+    result("a handler is set", net.SetHandler(0xFF01, function() heard = heard + 1 end) == true)
+    result("a compressed number pairs", net.SetCompressed(0xFF01, 0xFF02) == true)
+    result("the server has not spoken to this mod", net.Heard() == false)
+    local sent, why4 = net.Send(0xFF00, net.Writer():U32(1))
+    result("so the send gate refuses: nothing goes to a server that does not know the number",
+           sent == nil and why4 == "failed", tostring(why4))
+    local w = net.Writer():U8(7):U16(0x1234):F32(1.5):String("dig"):PackedGuid("0x0000000100000F00"):Vec3({ x = 1, y = 2, z = 3 })
+    local r = net.Reader(w:Data())
+    local a, b, c, d, e, v = r:U8(), r:U16(), r:F32(), r:String(), r:PackedGuid(), r:Vec3()
+    result("a writer and a reader go round", a == 7 and b == 0x1234 and c == 1.5 and d == "dig" and
+           e == "0x0000000100000F00" and v.z == 3 and r:AtEnd(), w:Size() .. " bytes")
+    r:U32()
+    result("a read past the end fails the reader", r:Ok() == false)
+    local text = string.rep("terrain ", 200)
+    local z = net.Deflate(text)
+    result("Deflate and Inflate go round", z ~= nil and #z < #text and net.Inflate(z) == text, z and #z or "nil")
+    result("Release gives a number back", net.Release(0xFF02) == true and select(2, net.Release(0xFF02)) == "not_found")
+    result("no message of these numbers came", heard == 0)
+    net.Release(0xFF00)
+    net.Release(0xFF01)
 end)
 
 print("ready: the checks start a few seconds after entering the world")

@@ -4,17 +4,22 @@
 // wxl.gx as data: one row per member of wxl_gx_api, in member order. The shapes and their columns
 // are described in wxl/services/rows.hpp.
 //
-// Both members are the device's own: no script reaches them.
+// The device's own members reach no script; api does.
 
 #ifndef WXL_API
 #error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including gx.def"
 #endif
 
 WXL_API_SERVICE(gx, WXL_GX_SERVICE, WXL_GX_SERVICE_VERSION, (0, 1, 20), raw,
-                "The client's Direct3D 9 device, for a mod that draws with it.")
+                "Which device the client draws with, and its Direct3D 9 device for a mod that draws with it.")
 
 WXL_API(gx, d3d9_device, D3d9Device, ptr, (), native, generated, "")
 WXL_API(gx, invalidate_state, InvalidateState, none, (), native, generated, "")
+WXL_API_SINCE(gx, api, (0, 1, 33))
+WXL_API(gx, api, Api, enumeration<wxl_gx_backend>, (), generated, generated,
+        "The API the client's device runs on: none, d3d9, d3d9ex, opengl or vulkan.")
+WXL_API_SINCE(gx, set_shader_provider, (0, 1, 43))
+WXL_API(gx, set_shader_provider, SetShaderProvider, result, (gx_shader_provider provider), native, by_hand, "")
 
 // MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
 // guarded by X, and skips it when it is included again with X defined: this table is read

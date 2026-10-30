@@ -1,0 +1,18 @@
+{
+  "$schema": "../../../schema/mod.json",
+  "id": "wxl.test-bones",
+  "name": "Test bones",
+  "version": "1.0.0",
+  "abi": "0.1.21",
+  "description": "Watches the bones the client poses when wxl.selftest asks: counts the model files a filter took and the frames handed to the watcher, reads the root bone of a file through BoneInfo, and stops when asked.",
+  "binaries": {
+    "win-x64": "bin/x64/test-bones.dll",
+    "win-x86": "bin/x86/test-bones.dll"
+  },
+  "requires": [
+    { "service": "wxl.m2", "version": 1 }
+  ],
+  "optional": [
+    { "service": "wxl.script", "version": 1 }
+  ]
+}

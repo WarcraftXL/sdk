@@ -29,6 +29,7 @@ namespace wxl::lua
         case WXL_OK: return "ok";
         case WXL_E_UNSUPPORTED: return "unsupported";
         case WXL_E_PENDING: return "pending";
+        case WXL_E_BUSY: return "busy";
         case WXL_E_VERSION: return "version";
         case WXL_E_INVALID: return "invalid";
         case WXL_E_NOT_FOUND: return "not_found";
@@ -445,6 +446,80 @@ namespace wxl::lua
             static std::tuple<wxl_vec3> C(Held held) { return {held}; }
         };
 
+        /// A point the C member takes by address: read as a point, handed over as the address of
+        /// the copy the call holds.
+        template <>
+        struct Arg<kind::vec3_in>
+        {
+            using Held = wxl_vec3;
+            static Held Read(Reader& r) { return Arg<kind::vec3>::Read(r); }
+            static std::tuple<const wxl_vec3*> C(const Held& held) { return {&held}; }
+        };
+
+        template <>
+        struct Arg<kind::f32>
+        {
+            using Held = float;
+            static Held Read(Reader& r)
+            {
+                Require(r, "a number");
+                return static_cast<float>(luaL_checknumber(r.L, r.next++));
+            }
+            static std::tuple<float> C(Held held) { return {held}; }
+        };
+
+        /// A number field of a table, or `absent` when the table leaves it out.
+        float NumberField(lua_State* L, int table, const char* name, float absent)
+        {
+            lua_getfield(L, table, name);
+            float value = absent;
+            if (!lua_isnil(L, -1))
+            {
+                if (!lua_isnumber(L, -1))
+                {
+                    lua_pop(L, 1);
+                    const std::string why = std::string("a placement whose ") + name + " is a number";
+                    luaL_argerror(L, table, why.c_str());
+                }
+                value = static_cast<float>(lua_tonumber(L, -1));
+            }
+            lua_pop(L, 1);
+            return value;
+        }
+
+        /// Where wxl.m2 puts a model: {position = {x, y, z}, yaw, pitch, roll, scale}, the turn 0
+        /// and the scale 1 when left out.
+        template <>
+        struct Arg<kind::placement>
+        {
+            using Held = wxl_m2_placement;
+            static Held Read(Reader& r)
+            {
+                Require(r, "a placement");
+                const int at = r.next++;
+                luaL_checktype(r.L, at, LUA_TTABLE);
+                wxl_m2_placement placement{};
+                placement.struct_size = sizeof placement;
+                lua_getfield(r.L, at, "position");
+                if (!lua_istable(r.L, -1)) luaL_argerror(r.L, at, "a placement: a table with a position {x, y, z}");
+                lua_getfield(r.L, -1, "x");
+                lua_getfield(r.L, -2, "y");
+                lua_getfield(r.L, -3, "z");
+                if (!lua_isnumber(r.L, -3) || !lua_isnumber(r.L, -2) || !lua_isnumber(r.L, -1))
+                    luaL_argerror(r.L, at, "a placement whose position is a table with numbers x, y and z");
+                placement.position = wxl_vec3{static_cast<float>(lua_tonumber(r.L, -3)),
+                                              static_cast<float>(lua_tonumber(r.L, -2)),
+                                              static_cast<float>(lua_tonumber(r.L, -1))};
+                lua_pop(r.L, 4);
+                placement.yaw   = NumberField(r.L, at, "yaw", 0.0f);
+                placement.pitch = NumberField(r.L, at, "pitch", 0.0f);
+                placement.roll  = NumberField(r.L, at, "roll", 0.0f);
+                placement.scale = NumberField(r.L, at, "scale", 1.0f);
+                return placement;
+            }
+            static std::tuple<const wxl_m2_placement*> C(const Held& held) { return {&held}; }
+        };
+
         /// An address of the client's: what an event or a call handed the script (a light
         /// userdata), or a resource of the script's own that is one, still open (a wxl.Model).
         void* CheckAddress(Reader& r, const char* what)
@@ -717,6 +792,24 @@ namespace wxl::lua
                 typename wxl::api::Value<K>::type value{};
                 const wxl_result                  result = f(&value);
                 if (result != WXL_OK) return PushResultFailure(L, result);
+                PushValue<K>(L, value);
+                return 1;
+            }
+        };
+
+        /// A value that may not be there: the value, or nil when the call found none.
+        template <class K>
+        struct Reply<kind::found<K>>
+        {
+            template <class F>
+            static int Call(lua_State* L, Reader&, F&& f)
+            {
+                typename wxl::api::Value<K>::type value{};
+                if (f(&value) != WXL_TRUE)
+                {
+                    lua_pushnil(L);
+                    return 1;
+                }
                 PushValue<K>(L, value);
                 return 1;
             }
@@ -1180,6 +1273,7 @@ namespace wxl::lua
                 }
                 lua_setfield(L, -2, row.name);
             }
+            shims::AddExtras(L, service.id);
             RefuseNames(L, refused);
             lua_setfield(L, -2, service.id);
         }
@@ -1197,6 +1291,91 @@ namespace wxl::lua
         {
             lua_rawgeti(L, -1, i);
             ResourceBox* box = static_cast<ResourceBox*>(lua_touserdata(L, -1));
+            if (box && box->open)
+            {
+                box->open = false;
+                box->give_back(box->value);
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+    }
+    void PushRenderResource(lua_State* L, RenderResource which, wxl_handle value)
+    {
+        switch (which)
+        {
+        case RenderResource::image: PushResource<kind::Image>(L, value); break;
+        case RenderResource::buffer: PushResource<kind::Buffer>(L, value); break;
+        case RenderResource::pipeline: PushResource<kind::Pipeline>(L, value); break;
+        }
+    }
+
+    wxl_handle ToRenderResource(lua_State* L, int index, RenderResource which)
+    {
+        const char* name = which == RenderResource::image ? kind::Image::kName
+                           : which == RenderResource::buffer ? kind::Buffer::kName
+                                                            : kind::Pipeline::kName;
+        const ResourceBox* box = static_cast<const ResourceBox*>(luaL_testudata(L, index, MetaName(name).c_str()));
+        return box && box->open ? static_cast<wxl_handle>(box->value) : WXL_HANDLE_NONE;
+    }
+
+    void PushDrawShape(lua_State* L, wxl_handle value) { PushResource<kind::Shape>(L, value); }
+
+    wxl_handle ToDrawShape(lua_State* L, int index)
+    {
+        const ResourceBox* box = static_cast<const ResourceBox*>(luaL_testudata(L, index, MetaName(kind::Shape::kName).c_str()));
+        return box && box->open ? static_cast<wxl_handle>(box->value) : WXL_HANDLE_NONE;
+    }
+
+    void PushDrawEmitter(lua_State* L, wxl_handle value) { PushResource<kind::Emitter>(L, value); }
+
+    wxl_handle ToDrawEmitter(lua_State* L, int index)
+    {
+        const ResourceBox* box = static_cast<const ResourceBox*>(luaL_testudata(L, index, MetaName(kind::Emitter::kName).c_str()));
+        return box && box->open ? static_cast<wxl_handle>(box->value) : WXL_HANDLE_NONE;
+    }
+
+    namespace
+    {
+        void CloseKeptOf(lua_State* L, const char* name)
+        {
+            PushKept(L);
+            if (!lua_istable(L, -1))
+            {
+                lua_pop(L, 1);
+                return;
+            }
+            const std::string meta = MetaName(name);
+            for (int i = static_cast<int>(lua_objlen(L, -1)); i >= 1; --i)
+            {
+                lua_rawgeti(L, -1, i);
+                ResourceBox* box = static_cast<ResourceBox*>(luaL_testudata(L, -1, meta.c_str()));
+                if (box && box->open)
+                {
+                    box->open = false;
+                    box->give_back(box->value);
+                }
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        }
+    }
+
+    void CloseDrawEmitters(lua_State* L) { CloseKeptOf(L, kind::Emitter::kName); }
+
+    void CloseDrawShapes(lua_State* L)
+    {
+        PushKept(L);
+        if (!lua_istable(L, -1))
+        {
+            lua_pop(L, 1);
+            return;
+        }
+        const std::string meta = MetaName(kind::Shape::kName);
+        for (int i = static_cast<int>(lua_objlen(L, -1)); i >= 1; --i)
+        {
+            lua_rawgeti(L, -1, i);
+            ResourceBox* box = static_cast<ResourceBox*>(luaL_testudata(L, -1, meta.c_str()));
             if (box && box->open)
             {
                 box->open = false;

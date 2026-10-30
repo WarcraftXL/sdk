@@ -4,7 +4,7 @@
 #   <WXL_INGAME_DIR>/
 #     wxl.selftest/  wxl.test-*/       the suite, Lua mods as they are in this folder
 #     wxl.test-throw/bin/<arch>/...    the C++ test mods, built for this tree's architecture
-#     wxl.scout/  wxl.lua-services/  wxl.memory-report/  wxl.probe/   the examples it calls
+#     wxl.scout/  wxl.lua-services/  wxl.memory-report/  wxl.probe/  wxl.ground-marks/  wxl.dig-dust/   the examples it calls
 #     wxl.model-swap/                  the points example, which logs every model and swaps the murloc
 #
 # One tree is one architecture: configure the x64 tree and the x86 tree with the same
@@ -33,14 +33,16 @@ set(ingame_lua_mods
     wxl.test-watch-other)
 
 # The C++ mods of the suite, wxl.<name>/ each, built as <name>.dll from their sources.
-set(ingame_cpp_mods test-throw test-throw-ready test-manifest test-assets)
+set(ingame_cpp_mods test-throw test-throw-ready test-manifest test-assets test-points test-bones)
 set(ingame_test-throw_sources src/TestThrow.cpp)
 set(ingame_test-throw-ready_sources src/TestThrowReady.cpp)
 set(ingame_test-manifest_sources src/TestManifest.cpp)
 set(ingame_test-assets_sources src/TestAssets.cpp)
+set(ingame_test-points_sources src/TestPoints.cpp)
+set(ingame_test-bones_sources src/TestBones.cpp)
 
 # The Lua examples selftest calls into, copied from examples/ under their manifest ids.
-set(ingame_examples lua-services memory-report probe)
+set(ingame_examples lua-services memory-report probe ground-marks dig-dust)
 
 set(ingame_commands)
 set(ingame_targets)
@@ -60,6 +62,8 @@ foreach(mod IN LISTS ingame_cpp_mods)
     endforeach()
     # WXL_MOD_ARCH is this tree's (tests/CMakeLists.txt): the library target alone.
     wxl_add_mod(${target} SOURCES ${sources} MANIFEST "${folder}/mod.json" OUTPUT_NAME ${mod})
+    # The engine headers: test-points reads the model through them.
+    target_link_libraries(${target} PRIVATE wxl::engine)
     if(MSVC)
         target_compile_options(${target} PRIVATE /WX)
     else()

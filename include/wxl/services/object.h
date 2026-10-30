@@ -479,6 +479,14 @@ typedef struct wxl_object_api
     wxl_result(WXL_CALL* item_sell_price)(wxl_handle item, uint32_t* out);
     /// The item in a slot of the bag; none for an empty one, invalid past NumSlots.
     wxl_result(WXL_CALL* container_slot_item)(wxl_handle container, uint32_t slot, wxl_handle* out);
+    /// Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused.
+    wxl_result(WXL_CALL* unit_is_outdoors)(wxl_handle unit, wxl_bool* out);
+    /// Whether the active player may attack it, by the client's own reckoning (faction, duel, PvP, sanctuary): what turns the cursor into a sword.
+    wxl_result(WXL_CALL* unit_can_attack)(wxl_handle unit, wxl_bool* out);
+    /// Whether the active player can interact with it now: an NPC offering something (gossip, quests, trade, training, a flight), alive, out of combat, of a reaction that lets it; out of reach counts.
+    wxl_result(WXL_CALL* unit_can_interact)(wxl_handle unit, wxl_bool* out);
+    /// Whether the active player can use it now, as the client decides the cursor over it: its kind lets it be used, its quest is in the log, its lock opens; out of reach counts.
+    wxl_result(WXL_CALL* gameobject_can_use)(wxl_handle gameobject, wxl_bool* out);
 } wxl_object_api;
 
 #ifdef __cplusplus

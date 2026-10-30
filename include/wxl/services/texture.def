@@ -1,0 +1,24 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.texture as data: one row per member of wxl_texture_api, in member order. The shapes and their
+// columns are described in wxl/services/rows.hpp.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including texture.def"
+#endif
+
+WXL_API_SERVICE(texture, WXL_TEXTURE_SERVICE, WXL_TEXTURE_SERVICE_VERSION, (0, 1, 30), open,
+                "Textures made from an SVG (drawn at the size asked, its groups recoloured, outlined or hidden) or a PNG, under a path the client loads like its own files.")
+
+WXL_API(texture, make, Make, out<texture>, (texture_request request), shim, by_hand,
+        "Makes a texture of an SVG or a PNG at a size, with its groups restyled and a tint: answers its path, then the right and bottom texture coordinates of the picture, and the texture's width and height.")
+WXL_API(texture, stats, Stats, out<texture_stats>, (), shim, by_hand,
+        "What the service holds: the textures it knows, those in memory, their bytes, the budget.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

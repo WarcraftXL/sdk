@@ -1,0 +1,85 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.render as data: one row per member of wxl_render_api, in member order. The shapes and their
+// columns are described in wxl/services/rows.hpp.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including render.def"
+#endif
+
+WXL_API_SERVICE(render, WXL_RENDER_SERVICE, WXL_RENDER_SERVICE_VERSION, (0, 1, 33), open,
+                "Drawing into the client's frame on the Vulkan renderer: images, buffers and pipelines of the mod's own, its passes at the points of the frame, the client's model batches drawn again. Main thread only.")
+
+// An image, a buffer and a pipeline of the mod's; a Lua mod's are given back when it lets go of them.
+WXL_API_RESOURCE(render, Image, wxl_handle, WXL_HANDLE_NONE)
+WXL_API_RESOURCE(render, Buffer, wxl_handle, WXL_HANDLE_NONE)
+WXL_API_RESOURCE(render, Pipeline, wxl_handle, WXL_HANDLE_NONE)
+
+WXL_API(render, supported, Supported, boolean, (), generated, generated,
+        "Whether the client draws through a device this service drives: the Vulkan renderer.")
+WXL_API(render, unsupported_reason, UnsupportedReason, str, (), generated, generated,
+        "Why it does not, in a sentence for a log; empty when it does.")
+WXL_API(render, create_image, CreateImage, Image, (u32 width, u32 height, u32 format, u32 samples), generated, generated,
+        "An image of a size, a format (1 rgba8, 2 bgra8 the frame's, 3 r8, 4 rg8, 5 r16f, 6 rg16f, 7 rgba16f, 8 r32f, 9 rgba32f, 10 depth32f) and samples per pixel (0: the frame's own, 1 for one), a render target and a texture.")
+WXL_API(render, create_screen_image, CreateScreenImage, Image, (u32 divisor, u32 format, u32 samples), generated, generated,
+        "An image of the frame's size divided by divisor (1 the full size), format and samples as CreateImage's, made again when the frame's size changes.")
+WXL_API_CLOSE(render, destroy_image, DestroyImage, none, Image, collected,
+              "Gives the image back; one the mod lets go of is given back for it.")
+WXL_API(render, image_slot, ImageSlot, u32, (Image image), generated, generated,
+        "The image's index in the bindless table, what a program samples it by.")
+WXL_API(render, image_width, ImageWidth, u32, (Image image), generated, generated,
+        "The image's width in pixels now.")
+WXL_API(render, image_height, ImageHeight, u32, (Image image), generated, generated,
+        "The image's height in pixels now.")
+WXL_API(render, create_buffer, CreateBuffer, Buffer, (u32 size), generated, generated,
+        "A buffer of size bytes, read by a program through its address, or as a draw's 32-bit indices.")
+WXL_API_CLOSE(render, destroy_buffer, DestroyBuffer, none, Buffer, collected,
+              "Gives the buffer back; one the mod lets go of is given back for it.")
+WXL_API(render, write_buffer, WriteBuffer, result, (Buffer buffer, u32 offset, bytes data, bytes_size size), generated, generated,
+        "Copies a string of bytes into the buffer at an offset, before the frame's first draw.")
+WXL_API(render, buffer_address, BufferAddress, out<u64>, (Buffer buffer), generated, generated,
+        "The buffer's address on the GPU, for a program's buffer reference.")
+WXL_API(render, sampler, Sampler, u32, (u32 flags), generated, generated,
+        "The index in the bindless table of a sampler: SAMPLER_LINEAR, SAMPLER_WRAP and SAMPLER_MIPS added together, 0 for nearest and clamped.")
+WXL_API(render, create_pipeline, CreatePipeline, Pipeline, (render_pipeline desc), shim, generated,
+        "A pipeline of the mod's SPIR-V (files of its folder, or strings of bytes) and its state, from a table: kind, vertex, fragment, colors, depth, samples, blend, depth_test, depth_write, cull, topology.")
+WXL_API_CLOSE(render, destroy_pipeline, DestroyPipeline, none, Pipeline, collected,
+              "Gives the pipeline back; one the mod lets go of is given back for it.")
+WXL_API(render, pipeline_ready, PipelineReady, boolean, (Pipeline pipeline), generated, generated,
+        "Whether the pipeline draws now.")
+WXL_API(render, begin, Begin, result, (render_pass pass), shim, generated,
+        "Opens a pass inside RenderPoint, from a table: colors (images, or SCENE_COLOR), depth (an image, or SCENE_DEPTH), clear (a colour per attachment, depth).")
+WXL_API(render, end, End, none, (), generated, generated,
+        "Closes the pass; the frame goes on.")
+WXL_API(render, draw, Draw, result, (Pipeline pipeline, u32 vertex_count, u32 instance_count, bytes push, bytes_size push_size), shim, generated,
+        "Draws vertex_count vertices instance_count times; push is a table of numbers (32-bit floats) or a string of bytes, up to 128 bytes.")
+WXL_API(render, draw_indexed, DrawIndexed, result,
+        (Pipeline pipeline, Buffer indices, u32 first_index, u32 index_count, u32 instance_count, bytes push, bytes_size push_size), shim, generated,
+        "Draws index_count 32-bit indices of a buffer from first_index, instance_count times, with push as Draw's.")
+WXL_API(render, fullscreen, Fullscreen, result, (Pipeline pipeline, bytes push, bytes_size push_size), shim, generated,
+        "Draws a FULLSCREEN pipeline over the pass, with push as Draw's.")
+WXL_API(render, draw_batch, DrawBatch, result, (cptr batch, Pipeline pipeline, bytes constants, bytes_size constants_size), shim, generated,
+        "Draws a client batch (ModelBatchDrawn's batch, or a kept one) again with a BATCH pipeline; constants as Draw's push, up to 4096 bytes.")
+WXL_API(render, keep_batch, KeepBatch, ptr, (cptr batch), generated, generated,
+        "A copy of ModelBatchDrawn's batch, to draw later in the same frame; nil when none can be kept.")
+WXL_API(render, scene_color_slot, SceneColorSlot, u32, (), generated, generated,
+        "The frame's colour as drawn so far, copied into a texture: its index in the bindless table, inside RenderPoint.")
+WXL_API(render, scene_depth_slot, SceneDepthSlot, u32, (), generated, generated,
+        "The frame's depth as drawn so far, as a one-channel texture: its index in the bindless table, inside RenderPoint.")
+WXL_API(render, replace_shader, ReplaceShader, result, (str name, u32 stage, bytes spirv, bytes_size size), shim, generated,
+        "Gives the client's shaders named name (or starting with it) the mod's SPIR-V for a stage (0 vertex, 1 pixel), until restored or the mod goes; spirv is a file of the mod's folder or a string of bytes.")
+WXL_API(render, restore_shader, RestoreShader, result, (str name, u32 stage), shim, generated,
+        "Gives a replaced shader its own program back.")
+WXL_API_SINCE(render, dispatch, (0, 1, 34))
+WXL_API(render, dispatch, Dispatch, result, (Pipeline pipeline, u32 x, u32 y, u32 z, bytes push, bytes_size push_size), shim, generated,
+        "Runs a COMPUTE pipeline over x * y * z workgroups inside RenderPoint, outside a pass; push as Draw's.")
+WXL_API(render, bone_palette, BonePalette, out<u64>, (bytes matrices, bytes_size size), shim, generated,
+        "Writes matrices into the frame (a table of numbers, 12 a matrix: three rows of four, or a string of bytes) and answers their address on the GPU, read until the frame ends.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

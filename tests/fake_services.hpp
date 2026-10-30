@@ -9,9 +9,12 @@
 #ifndef WXL_TEST_FAKE_SERVICES_HPP
 #define WXL_TEST_FAKE_SERVICES_HPP
 
+#include <algorithm>
 #include <cctype>
 #include <cstddef>
 #include <cstring>
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -26,6 +29,19 @@
 
 #include "wxl/objects.hpp"
 #include "wxl/services/action.h"
+#include "wxl/services/camera.h"
+#include "wxl/services/input.h"
+#include "wxl/services/world.h"
+#include "wxl/services/pose.h"
+#include "wxl/services/animation.h"
+#include "wxl/services/highlight.h"
+#include "wxl/services/selectioncircle.h"
+#include "wxl/services/texture.h"
+#include "wxl/services/cvar.h"
+#include "wxl/services/terrain.h"
+#include "wxl/services/draw.h"
+#include "wxl/terrain/grid.hpp"
+#include "wxl/services/imgui.h"
 #include "wxl/services/data.h"
 #include "wxl/services/hook.h"
 #include "wxl/services/net.h"
@@ -33,9 +49,13 @@
 #include "wxl/services/patch.h"
 #include "wxl/services/footprint.h"
 #include "wxl/services/gx.h"
+#include "wxl/services/engine.h"
 #include "wxl/services/m2.h"
 #include "wxl/services/m2file.h"
 #include "wxl/services/profile.h"
+#include "wxl/services/render.h"
+#include "wxl/services/vk.h"
+#include "wxl/services/relay.h"
 #include "wxl/services/script.h"
 #include "wxl/services/storage.h"
 #include "wxl/services/ui.h"
@@ -512,6 +532,10 @@ namespace wxltest
             return FakeObjects::IsUnit(u) ? Record("assist", u) : WXL_E_INVALID;
         }
         static wxl_result WXL_CALL MoveTo(wxl_vec3 point) { return Record("move_to", WXL_HANDLE_NONE, WXL_HANDLE_NONE, 0, point); }
+        static wxl_result WXL_CALL Face(double facing)
+        {
+            return Record("face", WXL_HANDLE_NONE, WXL_HANDLE_NONE, 0, wxl_vec3{static_cast<float>(facing), 0.0f, 0.0f});
+        }
 
         static const wxl_action_api* Table()
         {
@@ -527,6 +551,1005 @@ namespace wxltest
                 t.follow       = &Follow;
                 t.assist       = &Assist;
                 t.move_to      = &MoveTo;
+                t.face         = &Face;
+                return t;
+            }();
+            return &api;
+        }
+    };
+
+    // --- wxl.camera, wxl.input, wxl.world ------------------------------------------------------
+    //
+    // A camera at (1, 2, 3) looking north with a field of view of 1.5; the views set and
+    // released, the captures and the traces are recorded. A wall stands at x = 10.
+
+    struct FakeView
+    {
+        struct Call
+        {
+            std::string name;
+            wxl_vec3    position{};
+            wxl_vec3    forward{};
+            double      fov  = 0.0;
+            double      roll = 0.0;
+        };
+
+        static std::vector<Call>& Calls()
+        {
+            static std::vector<Call> calls;
+            return calls;
+        }
+
+        static int& Captures()
+        {
+            static int held = 0;
+            return held;
+        }
+
+        static wxl_result WXL_CALL Position(wxl_vec3* out) { *out = wxl_vec3{1.0f, 2.0f, 3.0f}; return WXL_OK; }
+        static wxl_result WXL_CALL Forward(wxl_vec3* out) { *out = wxl_vec3{1.0f, 0.0f, 0.0f}; return WXL_OK; }
+        static wxl_result WXL_CALL Up(wxl_vec3* out) { *out = wxl_vec3{0.0f, 0.0f, 1.0f}; return WXL_OK; }
+        static wxl_result WXL_CALL Fov(double* out) { *out = 1.5; return WXL_OK; }
+        static wxl_result WXL_CALL Pivot(wxl_vec3* out) { *out = wxl_vec3{5.0f, 5.0f, 1.75f}; return WXL_OK; }
+        static wxl_bool WXL_CALL Cinematic() { return WXL_FALSE; }
+        static wxl_result WXL_CALL SetView(wxl_vec3 position, wxl_vec3 forward, double fov)
+        {
+            if (fov < 0.0) return WXL_E_INVALID;
+            Calls().push_back(Call{"set_view", position, forward, fov});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL ReleaseView()
+        {
+            Calls().push_back(Call{"release_view"});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL SetViewRolled(wxl_vec3 position, wxl_vec3 forward, double fov, double roll)
+        {
+            if (fov < 0.0) return WXL_E_INVALID;
+            Calls().push_back(Call{"set_view_rolled", position, forward, fov, roll});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL Roll(double* out) { *out = 0.25; return WXL_OK; }
+        /// Where the fake holds the pointer, x and y; z is 1 while captured.
+        static wxl_vec3& Point()
+        {
+            static wxl_vec3 point{};
+            return point;
+        }
+        static wxl_result WXL_CALL CaptureCursorAt(double x, double y)
+        {
+            if (!(x >= 0.0 && x <= 1.0 && y >= 0.0 && y <= 1.0)) return WXL_E_INVALID;
+            Calls().push_back(Call{"capture_at", {static_cast<float>(x), static_cast<float>(y), 0.0f}});
+            Captures() = 1;
+            Point()    = wxl_vec3{static_cast<float>(x), static_cast<float>(y), 0.0f};
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CapturePoint(wxl_vec3* out)
+        {
+            if (!Captures()) return WXL_E_NOT_FOUND;
+            *out = Point();
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL CaptureCursor(wxl_bool captured)
+        {
+            Calls().push_back(Call{captured ? "capture" : "free"});
+            Captures() = captured ? 1 : 0;
+            Point()    = wxl_vec3{0.5f, 0.5f, 0.0f};
+            return WXL_OK;
+        }
+        static wxl_bool WXL_CALL CursorCaptured() { return Captures() ? WXL_TRUE : WXL_FALSE; }
+        static wxl_bool WXL_CALL PointerOverWorld() { return WXL_TRUE; }
+        static int& Blocks()
+        {
+            static int blocked = 0;
+            return blocked;
+        }
+        static wxl_result WXL_CALL BlockMouseLook(wxl_bool blocked)
+        {
+            Calls().push_back(Call{blocked ? "block" : "unblock"});
+            Blocks() = blocked ? 1 : 0;
+            return WXL_OK;
+        }
+        static wxl_bool WXL_CALL MouseLookBlocked() { return Blocks() ? WXL_TRUE : WXL_FALSE; }
+        static wxl_result WXL_CALL Head(wxl_handle unit, double yaw, double pitch, double smoothing)
+        {
+            if (!FakeObjects::Live(unit)) return WXL_E_NOT_FOUND;
+            Calls().push_back(Call{"head", {static_cast<float>(yaw), static_cast<float>(pitch), static_cast<float>(smoothing)},
+                                   {}, static_cast<double>(unit)});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL ReleaseHead(wxl_handle unit)
+        {
+            Calls().push_back(Call{"release_head", {}, {}, static_cast<double>(unit)});
+            return WXL_OK;
+        }
+        // wxl.highlight: drawn, with the colour of every set kept apart (a float would round it).
+        static std::vector<uint32_t>& HighlightColors()
+        {
+            static std::vector<uint32_t> colors;
+            return colors;
+        }
+        static wxl_bool WXL_CALL HighlightSupported() { return WXL_TRUE; }
+        static wxl_str WXL_CALL HighlightUnsupportedReason() { return wxl_str{"", 0}; }
+        static wxl_result WXL_CALL HighlightSet(wxl_handle target, uint32_t color, float outline, float glow, float strength)
+        {
+            if (!FakeObjects::Live(target)) return WXL_E_NOT_FOUND;
+            if (!(outline >= 0.0f) || !(glow >= 0.0f) || !(strength >= 0.0f)) return WXL_E_INVALID;
+            Calls().push_back(Call{"highlight_set", {outline, glow, strength}, {}, static_cast<double>(target)});
+            HighlightColors().push_back(color);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL HighlightClear(wxl_handle target)
+        {
+            Calls().push_back(Call{"highlight_clear", {}, {}, static_cast<double>(target)});
+            return WXL_OK;
+        }
+        static void WXL_CALL HighlightClearAll() { Calls().push_back(Call{"highlight_clear_all", {}, {}, 0.0}); }
+        static uint32_t WXL_CALL HighlightDrawn() { return 7; }
+        // wxl.selectioncircle: every call kept whole, with its masks, texture and colour.
+        struct CircleCall
+        {
+            std::string name;
+            uint32_t    kinds = 0, reactions = 0;
+            std::string texture;
+            uint32_t    color = 0;
+            float       scale = 0.0f;
+            wxl_handle  target = WXL_HANDLE_NONE;
+        };
+        static std::vector<CircleCall>& CircleCalls()
+        {
+            static std::vector<CircleCall> calls;
+            return calls;
+        }
+        static bool CircleMasks(uint32_t kinds, uint32_t reactions)
+        {
+            return !(kinds & ~WXL_SELECTIONCIRCLE_ALL_KINDS) && !(reactions & ~WXL_SELECTIONCIRCLE_ALL_REACTIONS);
+        }
+        static bool CircleScale(float scale) { return scale >= 0.0f && scale <= WXL_SELECTIONCIRCLE_MAX_SCALE; }
+        static wxl_result WXL_CALL CircleHide(uint32_t kinds, uint32_t reactions)
+        {
+            if (!CircleMasks(kinds, reactions)) return WXL_E_INVALID;
+            CircleCalls().push_back(CircleCall{"hide", kinds, reactions, {}, 0, 0.0f, WXL_HANDLE_NONE});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CircleSetStyle(uint32_t kinds, uint32_t reactions, wxl_str texture, uint32_t color, float scale)
+        {
+            if (!CircleMasks(kinds, reactions) || !CircleScale(scale)) return WXL_E_INVALID;
+            CircleCalls().push_back(CircleCall{"set_style", kinds, reactions, std::string(texture.data ? texture.data : "", texture.size), color, scale, WXL_HANDLE_NONE});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CircleReset(uint32_t kinds, uint32_t reactions)
+        {
+            if (!CircleMasks(kinds, reactions)) return WXL_E_INVALID;
+            CircleCalls().push_back(CircleCall{"reset", kinds, reactions, {}, 0, 0.0f, WXL_HANDLE_NONE});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CircleHideObject(wxl_handle target)
+        {
+            if (!FakeObjects::Live(target)) return WXL_E_NOT_FOUND;
+            CircleCalls().push_back(CircleCall{"hide_object", 0, 0, {}, 0, 0.0f, target});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CircleSetObjectStyle(wxl_handle target, wxl_str texture, uint32_t color, float scale)
+        {
+            if (!FakeObjects::Live(target)) return WXL_E_NOT_FOUND;
+            if (!CircleScale(scale)) return WXL_E_INVALID;
+            CircleCalls().push_back(CircleCall{"set_object_style", 0, 0, std::string(texture.data ? texture.data : "", texture.size), color, scale, target});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CircleResetObject(wxl_handle target)
+        {
+            CircleCalls().push_back(CircleCall{"reset_object", 0, 0, {}, 0, 0.0f, target});
+            return WXL_OK;
+        }
+        static void WXL_CALL CircleResetAll() { CircleCalls().push_back(CircleCall{"reset_all", 0, 0, {}, 0, 0.0f, WXL_HANDLE_NONE}); }
+        static uint32_t WXL_CALL CircleDrawn() { return 2; }
+        static uint32_t WXL_CALL CircleHidden() { return 1; }
+        // wxl.texture: every request kept whole; a source naming "missing" is no file.
+        struct TextureGroupCall
+        {
+            std::string id;
+            uint32_t    set = 0, color = 0;
+            float       width   = 0.0f;
+            bool        visible = true;
+        };
+        struct TextureCall
+        {
+            std::string                   source;
+            uint32_t                      width = 0, height = 0, tint = 0;
+            std::vector<TextureGroupCall> groups;
+        };
+        static std::vector<TextureCall>& TextureCalls()
+        {
+            static std::vector<TextureCall> calls;
+            return calls;
+        }
+        static wxl_result WXL_CALL TextureMake(const wxl_texture_request* request, wxl_texture* out)
+        {
+            if (!request || !out) return WXL_E_INVALID;
+            TextureCall call;
+            call.source.assign(request->source.data ? request->source.data : "", request->source.size);
+            call.width  = request->width;
+            call.height = request->height;
+            call.tint   = request->tint;
+            for (uint32_t i = 0; i < request->group_count; ++i)
+            {
+                const wxl_texture_group& g = request->groups[i];
+                call.groups.push_back(TextureGroupCall{std::string(g.id.data, g.id.size), g.set, g.color, g.width,
+                                                       g.visible != WXL_FALSE});
+            }
+            TextureCalls().push_back(call);
+            if (call.source.find("missing") != std::string::npos)
+            {
+                std::snprintf(out->reason, sizeof out->reason, "no file %s", call.source.c_str());
+                return WXL_E_NOT_FOUND;
+            }
+            std::snprintf(out->path, sizeof out->path, "Interface\\WXL\\fake\\made_%ux%u.blp", call.width, call.height);
+            out->width          = call.width;
+            out->height         = call.height;
+            out->texture_width  = 64;
+            out->texture_height = 32;
+            out->right          = static_cast<float>(call.width) / 64.0f;
+            out->bottom         = static_cast<float>(call.height) / 32.0f;
+            out->reused         = TextureCalls().size() > 1 ? WXL_TRUE : WXL_FALSE;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL TextureStats(wxl_texture_stats* out)
+        {
+            if (!out) return WXL_E_INVALID;
+            out->textures      = 3;
+            out->resident      = 2;
+            out->texture_limit = 2048;
+            out->bytes         = 4096;
+            out->byte_limit    = 64u << 20;
+            out->made          = 3;
+            out->reused        = 5;
+            out->released      = 1;
+            return WXL_OK;
+        }
+        static wxl_str WXL_CALL ImGuiVersion() { return wxl_str{"1.0;0.1", 7}; }
+        static void* WXL_CALL ImGuiContext() { return reinterpret_cast<void*>(0x1000); }
+        static void* WXL_CALL PlotContext() { return reinterpret_cast<void*>(0x2000); }
+        static void WXL_CALL Allocators(void** alloc, void** release, void** user)
+        {
+            if (alloc) *alloc = reinterpret_cast<void*>(0x3000);
+            if (release) *release = reinterpret_cast<void*>(0x4000);
+            if (user) *user = nullptr;
+        }
+
+        static wxl_bool WXL_CALL Trace(wxl_vec3 start, wxl_vec3 finish, uint32_t flags, wxl_vec3* hit)
+        {
+            Calls().push_back(Call{"trace", start, finish, static_cast<double>(flags)});
+            if ((start.x < 10.0f) == (finish.x < 10.0f)) return WXL_FALSE;
+            *hit = wxl_vec3{10.0f, start.y, start.z};
+            return WXL_TRUE;
+        }
+
+        static const wxl_camera_api* CameraTable()
+        {
+            static const wxl_camera_api api = [] {
+                wxl_camera_api t{};
+                t.struct_size  = sizeof t;
+                t.position     = &Position;
+                t.forward      = &Forward;
+                t.up           = &Up;
+                t.fov          = &Fov;
+                t.pivot        = &Pivot;
+                t.cinematic    = &Cinematic;
+                t.set_view     = &SetView;
+                t.release_view    = &ReleaseView;
+                t.set_view_rolled = &SetViewRolled;
+                t.roll            = &Roll;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_input_api* InputTable()
+        {
+            static const wxl_input_api api = [] {
+                wxl_input_api t{};
+                t.struct_size        = sizeof t;
+                t.capture_cursor     = &CaptureCursor;
+                t.cursor_captured    = &CursorCaptured;
+                t.pointer_over_world = &PointerOverWorld;
+                t.block_mouse_look   = &BlockMouseLook;
+                t.mouse_look_blocked = &MouseLookBlocked;
+                t.capture_cursor_at  = &CaptureCursorAt;
+                t.capture_point      = &CapturePoint;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_pose_api* PoseTable()
+        {
+            static const wxl_pose_api api = [] {
+                wxl_pose_api t{};
+                t.struct_size  = sizeof t;
+                t.head         = &Head;
+                t.release_head = &ReleaseHead;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_highlight_api* HighlightTable()
+        {
+            static const wxl_highlight_api api = [] {
+                wxl_highlight_api t{};
+                t.struct_size        = sizeof t;
+                t.supported          = &HighlightSupported;
+                t.unsupported_reason = &HighlightUnsupportedReason;
+                t.set                = &HighlightSet;
+                t.clear              = &HighlightClear;
+                t.clear_all          = &HighlightClearAll;
+                t.drawn              = &HighlightDrawn;
+                return t;
+            }();
+            return &api;
+        }
+
+        // wxl.terrain: ground flat at 42 yards over x >= 0, none west of it; every edit and reset
+        // kept whole, with its layer.
+        struct TerrainCall
+        {
+            std::string                     what;
+            uint32_t                        layer = 0;
+            std::vector<wxl_terrain_height> heights;
+            int32_t                         chunk_x = 0, chunk_y = 0;
+        };
+        static std::vector<TerrainCall>& TerrainCalls()
+        {
+            static std::vector<TerrainCall> calls;
+            return calls;
+        }
+        static wxl_bool WXL_CALL TerrainHeight(double x, double, wxl_bool original, double* out)
+        {
+            if (x < 0.0 || !out) return WXL_FALSE;
+            *out = original ? 40.0 : 42.0;
+            return WXL_TRUE;
+        }
+        static uint32_t WXL_CALL TerrainPresence(double x, double) { return x < 0.0 ? WXL_TERRAIN_NONE : WXL_TERRAIN_GROUND; }
+        static wxl_bool WXL_CALL TerrainTrace(wxl_vec3 start, wxl_vec3, wxl_terrain_hit* out)
+        {
+            if (start.x < 0.0f || !out || out->struct_size < sizeof *out) return WXL_FALSE;
+            out->point    = wxl_vec3{start.x, start.y, 42.0f};
+            out->normal   = wxl_vec3{0.0f, 0.0f, 1.0f};
+            const wxl::terrain::Locus at = wxl::terrain::Locate(start.x, start.y);
+            out->chunk_x  = at.chunk_x;
+            out->chunk_y  = at.chunk_y;
+            out->fraction = 0.5f;
+            return WXL_TRUE;
+        }
+        static wxl_bool WXL_CALL TerrainLocate(double x, double y, wxl_terrain_place* out)
+        {
+            const wxl::terrain::Locus at = wxl::terrain::Locate(static_cast<float>(x), static_cast<float>(y));
+            if (!at.on_map || !out) return WXL_FALSE;
+            out->chunk_x  = at.chunk_x;
+            out->chunk_y  = at.chunk_y;
+            out->cell_row = at.cell_row;
+            out->cell_col = at.cell_col;
+            out->nearest  = at.nearest;
+            out->loaded   = WXL_TRUE;
+            return WXL_TRUE;
+        }
+        static uint32_t WXL_CALL TerrainVertices(int32_t cx, int32_t cy, wxl_bool, wxl_vec3* out, uint32_t capacity)
+        {
+            if (!wxl::terrain::ChunkOnMap(cx, cy)) return 0;
+            for (uint32_t i = 0; out && i < capacity && i < WXL_TERRAIN_CHUNK_VERTICES; ++i)
+            {
+                const wxl::terrain::Point2 p = wxl::terrain::VertexPlane(cx, cy, i);
+                out[i]                       = wxl_vec3{p.x, p.y, 42.0f};
+            }
+            return WXL_TERRAIN_CHUNK_VERTICES;
+        }
+        static wxl_result WXL_CALL TerrainSetHeights(const wxl_terrain_height* heights, uint32_t count, uint32_t layer)
+        {
+            for (uint32_t i = 0; i < count; ++i)
+                if (heights[i].index >= WXL_TERRAIN_CHUNK_VERTICES) return WXL_E_INVALID;
+            TerrainCalls().push_back(TerrainCall{"set", layer, std::vector<wxl_terrain_height>(heights, heights + count), 0, 0});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL TerrainResetChunk(int32_t cx, int32_t cy, uint32_t layer)
+        {
+            TerrainCalls().push_back(TerrainCall{"reset", layer, {}, cx, cy});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL TerrainResetAll(uint32_t layer)
+        {
+            TerrainCalls().push_back(TerrainCall{"reset_all", layer, {}, 0, 0});
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL TerrainStats(wxl_terrain_stats* out)
+        {
+            if (!out) return WXL_E_INVALID;
+            out->edited_chunks     = 4;
+            out->edits             = static_cast<uint64_t>(TerrainCalls().size());
+            out->last_microseconds = 12;
+            return WXL_OK;
+        }
+        static uint32_t WXL_CALL TerrainVerticesIn(double x, double y, double radius, wxl_terrain_vertex* out, uint32_t capacity)
+        {
+            uint32_t count = 0;
+            wxl::terrain::ForVerticesInCircle(static_cast<float>(x), static_cast<float>(y), static_cast<float>(radius),
+                                              [&](int32_t cx, int32_t cy, uint32_t i, wxl::terrain::Point2 p) {
+                if (out && count < capacity)
+                    out[count] = wxl_terrain_vertex{cx, cy, i, p.x, p.y, 42.0f, 40.0f,
+                                                    wxl::terrain::IsInner(i) ? WXL_TRUE : WXL_FALSE, WXL_TRUE};
+                ++count;
+            });
+            return count;
+        }
+        // The layer provider set last, called by LayerAsked as the runtime calls it.
+        static wxl_terrain_layer_provider& TerrainProvider()
+        {
+            static wxl_terrain_layer_provider provider{};
+            return provider;
+        }
+        static wxl_result WXL_CALL TerrainSetLayerProvider(const wxl_terrain_layer_provider* p)
+        {
+            if (p && (p->struct_size < sizeof *p || !p->fn)) return WXL_E_INVALID;
+            TerrainProvider() = p ? *p : wxl_terrain_layer_provider{};
+            return WXL_OK;
+        }
+        // The tile provider set last (abi 0.1.45).
+        static wxl_terrain_tile_provider& TileProvider()
+        {
+            static wxl_terrain_tile_provider provider{};
+            return provider;
+        }
+        static wxl_result WXL_CALL TerrainSetTileProvider(const wxl_terrain_tile_provider* p)
+        {
+            if (p && (p->struct_size < offsetof(wxl_terrain_tile_provider, name_fn) || !p->fn)) return WXL_E_INVALID;
+            TileProvider() = wxl_terrain_tile_provider{};
+            if (p) std::memcpy(&TileProvider(), p, p->struct_size < sizeof *p ? p->struct_size : sizeof *p);
+            return WXL_OK;
+        }
+        static float LayerAsked(uint32_t texture)
+        {
+            const wxl_terrain_layer_provider& p = TerrainProvider();
+            wxl_terrain_layer layer{};
+            layer.struct_size = sizeof layer;
+            layer.texture     = texture;
+            wxl_terrain_layer_look look{};
+            look.struct_size   = sizeof look;
+            look.texture_scale = 1.0f;
+            if (p.fn) p.fn(p.user, &layer, &look);
+            LastLook() = look;
+            return look.texture_scale;
+        }
+        // The whole look the last LayerAsked got back (abi 0.1.43: extra texture, numbers).
+        static wxl_terrain_layer_look& LastLook()
+        {
+            static wxl_terrain_layer_look look{};
+            return look;
+        }
+        static const wxl_terrain_api* TerrainTable()
+        {
+            static const wxl_terrain_api api = [] {
+                wxl_terrain_api t{};
+                t.struct_size = sizeof t;
+                t.height      = &TerrainHeight;
+                t.presence    = &TerrainPresence;
+                t.trace       = &TerrainTrace;
+                t.locate      = &TerrainLocate;
+                t.vertices    = &TerrainVertices;
+                t.set_heights = &TerrainSetHeights;
+                t.reset_chunk = &TerrainResetChunk;
+                t.reset_all   = &TerrainResetAll;
+                t.stats       = &TerrainStats;
+                t.vertices_in = &TerrainVerticesIn;
+                t.set_layer_provider = &TerrainSetLayerProvider;
+                t.set_tile_provider  = &TerrainSetTileProvider;
+                return t;
+            }();
+            return &api;
+        }
+
+        // wxl.draw: every call kept whole (the shape's kind, centre and points, the look, the
+        // duration), handles counted from 1; a radius above 100 refused, as the runtime refuses.
+        struct DrawCall
+        {
+            std::string           what;
+            wxl_handle            handle = WXL_HANDLE_NONE;
+            uint32_t              kind = 0, flags = 0;
+            wxl_vec3              center{};
+            float                 radius = 0.0f, facing = 0.0f, duration = 0.0f;
+            std::vector<wxl_vec3> points;
+            bool                  styled = false;
+            wxl_draw_style        style{};
+            wxl_handle            target = WXL_HANDLE_NONE;
+            uint32_t              attach = 0;
+            std::vector<float>    alphas;  ///< the shape's point_alphas, copied
+            std::string           texture; ///< the style's texture, copied
+            wxl_draw_emitter      emitter{};
+            wxl_draw_particles    particles{};
+            bool                  looked = false;
+            uint32_t              count = 0;
+        };
+        static void DrawEmitterInto(DrawCall& call, const wxl_draw_emitter* e, const wxl_draw_particles* p)
+        {
+            if (e) call.emitter = *e;
+            call.looked = p != nullptr;
+            if (p)
+            {
+                call.particles = *p;
+                if (p->texture) call.texture = p->texture;
+                call.particles.texture = nullptr;
+            }
+        }
+        static wxl_result WXL_CALL DrawEmit(const wxl_draw_emitter* e, const wxl_draw_particles* p)
+        {
+            if (!e || e->struct_size < sizeof *e || e->burst > WXL_DRAW_MAX_BURST) return WXL_E_INVALID;
+            DrawCall call{"emit"};
+            DrawEmitterInto(call, e, p);
+            DrawCalls().push_back(call);
+            return WXL_OK;
+        }
+        static wxl_handle WXL_CALL DrawAddEmitter(const wxl_draw_emitter* e, const wxl_draw_particles* p)
+        {
+            if (!e || e->struct_size < sizeof *e || e->burst > WXL_DRAW_MAX_BURST) return WXL_HANDLE_NONE;
+            DrawCall call{"add_emitter", ++DrawNext()};
+            DrawEmitterInto(call, e, p);
+            DrawCalls().push_back(call);
+            return call.handle;
+        }
+        static wxl_result WXL_CALL DrawUpdateEmitter(wxl_handle h, const wxl_draw_emitter* e)
+        {
+            DrawCall call{"update_emitter", h};
+            DrawEmitterInto(call, e, nullptr);
+            DrawCalls().push_back(call);
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL DrawSetEmitterStyle(wxl_handle h, const wxl_draw_particles* p)
+        {
+            DrawCall call{"set_emitter_style", h};
+            DrawEmitterInto(call, nullptr, p);
+            DrawCalls().push_back(call);
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL DrawBurst(wxl_handle h, uint32_t count)
+        {
+            DrawCall call{"burst", h};
+            call.count = count;
+            DrawCalls().push_back(call);
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL DrawPlace(wxl_handle h, wxl_vec3 center, float facing)
+        {
+            DrawCall call{"place", h};
+            call.center = center;
+            call.facing = facing;
+            DrawCalls().push_back(call);
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL DrawFollow(wxl_handle h, wxl_handle target, uint32_t flags)
+        {
+            DrawCall call{"follow", h};
+            call.target = target;
+            call.attach = flags;
+            DrawCalls().push_back(call);
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static void WXL_CALL DrawStop(wxl_handle h) { DrawCalls().push_back(DrawCall{"stop", h}); }
+        static std::vector<DrawCall>& DrawCalls()
+        {
+            static std::vector<DrawCall> calls;
+            return calls;
+        }
+        static wxl_handle& DrawNext()
+        {
+            static wxl_handle next = 0;
+            return next;
+        }
+        static void DrawShapeInto(DrawCall& call, const wxl_draw_shape* s)
+        {
+            call.kind   = s->kind;
+            call.flags  = s->flags;
+            call.center = s->center;
+            call.radius = s->radius;
+            call.facing = s->facing;
+            call.points.assign(s->points, s->points + s->point_count);
+            if (s->struct_size > WXL_DRAW_SHAPE_SIZE_0136 && s->point_alphas) call.alphas.assign(s->point_alphas, s->point_alphas + s->point_count);
+        }
+        static void DrawStyleInto(DrawCall& call, const wxl_draw_style* style)
+        {
+            call.styled = style != nullptr;
+            if (!style) return;
+            call.style = *style;
+            if (style->texture) call.texture = style->texture;
+            call.style.texture = nullptr;
+        }
+        static wxl_bool WXL_CALL DrawSupported() { return WXL_TRUE; }
+        static wxl_str WXL_CALL DrawUnsupportedReason() { return wxl_str{"", 0}; }
+        static wxl_result WXL_CALL DrawDraw(const wxl_draw_shape* shape, const wxl_draw_style* style)
+        {
+            if (!shape || shape->struct_size < sizeof *shape || shape->radius > 100.0f) return WXL_E_INVALID;
+            DrawCall call{"draw"};
+            DrawShapeInto(call, shape);
+            DrawStyleInto(call, style);
+            DrawCalls().push_back(call);
+            return WXL_OK;
+        }
+        static wxl_handle WXL_CALL DrawAdd(const wxl_draw_shape* shape, const wxl_draw_style* style, float duration)
+        {
+            if (!shape || shape->struct_size < sizeof *shape || shape->radius > 100.0f) return WXL_HANDLE_NONE;
+            DrawCall call{"add", ++DrawNext()};
+            DrawShapeInto(call, shape);
+            DrawStyleInto(call, style);
+            call.duration = duration;
+            DrawCalls().push_back(call);
+            return call.handle;
+        }
+        static wxl_result WXL_CALL DrawUpdate(wxl_handle h, const wxl_draw_shape* shape)
+        {
+            if (!h || !shape) return WXL_E_NOT_FOUND;
+            DrawCall call{"update", h};
+            DrawShapeInto(call, shape);
+            DrawCalls().push_back(call);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL DrawMove(wxl_handle h, wxl_vec3 center, float facing)
+        {
+            if (!h) return WXL_E_NOT_FOUND;
+            DrawCall call{"move", h};
+            call.center = center;
+            call.facing = facing;
+            DrawCalls().push_back(call);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL DrawSetStyle(wxl_handle h, const wxl_draw_style* style)
+        {
+            if (!h) return WXL_E_NOT_FOUND;
+            DrawCall call{"set_style", h};
+            DrawStyleInto(call, style);
+            DrawCalls().push_back(call);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL DrawSetDuration(wxl_handle h, float seconds)
+        {
+            DrawCall call{"set_duration", h};
+            call.duration = seconds;
+            DrawCalls().push_back(call);
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL DrawAttach(wxl_handle h, wxl_handle target, uint32_t flags)
+        {
+            DrawCall call{"attach", h};
+            call.target = target;
+            call.attach = flags;
+            DrawCalls().push_back(call);
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL DrawDetach(wxl_handle h)
+        {
+            DrawCalls().push_back(DrawCall{"detach", h});
+            return h ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static void WXL_CALL DrawRemove(wxl_handle h) { DrawCalls().push_back(DrawCall{"remove", h}); }
+        static void WXL_CALL DrawClear() { DrawCalls().push_back(DrawCall{"clear"}); }
+        static wxl_result WXL_CALL DrawStats(wxl_draw_stats* out)
+        {
+            if (!out) return WXL_E_INVALID;
+            out->shapes   = 3;
+            out->vertices = 1234;
+            out->frames   = 7;
+            if (out->struct_size >= sizeof *out)
+            {
+                out->textured  = 2;
+                out->particles = 321;
+            }
+            return WXL_OK;
+        }
+        // wxl.animation: every call kept; one play per unit; the model shows EmoteWork.
+        struct AnimationCall
+        {
+            std::string what;
+            wxl_handle  unit  = WXL_HANDLE_NONE;
+            uint32_t    anim  = 0;
+            uint32_t    flags = 0;
+            double      speed = 0.0;
+        };
+        static std::vector<AnimationCall>& AnimationCalls()
+        {
+            static std::vector<AnimationCall> calls;
+            return calls;
+        }
+        static std::vector<std::pair<wxl_handle, uint32_t>>& AnimationPlays()
+        {
+            static std::vector<std::pair<wxl_handle, uint32_t>> plays;
+            return plays;
+        }
+        static wxl_result WXL_CALL AnimationPlay(wxl_handle unit, uint32_t anim, uint32_t flags, double speed)
+        {
+            AnimationCalls().push_back(AnimationCall{"play", unit, anim, flags, speed});
+            if (anim > WXL_ANIMATION_MAX_ID || (flags & ~WXL_ANIMATION_FLAGS)) return WXL_E_INVALID;
+            auto& plays = AnimationPlays();
+            for (auto& p : plays)
+                if (p.first == unit)
+                {
+                    p.second = anim;
+                    return WXL_OK;
+                }
+            plays.emplace_back(unit, anim);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL AnimationStop(wxl_handle unit)
+        {
+            AnimationCalls().push_back(AnimationCall{"stop", unit});
+            auto& plays = AnimationPlays();
+            for (size_t i = 0; i < plays.size(); ++i)
+                if (plays[i].first == unit)
+                {
+                    plays.erase(plays.begin() + static_cast<std::ptrdiff_t>(i));
+                    return WXL_OK;
+                }
+            return WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL AnimationPlaying(wxl_handle unit, uint32_t* out)
+        {
+            for (const auto& p : AnimationPlays())
+                if (p.first == unit && out)
+                {
+                    *out = p.second;
+                    return WXL_OK;
+                }
+            return WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL AnimationCurrent(wxl_handle, uint32_t* out)
+        {
+            if (!out) return WXL_E_INVALID;
+            *out = 62;
+            return WXL_OK;
+        }
+        static const wxl_animation_api* AnimationTable()
+        {
+            static const wxl_animation_api api = [] {
+                wxl_animation_api t{};
+                t.struct_size = sizeof t;
+                t.play        = &AnimationPlay;
+                t.stop        = &AnimationStop;
+                t.playing     = &AnimationPlaying;
+                t.current     = &AnimationCurrent;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_draw_api* DrawTable()
+        {
+            static const wxl_draw_api api = [] {
+                wxl_draw_api t{};
+                t.struct_size        = sizeof t;
+                t.supported          = &DrawSupported;
+                t.unsupported_reason = &DrawUnsupportedReason;
+                t.draw               = &DrawDraw;
+                t.add                = &DrawAdd;
+                t.update             = &DrawUpdate;
+                t.move               = &DrawMove;
+                t.set_style          = &DrawSetStyle;
+                t.set_duration       = &DrawSetDuration;
+                t.attach             = &DrawAttach;
+                t.detach             = &DrawDetach;
+                t.remove             = &DrawRemove;
+                t.clear              = &DrawClear;
+                t.stats              = &DrawStats;
+                t.emit               = &DrawEmit;
+                t.add_emitter        = &DrawAddEmitter;
+                t.update_emitter     = &DrawUpdateEmitter;
+                t.set_emitter_style  = &DrawSetEmitterStyle;
+                t.burst              = &DrawBurst;
+                t.place              = &DrawPlace;
+                t.follow             = &DrawFollow;
+                t.stop               = &DrawStop;
+                return t;
+            }();
+            return &api;
+        }
+
+        // wxl.cvar: variables kept by name without case, every register and release kept whole.
+        struct FakeCVar
+        {
+            std::string value, defaultValue, help;
+            uint32_t    flags = 0;
+            double      min = 0.0, max = 0.0;
+        };
+        struct CVarCall
+        {
+            std::string what, name, value, help;
+            uint32_t    flags = 0;
+        };
+        static std::map<std::string, FakeCVar>& CVars()
+        {
+            static std::map<std::string, FakeCVar> vars;
+            return vars;
+        }
+        static std::vector<CVarCall>& CVarCalls()
+        {
+            static std::vector<CVarCall> calls;
+            return calls;
+        }
+        static std::string CVarKey(wxl_str name)
+        {
+            std::string key(name.data ? name.data : "", name.size);
+            for (char& c : key) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return key;
+        }
+        static FakeCVar* FindCVar(wxl_str name)
+        {
+            const auto found = CVars().find(CVarKey(name));
+            return found == CVars().end() ? nullptr : &found->second;
+        }
+        static wxl_result WXL_CALL CVarRegister(wxl_str name, wxl_str value, uint32_t flags, wxl_str help)
+        {
+            if (!name.size || (flags & ~WXL_CVAR_ALL_FLAGS)) return WXL_E_INVALID;
+            CVarCalls().push_back(CVarCall{"register", std::string(name.data, name.size), std::string(value.data, value.size),
+                                           std::string(help.data ? help.data : "", help.size), flags});
+            FakeCVar& var = CVars()[CVarKey(name)];
+            if (var.defaultValue.empty() && var.value.empty()) var.value = std::string(value.data, value.size);
+            var.defaultValue = std::string(value.data, value.size);
+            var.help         = std::string(help.data ? help.data : "", help.size);
+            var.flags        = flags | WXL_CVAR_MOD;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CVarRelease(wxl_str name)
+        {
+            CVarCalls().push_back(CVarCall{"release", std::string(name.data, name.size), {}, {}, 0});
+            return FindCVar(name) ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+        static wxl_result WXL_CALL CVarSetRange(wxl_str name, double min, double max)
+        {
+            FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            if (!(min <= max)) return WXL_E_INVALID;
+            var->min = min;
+            var->max = max;
+            return WXL_OK;
+        }
+        static wxl_bool WXL_CALL CVarExists(wxl_str name) { return FindCVar(name) ? WXL_TRUE : WXL_FALSE; }
+        static wxl_result WXL_CALL CVarGet(wxl_str name, wxl_str* out)
+        {
+            const FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            *out = wxl_str{var->value.c_str(), static_cast<uint32_t>(var->value.size())};
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CVarGetNumber(wxl_str name, double* out)
+        {
+            const FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            char* end = nullptr;
+            *out      = std::strtod(var->value.c_str(), &end);
+            return end && !*end && end != var->value.c_str() ? WXL_OK : WXL_E_INVALID;
+        }
+        static wxl_result WXL_CALL CVarGetBool(wxl_str name, wxl_bool* out)
+        {
+            const FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            *out = !var->value.empty() && var->value[0] >= '1' && var->value[0] <= '9' ? WXL_TRUE : WXL_FALSE;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CVarGetDefault(wxl_str name, wxl_str* out)
+        {
+            const FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            *out = wxl_str{var->defaultValue.c_str(), static_cast<uint32_t>(var->defaultValue.size())};
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CVarSet(wxl_str name, wxl_str value)
+        {
+            FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            const std::string text(value.data ? value.data : "", value.size);
+            if (var->min != var->max)
+            {
+                char*        end    = nullptr;
+                const double number = std::strtod(text.c_str(), &end);
+                if (!end || *end || end == text.c_str() || number < var->min || number > var->max) return WXL_E_INVALID;
+            }
+            var->value = text;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CVarSetNumber(wxl_str name, double value)
+        {
+            const std::string text = std::to_string(value);
+            return CVarSet(name, wxl_str{text.c_str(), static_cast<uint32_t>(text.size())});
+        }
+        static wxl_result WXL_CALL CVarSetBool(wxl_str name, wxl_bool value)
+        {
+            return CVarSet(name, wxl_str{value ? "1" : "0", 1});
+        }
+        static wxl_result WXL_CALL CVarReset(wxl_str name)
+        {
+            FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            var->value = var->defaultValue;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL CVarFlags(wxl_str name, uint32_t* out)
+        {
+            const FakeCVar* var = FindCVar(name);
+            if (!var) return WXL_E_NOT_FOUND;
+            *out = var->flags;
+            return WXL_OK;
+        }
+
+        static const wxl_cvar_api* CVarTable()
+        {
+            static const wxl_cvar_api api = [] {
+                wxl_cvar_api t{};
+                t.struct_size   = sizeof t;
+                t.register_cvar = &CVarRegister;
+                t.release       = &CVarRelease;
+                t.set_range     = &CVarSetRange;
+                t.exists        = &CVarExists;
+                t.get           = &CVarGet;
+                t.get_number    = &CVarGetNumber;
+                t.get_bool      = &CVarGetBool;
+                t.get_default   = &CVarGetDefault;
+                t.set           = &CVarSet;
+                t.set_number    = &CVarSetNumber;
+                t.set_bool      = &CVarSetBool;
+                t.reset         = &CVarReset;
+                t.flags         = &CVarFlags;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_texture_api* TextureTable()
+        {
+            static const wxl_texture_api api = [] {
+                wxl_texture_api t{};
+                t.struct_size = sizeof t;
+                t.make        = &TextureMake;
+                t.stats       = &TextureStats;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_selectioncircle_api* SelectionCircleTable()
+        {
+            static const wxl_selectioncircle_api api = [] {
+                wxl_selectioncircle_api t{};
+                t.struct_size      = sizeof t;
+                t.hide             = &CircleHide;
+                t.set_style        = &CircleSetStyle;
+                t.reset            = &CircleReset;
+                t.hide_object      = &CircleHideObject;
+                t.set_object_style = &CircleSetObjectStyle;
+                t.reset_object     = &CircleResetObject;
+                t.reset_all        = &CircleResetAll;
+                t.drawn            = &CircleDrawn;
+                t.hidden           = &CircleHidden;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_imgui_api* ImGuiTable()
+        {
+            static const wxl_imgui_api api = [] {
+                wxl_imgui_api t{};
+                t.struct_size  = sizeof t;
+                t.version      = &ImGuiVersion;
+                t.context      = &ImGuiContext;
+                t.plot_context = &PlotContext;
+                t.allocators   = &Allocators;
+                return t;
+            }();
+            return &api;
+        }
+
+        static const wxl_world_api* WorldTable()
+        {
+            static const wxl_world_api api = [] {
+                wxl_world_api t{};
+                t.struct_size = sizeof t;
+                t.trace       = &Trace;
                 return t;
             }();
             return &api;
@@ -1028,6 +2051,98 @@ namespace wxltest
             return Served().erase(NameKey(Key(path))) ? WXL_OK : WXL_E_NOT_FOUND;
         }
 
+        // --- hashes, overrides, reloads (0.1.23) ------------- ------------------------------
+        //
+        // A hash is no MD5 here: its sixteen bytes are the file's length, then 1, 2, 3...; the
+        // runtime's MD5 is checked by core's harness. An asynchronous one waits for PumpHashes.
+
+        static std::map<std::string, std::string>& Overrides()
+        {
+            static std::map<std::string, std::string> overrides;
+            return overrides;
+        }
+
+        struct WaitingHash
+        {
+            uint64_t         request;
+            std::string      name;
+            wxl_file_hash_fn fn;
+            void*            user;
+        };
+
+        static std::vector<WaitingHash>& WaitingHashes()
+        {
+            static std::vector<WaitingHash> waiting;
+            return waiting;
+        }
+
+        static wxl_result Hashed(const std::string& asked, wxl_file_hash* out)
+        {
+            const auto  overridden = Overrides().find(NameKey(asked));
+            std::string data;
+            if (!Contents(overridden != Overrides().end() ? overridden->second : asked, data)) return WXL_E_NOT_FOUND;
+            static const char kSource[] = "Data\\fake.MPQ";
+            out->layer                  = WXL_FILE_LAYER_ARCHIVE;
+            out->size                   = data.size();
+            for (uint8_t i = 0; i < 16; ++i) out->md5[i] = i;
+            out->md5[0] = static_cast<uint8_t>(data.size());
+            out->source = wxl_str{kSource, static_cast<uint32_t>(sizeof kSource - 1)};
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL HashFile(wxl_str path, uint32_t, wxl_file_hash* out)
+        {
+            if (!path.size || !out) return WXL_E_INVALID;
+            return Hashed(Key(path), out);
+        }
+
+        static wxl_result WXL_CALL HashFileAsync(wxl_str path, uint32_t, wxl_file_hash_fn fn, void* user, uint64_t* out)
+        {
+            static uint64_t next = 100;
+            if (!path.size || !fn || !out) return WXL_E_INVALID;
+            *out = ++next;
+            WaitingHashes().push_back(WaitingHash{*out, Key(path), fn, user});
+            return WXL_OK;
+        }
+
+        /// Answers every hash asked asynchronously, as the runtime's main thread does.
+        static void PumpHashes()
+        {
+            std::vector<WaitingHash> ready;
+            ready.swap(WaitingHashes());
+            for (const WaitingHash& waiting : ready)
+            {
+                wxl_file_hash    hash{};
+                hash.struct_size        = sizeof hash;
+                const wxl_result result = Hashed(waiting.name, &hash);
+                waiting.fn(waiting.user, waiting.request, result, result == WXL_OK ? &hash : nullptr);
+            }
+        }
+
+        static wxl_result WXL_CALL OverrideFile(wxl_str path, wxl_str with)
+        {
+            if (!path.size || !with.size) return WXL_E_INVALID;
+            Overrides()[NameKey(Key(path))] = Key(with);
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL RestoreFile(wxl_str path)
+        {
+            return Overrides().erase(NameKey(Key(path))) ? WXL_OK : WXL_E_NOT_FOUND;
+        }
+
+        static wxl_result WXL_CALL ReloadAsset(wxl_str path, wxl_asset_reload* out)
+        {
+            const std::string name = NameKey(Key(path));
+            if (name.size() < 4 || name.compare(name.size() - 4, 4, ".blp") != 0) return WXL_E_UNSUPPORTED;
+            wxl_asset_reload done{};
+            done.struct_size = sizeof done;
+            done.textures    = 3;
+            done.busy        = 1;
+            if (out) *out = done;
+            return WXL_OK;
+        }
+
         static uint32_t WXL_CALL Find(wxl_str pattern, wxl_str* out, uint32_t capacity)
         {
             const std::string prefix = Key(pattern).substr(0, Key(pattern).find('*'));
@@ -1061,6 +2176,234 @@ namespace wxltest
                 t.unredirect      = &Unredirect;
                 t.serve           = &Serve;
                 t.unserve         = &Unserve;
+                t.hash_file       = &HashFile;
+                t.hash_file_async = &HashFileAsync;
+                t.override_file   = &OverrideFile;
+                t.restore_file    = &RestoreFile;
+                t.reload_asset    = &ReloadAsset;
+                return t;
+            }();
+            return &api;
+        }
+    };
+
+    // --- wxl.relay --------------------------------------------------------------------------
+    //
+    // The runtime's relay in small: requests and answers queued, handed over at Pump.
+
+    struct FakeRelay
+    {
+        struct Request
+        {
+            std::string            key;
+            std::string            method;
+            std::vector<wxl_value> args;
+            std::vector<std::string> strings;
+            wxl_relay_reply_fn     reply = nullptr;
+            void*                  user  = nullptr;
+            bool                   delivered = false;
+            const wxl_relay_endpoint* to = nullptr;
+        };
+
+        struct Answer
+        {
+            uint64_t                 request;
+            wxl_result               result;
+            std::vector<wxl_value>   values;
+            std::vector<std::string> strings;
+        };
+
+        static std::map<std::string, wxl_relay_endpoint>& Endpoints()
+        {
+            static std::map<std::string, wxl_relay_endpoint> endpoints;
+            return endpoints;
+        }
+
+        static std::map<uint64_t, Request>& Requests()
+        {
+            static std::map<uint64_t, Request> requests;
+            return requests;
+        }
+
+        static std::vector<uint64_t>& ToDeliver()
+        {
+            static std::vector<uint64_t> list;
+            return list;
+        }
+
+        static std::vector<Answer>& Answers()
+        {
+            static std::vector<Answer> list;
+            return list;
+        }
+
+        static std::vector<std::pair<const wxl_relay_endpoint*, uint64_t>>& Cancels()
+        {
+            static std::vector<std::pair<const wxl_relay_endpoint*, uint64_t>> list;
+            return list;
+        }
+
+        static std::string Lower(wxl_str text)
+        {
+            std::string key(text.data, text.size);
+            for (char& c : key) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return key;
+        }
+
+        /// Points the string values at the strings kept beside them, in order: after a move.
+        static void Fix(std::vector<wxl_value>& values, std::vector<std::string>& strings)
+        {
+            size_t next = 0;
+            for (wxl_value& value : values)
+                if (value.type == WXL_VALUE_STRING && next < strings.size())
+                {
+                    value.as.string = wxl_str{strings[next].c_str(), static_cast<uint32_t>(strings[next].size())};
+                    ++next;
+                }
+        }
+
+        /// Values copied, their strings kept beside them.
+        static void Copy(const wxl_value* values, uint32_t count, std::vector<wxl_value>& out, std::vector<std::string>& strings)
+        {
+            strings.reserve(count);
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                wxl_value value = values[i];
+                if (value.type == WXL_VALUE_STRING)
+                {
+                    strings.emplace_back(value.as.string.data, value.as.string.size);
+                    value.as.string = wxl_str{strings.back().c_str(), static_cast<uint32_t>(strings.back().size())};
+                }
+                out.push_back(value);
+            }
+        }
+
+        static wxl_result WXL_CALL Publish(wxl_str name, const wxl_relay_endpoint* endpoint)
+        {
+            if (!name.size || !endpoint || !endpoint->request) return WXL_E_INVALID;
+            Endpoints()[Lower(name)] = *endpoint;
+            return WXL_OK;
+        }
+
+        static void FailFor(const std::string& key)
+        {
+            for (auto& [id, request] : Requests())
+                if (request.key == key) Answers().push_back(Answer{id, WXL_E_NOT_FOUND, {}, {}});
+        }
+
+        static wxl_result WXL_CALL Unpublish(wxl_str name)
+        {
+            if (!Endpoints().erase(Lower(name))) return WXL_E_NOT_FOUND;
+            FailFor(Lower(name));
+            return WXL_OK;
+        }
+
+        static wxl_bool WXL_CALL Published(wxl_str name) { return Endpoints().count(Lower(name)) ? WXL_TRUE : WXL_FALSE; }
+
+        static wxl_result WXL_CALL Call(wxl_str name, wxl_str method, const wxl_value* args, uint32_t count,
+                                        wxl_relay_reply_fn reply, void* user, uint64_t* out)
+        {
+            static uint64_t next = 0;
+            if (!name.size || !reply || !out) return WXL_E_INVALID;
+            Request request;
+            request.key    = Lower(name);
+            request.method = std::string(method.data, method.size);
+            request.reply  = reply;
+            request.user   = user;
+            Copy(args, count, request.args, request.strings);
+            *out = ++next;
+            Requests()[*out] = std::move(request);
+            ToDeliver().push_back(*out);
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL AnswerRequest(uint64_t id, const wxl_value* values, uint32_t count)
+        {
+            const auto it = Requests().find(id);
+            if (it == Requests().end() || !it->second.delivered) return WXL_E_NOT_FOUND;
+            Answer answer{id, WXL_OK, {}, {}};
+            Copy(values, count, answer.values, answer.strings);
+            Answers().push_back(std::move(answer));
+            it->second.delivered = false;
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL Fail(uint64_t id, wxl_str reason)
+        {
+            const auto it = Requests().find(id);
+            if (it == Requests().end() || !it->second.delivered) return WXL_E_NOT_FOUND;
+            wxl_value value{};
+            value.type      = WXL_VALUE_STRING;
+            value.as.string = reason;
+            Answer answer{id, WXL_E_FAILED, {}, {}};
+            Copy(&value, 1, answer.values, answer.strings);
+            Answers().push_back(std::move(answer));
+            it->second.delivered = false;
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL Cancel(uint64_t id)
+        {
+            const auto it = Requests().find(id);
+            if (it == Requests().end()) return WXL_E_NOT_FOUND;
+            if (it->second.delivered && it->second.to) Cancels().emplace_back(it->second.to, id);
+            Requests().erase(it);
+            return WXL_OK;
+        }
+
+        /// Hands requests to their services, answers to their callers, cancellations: one round.
+        static void Pump()
+        {
+            std::vector<uint64_t> deliver;
+            deliver.swap(ToDeliver());
+            for (uint64_t id : deliver)
+            {
+                const auto it = Requests().find(id);
+                if (it == Requests().end()) continue;
+                const auto endpoint = Endpoints().find(it->second.key);
+                if (endpoint == Endpoints().end())
+                {
+                    Answers().push_back(Answer{id, WXL_E_NOT_FOUND, {}, {}});
+                    continue;
+                }
+                it->second.delivered = true;
+                it->second.to        = &endpoint->second;
+                Request& request     = it->second;
+                Fix(request.args, request.strings);
+                endpoint->second.request(endpoint->second.user, id,
+                                         wxl_str{request.method.c_str(), static_cast<uint32_t>(request.method.size())},
+                                         request.args.data(), static_cast<uint32_t>(request.args.size()));
+            }
+            std::vector<Answer> answers;
+            answers.swap(Answers());
+            for (Answer& answer : answers)
+            {
+                const auto it = Requests().find(answer.request);
+                if (it == Requests().end()) continue;
+                const Request request = it->second;
+                Requests().erase(it);
+                Fix(answer.values, answer.strings);
+                request.reply(request.user, answer.request, answer.result, answer.values.data(),
+                              static_cast<uint32_t>(answer.values.size()));
+            }
+            std::vector<std::pair<const wxl_relay_endpoint*, uint64_t>> cancels;
+            cancels.swap(Cancels());
+            for (const auto& [endpoint, id] : cancels)
+                if (endpoint->cancelled) endpoint->cancelled(endpoint->user, id);
+        }
+
+        static const wxl_relay_api* Table()
+        {
+            static wxl_relay_api api = [] {
+                wxl_relay_api t{};
+                t.struct_size = sizeof t;
+                t.publish     = &Publish;
+                t.unpublish   = &Unpublish;
+                t.published   = &Published;
+                t.call        = &Call;
+                t.answer      = &AnswerRequest;
+                t.fail        = &Fail;
+                t.cancel      = &Cancel;
                 return t;
             }();
             return &api;
@@ -1308,6 +2651,12 @@ namespace wxltest
         {
             if (Connected()) Trace().push_back("frame:" + Text(name));
         }
+        static wxl_result WXL_CALL GpuZoneBegin(wxl_str name)
+        {
+            Trace().push_back("+gpu:" + Text(name));
+            return WXL_OK;
+        }
+        static void WXL_CALL GpuZoneEnd() { Trace().push_back("-gpu"); }
 
         static const wxl_profile_api* Table()
         {
@@ -1322,6 +2671,8 @@ namespace wxltest
                 t.plot        = &Plot;
                 t.message     = &Message;
                 t.frame_mark  = &FrameMark;
+                t.gpu_zone_begin = &GpuZoneBegin;
+                t.gpu_zone_end   = &GpuZoneEnd;
                 return t;
             }();
             return &api;
@@ -1329,13 +2680,30 @@ namespace wxltest
     };
 
     // --- wxl.net ----------------------------------------------------------------------------
+    //
+    // The runtime's net in small: claims, handlers, compressed numbers, the send gate. Deliver
+    // plays the server's part; its zlib is stored blocks only, which the real one also reads.
 
     struct FakeNet
     {
-        static std::set<uint32_t>& Claimed()
+        struct Claim
         {
-            static std::set<uint32_t> claimed;
-            return claimed;
+            wxl_net_handler_fn handler = nullptr;
+            void*              user    = nullptr;
+            uint32_t           plain   = 0;
+        };
+
+        static std::map<uint32_t, Claim>& Claims()
+        {
+            static std::map<uint32_t, Claim> claims;
+            return claims;
+        }
+
+        static std::set<uint32_t> Claimed()
+        {
+            std::set<uint32_t> numbers;
+            for (const auto& [opcode, claim] : Claims()) numbers.insert(opcode);
+            return numbers;
         }
 
         static int& Releases()
@@ -1344,34 +2712,190 @@ namespace wxltest
             return releases;
         }
 
+        /// What was sent: the opcode and the body's size.
         static std::vector<std::pair<uint32_t, uint32_t>>& Sent()
         {
             static std::vector<std::pair<uint32_t, uint32_t>> sent;
             return sent;
         }
 
+        /// The bodies, beside Sent().
+        static std::vector<std::string>& Bodies()
+        {
+            static std::vector<std::string> bodies;
+            return bodies;
+        }
+
+        static uint32_t& ConnectionNumber()
+        {
+            static uint32_t connection = 1;
+            return connection;
+        }
+
+        static bool& HeardFlag()
+        {
+            static bool heard = false;
+            return heard;
+        }
+
+        /// A new connection: the gate closes until the server speaks.
+        static void Connect()
+        {
+            ++ConnectionNumber();
+            HeardFlag() = false;
+        }
+
+        /// A message of the server's: true when a claim took it.
+        static bool Deliver(uint32_t opcode, const std::string& body)
+        {
+            const auto held = Claims().find(opcode);
+            if (held == Claims().end()) return false;
+            HeardFlag()              = true;
+            const uint32_t   plain   = held->second.plain;
+            std::string      bytes   = body;
+            if (plain)
+            {
+                uint32_t want = 0;
+                if (body.size() < 4) return true;
+                std::memcpy(&want, body.data(), 4);
+                if (!InflateStored(body.data() + 4, body.size() - 4, bytes) || bytes.size() != want) return true;
+            }
+            const auto target = Claims().find(plain ? plain : opcode);
+            if (target == Claims().end() || !target->second.handler) return true;
+            target->second.handler(target->second.user, plain ? plain : opcode, bytes.empty() ? nullptr : bytes.data(),
+                                   static_cast<uint32_t>(bytes.size()));
+            return true;
+        }
+
+        static uint32_t Adler(const uint8_t* data, size_t size)
+        {
+            uint32_t a = 1, b = 0;
+            for (size_t i = 0; i < size; ++i)
+            {
+                a = (a + data[i]) % 65521u;
+                b = (b + a) % 65521u;
+            }
+            return (b << 16) | a;
+        }
+
+        /// A zlib stream of stored blocks.
+        static std::string DeflateStored(const void* data, size_t size)
+        {
+            const uint8_t* at = static_cast<const uint8_t*>(data);
+            std::string    out("\x78\x01", 2);
+            size_t         done = 0;
+            do
+            {
+                const size_t n    = std::min<size_t>(size - done, 65535);
+                const bool   last = done + n == size;
+                out.push_back(static_cast<char>(last ? 1 : 0));
+                out.push_back(static_cast<char>(n & 0xFF));
+                out.push_back(static_cast<char>(n >> 8));
+                out.push_back(static_cast<char>(~n & 0xFF));
+                out.push_back(static_cast<char>((~n >> 8) & 0xFF));
+                out.append(reinterpret_cast<const char*>(at + done), n);
+                done += n;
+            } while (done < size);
+            const uint32_t adler = Adler(at, size);
+            for (int i = 3; i >= 0; --i) out.push_back(static_cast<char>(adler >> (8 * i)));
+            return out;
+        }
+
+        static bool InflateStored(const char* data, size_t size, std::string& out)
+        {
+            out.clear();
+            const uint8_t* at = reinterpret_cast<const uint8_t*>(data);
+            if (size < 6 || at[0] != 0x78) return false;
+            size_t pos = 2;
+            for (;;)
+            {
+                if (pos + 5 > size || (at[pos] & 6) != 0) return false;
+                const bool   last = at[pos] & 1;
+                const size_t n    = at[pos + 1] | (at[pos + 2] << 8);
+                pos += 5;
+                if (pos + n > size) return false;
+                out.append(reinterpret_cast<const char*>(at + pos), n);
+                pos += n;
+                if (last) break;
+            }
+            return pos + 4 == size;
+        }
+
         static uint32_t WXL_CALL State() { return WXL_NET_AUTHENTICATED; }
 
-        static wxl_result WXL_CALL Send(uint32_t opcode, const void*, uint32_t size)
+        static wxl_result WXL_CALL Send(uint32_t opcode, const void* data, uint32_t size)
         {
+            if (opcode > WXL_NET_OPCODE_MAX || size > WXL_NET_MAX_SEND || !Claims().count(opcode)) return WXL_E_INVALID;
+            if (opcode > WXL_NET_STOCK_LIMIT && !HeardFlag()) return WXL_E_FAILED;
             Sent().emplace_back(opcode, size);
+            Bodies().emplace_back(static_cast<const char*>(data), data ? size : 0);
             return WXL_OK;
         }
 
-        static wxl_result WXL_CALL Claim(uint32_t opcode)
+        static wxl_result WXL_CALL ClaimOpcode(uint32_t opcode)
         {
-            if (Claimed().count(opcode)) return WXL_E_INVALID;
-            Claimed().insert(opcode);
+            if (opcode > WXL_NET_OPCODE_MAX || Claims().count(opcode)) return WXL_E_INVALID;
+            Claims()[opcode] = Claim{};
             return WXL_OK;
         }
 
         static wxl_result WXL_CALL Release(uint32_t opcode)
         {
             ++Releases();
-            return Claimed().erase(opcode) ? WXL_OK : WXL_E_NOT_FOUND;
+            if (!Claims().erase(opcode)) return WXL_E_NOT_FOUND;
+            for (auto& [number, claim] : Claims())
+                if (claim.plain == opcode) claim.plain = 0;
+            return WXL_OK;
         }
 
-        static uint32_t WXL_CALL ReservedLimit() { return 0x51F; }
+        static uint32_t WXL_CALL ReservedLimit() { return WXL_NET_STOCK_LIMIT; }
+
+        static wxl_result WXL_CALL SetHandler(uint32_t opcode, wxl_net_handler_fn handler, void* user)
+        {
+            const auto held = Claims().find(opcode);
+            if (held == Claims().end()) return WXL_E_INVALID;
+            held->second.handler = handler;
+            held->second.user    = user;
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL SetCompressed(uint32_t opcode, uint32_t compressed)
+        {
+            if (!Claims().count(opcode)) return WXL_E_INVALID;
+            if (!compressed) return WXL_OK;
+            const auto packed = Claims().find(compressed);
+            if (packed == Claims().end() || compressed == opcode) return WXL_E_INVALID;
+            packed->second.plain = opcode;
+            return WXL_OK;
+        }
+
+        static uint32_t WXL_CALL MaxSend() { return WXL_NET_MAX_SEND; }
+        static uint32_t WXL_CALL Connection() { return ConnectionNumber(); }
+        static wxl_bool WXL_CALL Heard() { return HeardFlag() ? WXL_TRUE : WXL_FALSE; }
+
+        static wxl_result Give(const std::string& bytes, void* buffer, uint64_t capacity, uint64_t* out)
+        {
+            *out = bytes.size();
+            if (bytes.size() > capacity) return WXL_E_INVALID;
+            if (!bytes.empty()) std::memcpy(buffer, bytes.data(), bytes.size());
+            return WXL_OK;
+        }
+
+        static wxl_result WXL_CALL Deflate(const void* data, uint32_t size, void* buffer, uint64_t capacity, uint64_t* out)
+        {
+            return Give(DeflateStored(data, size), buffer, capacity, out);
+        }
+
+        static wxl_result WXL_CALL Inflate(const void* data, uint32_t size, void* buffer, uint64_t capacity, uint64_t* out)
+        {
+            std::string bytes;
+            if (!InflateStored(static_cast<const char*>(data), size, bytes))
+            {
+                *out = 0;
+                return WXL_E_INVALID;
+            }
+            return Give(bytes, buffer, capacity, out);
+        }
 
         static const wxl_net_api* Table()
         {
@@ -1380,9 +2904,16 @@ namespace wxltest
                 t.struct_size           = sizeof(wxl_net_api);
                 t.state                 = &State;
                 t.send                  = &Send;
-                t.claim_opcode          = &Claim;
+                t.claim_opcode          = &ClaimOpcode;
                 t.release_opcode        = &Release;
                 t.reserved_opcode_limit = &ReservedLimit;
+                t.set_handler           = &SetHandler;
+                t.set_compressed        = &SetCompressed;
+                t.max_send              = &MaxSend;
+                t.connection            = &Connection;
+                t.heard                 = &Heard;
+                t.deflate               = &Deflate;
+                t.inflate               = &Inflate;
                 return t;
             }();
             return &api;
@@ -1734,6 +3265,13 @@ namespace wxltest
             std::string texture;
             uint32_t    key_bone   = 0;
             wxl_vec3    offset{};
+            bool             world = false; ///< made in the world's scene
+            wxl_m2_placement placed{};      ///< the last Place
+            wxl_m2_placement transform{};   ///< the last SetTransform
+            uint32_t         anim  = 0;
+            float            speed = 0.0f;
+            float            alpha = 1.0f;
+            bool             emitting = true;
         };
 
         static std::map<void*, Model*>& Made()
@@ -1848,6 +3386,100 @@ namespace wxltest
             return WXL_OK;
         }
 
+        static void* WXL_CALL CreateWorldModel(wxl_str path)
+        {
+            static char scene = 0;
+            void*       made  = CreateModel(&scene, path);
+            if (Model* known = Known(made)) known->world = true;
+            return made;
+        }
+        static wxl_result WXL_CALL Place(void* model, const wxl_m2_placement* placement)
+        {
+            Model* known = Known(model);
+            if (!known || !placement) return WXL_E_INVALID;
+            known->placed = *placement;
+            known->parent = nullptr;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL SetTransform(void* model, const wxl_m2_placement* placement)
+        {
+            Model* known = Known(model);
+            if (!known || !placement) return WXL_E_INVALID;
+            known->transform = *placement;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL PlayAnimation(void* model, uint32_t anim, float speed)
+        {
+            Model* known = Known(model);
+            if (!known) return WXL_E_INVALID;
+            known->anim = anim, known->speed = speed;
+            return WXL_OK;
+        }
+        static wxl_bool WXL_CALL ModelLoaded(void* model)
+        {
+            return Known(model) || model == UnitModel() ? WXL_TRUE : WXL_FALSE;
+        }
+        static wxl_result WXL_CALL AnimationLength(void* model, uint32_t anim, uint32_t* out)
+        {
+            if (!ModelLoaded(model)) return WXL_E_FAILED;
+            *out = anim == 0 ? 1333u : 0u;
+            return WXL_OK;
+        }
+        static void WXL_CALL SetAlpha(void* model, float alpha)
+        {
+            if (Model* known = Known(model)) known->alpha = alpha;
+        }
+        static void WXL_CALL SetEmitting(void* model, wxl_bool emitting)
+        {
+            if (Model* known = Known(model)) known->emitting = emitting == WXL_TRUE;
+        }
+        static wxl_result WXL_CALL AttachmentWorld(void* model, uint32_t attachment, wxl_vec3* out)
+        {
+            if (model != UnitModel() || attachment != 32) return WXL_E_NOT_FOUND;
+            *out = wxl_vec3{10.0f, 20.0f, 31.5f};
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL GroundHeight(const wxl_vec3* at, float up, float down, float* out)
+        {
+            if (!at || up < 0.0f || down < 0.0f) return WXL_E_INVALID;
+            if (down < 2.0f) return WXL_E_NOT_FOUND;
+            *out = at->z - 2.0f;
+            return WXL_OK;
+        }
+
+        /// One bone watcher at a time, its token 7; a file of two bones.
+        struct Watch
+        {
+            wxl_m2_bones_filter_fn filter = nullptr;
+            wxl_m2_bones_fn        fn     = nullptr;
+            void*                  user   = nullptr;
+            uint32_t               token  = 0;
+        };
+        static Watch& Watching()
+        {
+            static Watch watch;
+            return watch;
+        }
+        static wxl_result WXL_CALL WatchBones(wxl_m2_bones_filter_fn filter, wxl_m2_bones_fn fn, void* user,
+                                              uint32_t* out)
+        {
+            if (!fn || Watching().token) return fn ? WXL_E_FAILED : WXL_E_INVALID;
+            Watching() = Watch{filter, fn, user, 7};
+            *out       = 7;
+            return WXL_OK;
+        }
+        static void WXL_CALL UnwatchBones(uint32_t token)
+        {
+            if (token && token == Watching().token) Watching() = Watch{};
+        }
+        static wxl_result WXL_CALL BoneInfo(void* file, uint32_t index, int16_t* parent, wxl_vec3* pivot)
+        {
+            if (!file || index >= 2) return WXL_E_NOT_FOUND;
+            *parent = index == 0 ? int16_t(-1) : int16_t(0);
+            *pivot  = wxl_vec3{0.0f, 0.0f, static_cast<float>(index)};
+            return WXL_OK;
+        }
+
         static void* WXL_CALL AllocNear(const void*, uint32_t size)
         {
             static std::vector<std::vector<uint8_t>> blocks;
@@ -1877,6 +3509,7 @@ namespace wxltest
             return &device;
         }
         static void WXL_CALL Invalidate() { ++Invalidated(); }
+        static uint32_t WXL_CALL Api() { return WXL_GX_BACKEND_VULKAN; }
 
         static const wxl_m2_api* Table()
         {
@@ -1895,6 +3528,19 @@ namespace wxltest
                 t.replace_texture  = &ReplaceTexture;
                 t.attachment_point = &AttachmentPoint;
                 t.attach_to_bone   = &AttachToBone;
+                t.create_world_model  = &CreateWorldModel;
+                t.place_model         = &Place;
+                t.set_model_transform = &SetTransform;
+                t.play_animation      = &PlayAnimation;
+                t.model_loaded        = &ModelLoaded;
+                t.animation_length    = &AnimationLength;
+                t.set_alpha           = &SetAlpha;
+                t.set_emitting        = &SetEmitting;
+                t.attachment_world    = &AttachmentWorld;
+                t.ground_height       = &GroundHeight;
+                t.watch_bones         = &WatchBones;
+                t.unwatch_bones       = &UnwatchBones;
+                t.bone_info           = &BoneInfo;
                 return t;
             }();
             return &api;
@@ -1919,6 +3565,368 @@ namespace wxltest
                 t.struct_size      = sizeof t;
                 t.d3d9_device      = &Device;
                 t.invalidate_state = &Invalidate;
+                t.api              = &Api;
+                return t;
+            }();
+            return &api;
+        }
+    };
+
+    // Three engine types as a mod's headers would describe them.
+    struct EngineShared
+    {
+        static constexpr const char* kName       = "CM2Shared";
+        static constexpr uint64_t    kLayoutHash = 0x1122334455667788ULL;
+    };
+    struct EngineData
+    {
+        static constexpr const char* kName       = "M2Data";
+        static constexpr uint64_t    kLayoutHash = 0x0102030405060708ULL;
+    };
+    struct EngineAbsent
+    {
+        static constexpr const char* kName       = "CNoSuchType";
+        static constexpr uint64_t    kLayoutHash = 1;
+    };
+
+    // --- wxl.engine ----------------------------------------------------------------------------
+    // Answers one type's hash, and another's wrongly when told to: what a runtime built from
+    // another fork would say.
+    struct FakeEngine
+    {
+        static inline const char* name      = "CM2Shared";
+        static inline uint64_t    hash      = 0;
+        static inline const char* wrongName = "M2Data";
+        static inline uint64_t    wrongHash = 0;
+
+        static wxl_result WXL_CALL Layout(const char* type, uint64_t* out)
+        {
+            if (!type || !out) return WXL_E_INVALID;
+            if (std::strcmp(type, name) == 0)
+            {
+                *out = hash;
+                return WXL_OK;
+            }
+            if (std::strcmp(type, wrongName) == 0)
+            {
+                *out = wrongHash;
+                return WXL_OK;
+            }
+            return WXL_E_NOT_FOUND;
+        }
+
+        static const wxl_engine_api* Table()
+        {
+            static const wxl_engine_api api = [] {
+                wxl_engine_api t{};
+                t.struct_size = sizeof t;
+                t.layout      = &Layout;
+                return t;
+            }();
+            return &api;
+        }
+    };
+
+    // --- wxl.render, wxl.vk -------------------------------------------------------------------
+    // A device that keeps what it is asked: images, buffers and pipelines by handle (from 16, past
+    // the frame's attachments), a pass open between begin and end, each draw as a line of the trace
+    // with the bytes it was given. ModelBatchDrawn's batch is any pointer; a kept one is a copy.
+    struct FakeRender
+    {
+        struct Image
+        {
+            uint32_t width, height, format, samples, divisor;
+        };
+        static std::map<wxl_handle, Image>& Images() { static std::map<wxl_handle, Image> v; return v; }
+        static std::map<wxl_handle, std::vector<uint8_t>>& Buffers() { static std::map<wxl_handle, std::vector<uint8_t>> v; return v; }
+        static std::map<wxl_handle, wxl_render_pipeline_desc>& Pipelines() { static std::map<wxl_handle, wxl_render_pipeline_desc> v; return v; }
+        static std::vector<std::string>& Trace() { static std::vector<std::string> v; return v; }
+        static std::vector<std::vector<uint8_t>>& Bytes() { static std::vector<std::vector<uint8_t>> v; return v; }
+        static wxl_handle& Next() { static wxl_handle next = 16; return next; }
+        static bool& Open() { static bool open = false; return open; }
+        static bool& InPoint() { static bool in = true; return in; }
+        static wxl_render_pass& LastPass() { static wxl_render_pass pass{}; return pass; }
+        static std::map<std::string, uint32_t>& Replaced() { static std::map<std::string, uint32_t> v; return v; }
+        /// How many batches were kept, and the copies they are (one int each, its number).
+        static int& Kept() { static int count = 0; return count; }
+        static int* KeptAt(int i) { static int kept[64] = {}; return &kept[i & 63]; }
+
+        static void Reset()
+        {
+            Images().clear(), Buffers().clear(), Pipelines().clear(), Trace().clear(), Bytes().clear(), Replaced().clear();
+            Next() = 16, Open() = false, InPoint() = true, Kept() = 0;
+        }
+        static void Keep(const void* data, uint32_t size)
+        {
+            const uint8_t* b = static_cast<const uint8_t*>(data);
+            Bytes().push_back(b ? std::vector<uint8_t>(b, b + size) : std::vector<uint8_t>());
+        }
+
+        static wxl_bool WXL_CALL Supported() { return WXL_TRUE; }
+        static wxl_str WXL_CALL UnsupportedReason() { return wxl_str{"", 0}; }
+        static wxl_handle WXL_CALL CreateImage(uint32_t w, uint32_t h, uint32_t format, uint32_t samples)
+        {
+            if (!w || !h || !format || format > WXL_RENDER_FORMAT_DEPTH32F) return WXL_HANDLE_NONE;
+            Images()[Next()] = Image{w, h, format, samples, 0};
+            return Next()++;
+        }
+        static wxl_handle WXL_CALL CreateScreenImage(uint32_t divisor, uint32_t format, uint32_t samples)
+        {
+            if (!divisor || !format || format > WXL_RENDER_FORMAT_DEPTH32F) return WXL_HANDLE_NONE;
+            Images()[Next()] = Image{(1920 + divisor - 1) / divisor, (1080 + divisor - 1) / divisor, format, samples, divisor};
+            return Next()++;
+        }
+        static void WXL_CALL DestroyImage(wxl_handle image)
+        {
+            Images().erase(image);
+            Trace().push_back("destroy_image " + std::to_string(image));
+        }
+        static uint32_t WXL_CALL ImageSlot(wxl_handle image) { return Images().count(image) ? static_cast<uint32_t>(image) + 100 : WXL_RENDER_NO_SLOT; }
+        static uint32_t WXL_CALL ImageWidth(wxl_handle image) { return Images().count(image) ? Images()[image].width : 0; }
+        static uint32_t WXL_CALL ImageHeight(wxl_handle image) { return Images().count(image) ? Images()[image].height : 0; }
+        static wxl_handle WXL_CALL CreateBuffer(uint32_t size)
+        {
+            if (!size) return WXL_HANDLE_NONE;
+            Buffers()[Next()] = std::vector<uint8_t>(size);
+            return Next()++;
+        }
+        static void WXL_CALL DestroyBuffer(wxl_handle buffer)
+        {
+            Buffers().erase(buffer);
+            Trace().push_back("destroy_buffer " + std::to_string(buffer));
+        }
+        static wxl_result WXL_CALL WriteBuffer(wxl_handle buffer, uint32_t offset, const void* data, uint32_t size)
+        {
+            auto at = Buffers().find(buffer);
+            if (at == Buffers().end()) return WXL_E_NOT_FOUND;
+            if (static_cast<uint64_t>(offset) + size > at->second.size()) return WXL_E_INVALID;
+            if (size) std::memcpy(at->second.data() + offset, data, size);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL BufferAddress(wxl_handle buffer, uint64_t* address)
+        {
+            if (!Buffers().count(buffer)) return WXL_E_NOT_FOUND;
+            *address = 0x10000000ull + buffer * 0x1000ull;
+            return WXL_OK;
+        }
+        static uint32_t WXL_CALL Sampler(uint32_t flags) { return flags & 7u; }
+        static wxl_handle WXL_CALL CreatePipeline(const wxl_render_pipeline_desc* desc)
+        {
+            if (!desc || desc->struct_size < sizeof(wxl_render_pipeline_desc)) return WXL_HANDLE_NONE;
+            if (desc->kind == WXL_RENDER_PIPELINE_COMPUTE)
+            {
+                // A compute program alone.
+                if (!desc->compute || desc->compute_size < 4 || desc->fragment || desc->vertex) return WXL_HANDLE_NONE;
+                wxl_render_pipeline_desc copy = *desc;
+                copy.name = nullptr, copy.compute = nullptr;
+                Pipelines()[Next()] = copy;
+                Trace().push_back(std::string("compute ") + (desc->name ? desc->name : "") + " " + std::to_string(desc->compute_size));
+                return Next()++;
+            }
+            if (!desc->fragment || desc->fragment_size < 4) return WXL_HANDLE_NONE;
+            uint32_t magic = 0;
+            std::memcpy(&magic, desc->fragment, 4);
+            if (magic != 0x07230203u) return WXL_HANDLE_NONE;
+            if (desc->kind == WXL_RENDER_PIPELINE_GRAPHICS && !desc->vertex) return WXL_HANDLE_NONE;
+            wxl_render_pipeline_desc copy = *desc;
+            copy.name = nullptr, copy.vertex = nullptr, copy.fragment = nullptr;
+            Pipelines()[Next()] = copy;
+            Trace().push_back(std::string("pipeline ") + (desc->name ? desc->name : "") + " " + std::to_string(desc->fragment_size));
+            return Next()++;
+        }
+        static void WXL_CALL DestroyPipeline(wxl_handle pipeline)
+        {
+            Pipelines().erase(pipeline);
+            Trace().push_back("destroy_pipeline " + std::to_string(pipeline));
+        }
+        static wxl_bool WXL_CALL PipelineReady(wxl_handle pipeline) { return Pipelines().count(pipeline) ? WXL_TRUE : WXL_FALSE; }
+        static bool Attachment(wxl_handle h, bool depth)
+        {
+            if (h == (depth ? WXL_RENDER_SCENE_DEPTH : WXL_RENDER_SCENE_COLOR)) return true;
+            return Images().count(h) && ((Images()[h].format == WXL_RENDER_FORMAT_DEPTH32F) == depth);
+        }
+        static wxl_result WXL_CALL Begin(const wxl_render_pass* pass)
+        {
+            if (!InPoint() || Open() || !pass || pass->color_count > WXL_RENDER_MAX_COLORS) return WXL_E_INVALID;
+            for (uint32_t i = 0; i < pass->color_count; ++i)
+                if (!Attachment(pass->colors[i], false)) return WXL_E_INVALID;
+            if (pass->depth && !Attachment(pass->depth, true)) return WXL_E_INVALID;
+            LastPass() = *pass;
+            Open()     = true;
+            Trace().push_back("begin " + std::to_string(pass->color_count) + " " + std::to_string(pass->clear));
+            return WXL_OK;
+        }
+        static void WXL_CALL End()
+        {
+            if (Open()) Trace().push_back("end");
+            Open() = false;
+        }
+        static wxl_result Drawn(wxl_handle pipeline, const std::string& line, const void* push, uint32_t size, uint32_t limit)
+        {
+            if (!Open()) return WXL_E_INVALID;
+            if (!Pipelines().count(pipeline)) return WXL_E_NOT_FOUND;
+            if (size > limit) return WXL_E_INVALID;
+            Trace().push_back(line + " " + std::to_string(size));
+            Keep(push, size);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL Draw(wxl_handle pipeline, uint32_t vertices, uint32_t instances, const void* push, uint32_t size)
+        {
+            return Drawn(pipeline, "draw " + std::to_string(vertices) + "x" + std::to_string(instances), push, size, WXL_RENDER_PUSH_BYTES);
+        }
+        static wxl_result WXL_CALL DrawIndexed(wxl_handle pipeline, wxl_handle indices, uint32_t first, uint32_t count, uint32_t instances,
+                                               const void* push, uint32_t size)
+        {
+            if (!Buffers().count(indices)) return WXL_E_NOT_FOUND;
+            return Drawn(pipeline, "draw_indexed " + std::to_string(first) + "+" + std::to_string(count) + "x" + std::to_string(instances),
+                         push, size, WXL_RENDER_PUSH_BYTES);
+        }
+        static wxl_result WXL_CALL Fullscreen(wxl_handle pipeline, const void* push, uint32_t size)
+        {
+            return Drawn(pipeline, "fullscreen", push, size, WXL_RENDER_PUSH_BYTES);
+        }
+        static wxl_result WXL_CALL DrawBatch(const void* batch, wxl_handle pipeline, const void* constants, uint32_t size)
+        {
+            if (!batch) return WXL_E_NOT_FOUND;
+            return Drawn(pipeline, "draw_batch", constants, size, WXL_RENDER_BATCH_BYTES);
+        }
+        static wxl_result WXL_CALL Dispatch(wxl_handle pipeline, uint32_t x, uint32_t y, uint32_t z, const void* push, uint32_t size)
+        {
+            if (!InPoint() || Open()) return WXL_E_INVALID;
+            const auto found = Pipelines().find(pipeline);
+            if (found == Pipelines().end()) return WXL_E_NOT_FOUND;
+            if (found->second.kind != WXL_RENDER_PIPELINE_COMPUTE || size > WXL_RENDER_PUSH_BYTES) return WXL_E_INVALID;
+            Trace().push_back("dispatch " + std::to_string(x) + "x" + std::to_string(y) + "x" + std::to_string(z) + " " + std::to_string(size));
+            Keep(push, size);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL BonePalette(const void* matrices, uint32_t size, uint64_t* address)
+        {
+            if (address) *address = 0;
+            if (!matrices || !address || !size || size % WXL_RENDER_PALETTE_MATRIX_BYTES) return WXL_E_INVALID;
+            *address = 0x20000000ull + size;
+            Trace().push_back("palette " + std::to_string(size / WXL_RENDER_PALETTE_MATRIX_BYTES));
+            Keep(matrices, size);
+            return WXL_OK;
+        }
+        static void* WXL_CALL KeepBatch(const void* batch)
+        {
+            if (!batch) return nullptr;
+            const int i = Kept()++;
+            *KeptAt(i) = i;
+            return KeptAt(i);
+        }
+        static uint32_t WXL_CALL SceneColorSlot() { return InPoint() ? 1u : WXL_RENDER_NO_SLOT; }
+        static uint32_t WXL_CALL SceneDepthSlot() { return InPoint() ? 2u : WXL_RENDER_NO_SLOT; }
+        static wxl_result WXL_CALL ReplaceShader(wxl_str name, uint32_t stage, const void* spirv, uint32_t size)
+        {
+            uint32_t magic = 0;
+            if (stage > 1 || !spirv || size < 4) return WXL_E_INVALID;
+            std::memcpy(&magic, spirv, 4);
+            if (magic != 0x07230203u) return WXL_E_INVALID;
+            Replaced()[std::string(name.data, name.size) + "/" + std::to_string(stage)] = size;
+            Trace().push_back("replace " + std::string(name.data, name.size) + " " + std::to_string(stage));
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL RestoreShader(wxl_str name, uint32_t stage)
+        {
+            if (!Replaced().erase(std::string(name.data, name.size) + "/" + std::to_string(stage))) return WXL_E_NOT_FOUND;
+            Trace().push_back("restore " + std::string(name.data, name.size) + " " + std::to_string(stage));
+            return WXL_OK;
+        }
+
+        static const wxl_render_api* Table()
+        {
+            static const wxl_render_api api = [] {
+                wxl_render_api t{};
+                t.struct_size         = sizeof t;
+                t.supported           = &Supported;
+                t.unsupported_reason  = &UnsupportedReason;
+                t.create_image        = &CreateImage;
+                t.create_screen_image = &CreateScreenImage;
+                t.destroy_image       = &DestroyImage;
+                t.image_slot          = &ImageSlot;
+                t.image_width         = &ImageWidth;
+                t.image_height        = &ImageHeight;
+                t.create_buffer       = &CreateBuffer;
+                t.destroy_buffer      = &DestroyBuffer;
+                t.write_buffer        = &WriteBuffer;
+                t.buffer_address      = &BufferAddress;
+                t.sampler             = &Sampler;
+                t.create_pipeline     = &CreatePipeline;
+                t.destroy_pipeline    = &DestroyPipeline;
+                t.pipeline_ready      = &PipelineReady;
+                t.begin               = &Begin;
+                t.end                 = &End;
+                t.draw                = &Draw;
+                t.draw_indexed        = &DrawIndexed;
+                t.fullscreen          = &Fullscreen;
+                t.draw_batch          = &DrawBatch;
+                t.keep_batch          = &KeepBatch;
+                t.scene_color_slot    = &SceneColorSlot;
+                t.scene_depth_slot    = &SceneDepthSlot;
+                t.replace_shader      = &ReplaceShader;
+                t.restore_shader      = &RestoreShader;
+                t.dispatch            = &Dispatch;
+                t.bone_palette        = &BonePalette;
+                return t;
+            }();
+            return &api;
+        }
+
+        // wxl.vk: fixed handles, the command buffer only inside a point.
+        static void* WXL_CALL Handle(uintptr_t value) { return reinterpret_cast<void*>(value); }
+        static void* WXL_CALL VkInstance() { return Handle(0x1000); }
+        static void* WXL_CALL VkPhysical() { return Handle(0x2000); }
+        static void* WXL_CALL VkDevice() { return Handle(0x3000); }
+        static void* WXL_CALL VkQueue() { return Handle(0x4000); }
+        static uint32_t WXL_CALL VkFamily() { return 0; }
+        static void* WXL_CALL VkProc() { return Handle(0x5000); }
+        static uint32_t WXL_CALL VkVersion() { return (1u << 22) | (3u << 12); }
+        static void* WXL_CALL VkCommands() { return InPoint() ? Handle(0x6000) : nullptr; }
+        static wxl_result WXL_CALL VkImage(wxl_handle image, wxl_bool resolved, uint64_t* out)
+        {
+            if (!Images().count(image)) return WXL_E_NOT_FOUND;
+            *out = 0x70000000ull + image * 2 + (resolved ? 1 : 0);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL VkView(wxl_handle image, wxl_bool resolved, uint64_t* out)
+        {
+            if (!Images().count(image)) return WXL_E_NOT_FOUND;
+            *out = 0x80000000ull + image * 2 + (resolved ? 1 : 0);
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL VkBuffer(wxl_handle buffer, uint64_t* out)
+        {
+            if (!Buffers().count(buffer)) return WXL_E_NOT_FOUND;
+            *out = 0x90000000ull + buffer;
+            return WXL_OK;
+        }
+        static wxl_result WXL_CALL VkSceneColor(uint64_t* out) { return *out = 0xA0, WXL_OK; }
+        static wxl_result WXL_CALL VkSceneDepth(uint64_t* out) { return *out = 0xB0, WXL_OK; }
+        static wxl_result WXL_CALL VkFrame(uint64_t* out) { return *out = 12, WXL_OK; }
+        static wxl_result WXL_CALL VkCompleted(uint64_t* out) { return *out = 10, WXL_OK; }
+
+        static const wxl_vk_api* VkTable()
+        {
+            static const wxl_vk_api api = [] {
+                wxl_vk_api t{};
+                t.struct_size            = sizeof t;
+                t.instance               = &VkInstance;
+                t.physical_device        = &VkPhysical;
+                t.device                 = &VkDevice;
+                t.queue                  = &VkQueue;
+                t.queue_family           = &VkFamily;
+                t.get_instance_proc_addr = &VkProc;
+                t.api_version            = &VkVersion;
+                t.command_buffer         = &VkCommands;
+                t.image                  = &VkImage;
+                t.image_view             = &VkView;
+                t.buffer                 = &VkBuffer;
+                t.scene_color            = &VkSceneColor;
+                t.scene_depth            = &VkSceneDepth;
+                t.frame                  = &VkFrame;
+                t.frames_completed       = &VkCompleted;
                 return t;
             }();
             return &api;

@@ -128,6 +128,37 @@ WXL_ARGS_FIELD(wxl_swapchain_args, width, u32)
 WXL_ARGS_FIELD(wxl_swapchain_args, height, u32)
 WXL_ARGS_END(wxl_swapchain_args)
 
+/// A point of the frame where mods draw.
+WXL_ARGS(wxl_render_point_args)
+WXL_ARGS_ENUM(wxl_render_point_args, point, wxl_render_point)
+WXL_ARGS_FIELD(wxl_render_point_args, frame, u64)   ///< the frame's index, as wxl_frame_args counts them
+WXL_ARGS_FIELD(wxl_render_point_args, width, u32)   ///< the size the frame is drawn at, in pixels
+WXL_ARGS_FIELD(wxl_render_point_args, height, u32)
+WXL_ARGS_FIELD(wxl_render_point_args, samples, u32) ///< its samples per pixel on the Vulkan renderer (1 without multisampling); 0 on Direct3D 9
+WXL_ARGS_END(wxl_render_point_args)
+
+/// A chunk of the map's ground loaded or unloaded (wxl.terrain).
+WXL_ARGS(wxl_terrain_chunk_state_args)
+WXL_ARGS_FIELD(wxl_terrain_chunk_state_args, map_id, u32)
+WXL_ARGS_FIELD(wxl_terrain_chunk_state_args, chunk_x, i32) ///< the chunk's column on the map, 0-1023
+WXL_ARGS_FIELD(wxl_terrain_chunk_state_args, chunk_y, i32) ///< its row
+WXL_ARGS_FIELD(wxl_terrain_chunk_state_args, edited, bool) ///< whether some mod has edits on it: put back already when it loads
+WXL_ARGS_END(wxl_terrain_chunk_state_args)
+
+/// Every edit of the map's ground dropped (wxl.terrain).
+WXL_ARGS(wxl_terrain_cleared_args)
+WXL_ARGS_FIELD(wxl_terrain_cleared_args, map_id, u32)  ///< the map being unloaded
+WXL_ARGS_FIELD(wxl_terrain_cleared_args, chunks, u32)  ///< the chunks that had edits, 0 for none
+WXL_ARGS_END(wxl_terrain_cleared_args)
+
+/// A mod's animation on a unit that ended (wxl.animation).
+WXL_ARGS(wxl_unit_animation_args)
+WXL_ARGS_FIELD(wxl_unit_animation_args, unit, handle)       ///< the unit, stale when it left view (`reason` gone)
+WXL_ARGS_FIELD(wxl_unit_animation_args, anim_id, u32)       ///< the animation as play was asked for it
+WXL_ARGS_ENUM(wxl_unit_animation_args, reason, wxl_animation_end)
+WXL_ARGS_FIELD(wxl_unit_animation_args, looped, bool)       ///< whether it was played with WXL_ANIMATION_LOOP
+WXL_ARGS_END(wxl_unit_animation_args)
+
 /// An object appearing, changing or leaving.
 WXL_ARGS(wxl_object_args)
 WXL_ARGS_FIELD(wxl_object_args, object, handle)
@@ -299,9 +330,11 @@ WXL_ARGS_BYTES(wxl_spell_cast_args, misses, misses_size) ///< the guids missed, 
 WXL_ARGS_FIELD(wxl_spell_cast_args, misses_size, u32)  ///< bytes in @ref misses
 WXL_ARGS_BYTES(wxl_spell_cast_args, miss_reasons, miss_count) ///< one byte per miss, the server's SPELL_MISS_* code, in the order of @ref misses; NULL when none
 WXL_ARGS_FIELD(wxl_spell_cast_args, has_source, bool)  ///< WXL_TRUE when the cast names a source point (TARGET_FLAG_SOURCE_LOCATION)
-WXL_ARGS_FIELD(wxl_spell_cast_args, source, vec3)      ///< that point, in world coordinates
+WXL_ARGS_FIELD(wxl_spell_cast_args, source, vec3)      ///< that point: in world coordinates, or in @ref source_transport's frame when that is not 0
 WXL_ARGS_FIELD(wxl_spell_cast_args, has_dest, bool)    ///< WXL_TRUE when the cast names a destination (TARGET_FLAG_DEST_LOCATION): a ground spell's point
-WXL_ARGS_FIELD(wxl_spell_cast_args, dest, vec3)        ///< that point, in world coordinates
+WXL_ARGS_FIELD(wxl_spell_cast_args, dest, vec3)        ///< that point: in world coordinates, or in @ref dest_transport's frame when that is not 0
+WXL_ARGS_FIELD(wxl_spell_cast_args, source_transport, guid) ///< the transport (a ship, an elevator) @ref source is measured on; 0 for the world
+WXL_ARGS_FIELD(wxl_spell_cast_args, dest_transport, guid)   ///< the transport @ref dest is measured on; 0 for the world
 WXL_ARGS_END(wxl_spell_cast_args)
 
 /**
@@ -1332,11 +1365,14 @@ WXL_ARGS_FIELD(wxl_appearance_args, npc, bool)       ///< an NPC's appearance: i
 WXL_ARGS_END(wxl_appearance_args)
 
 /**
- * @brief One batch of a model, just drawn by the client's Direct3D 9 device.
+ * @brief One batch of a model, just drawn by the client's device.
  *
- * Everything it was drawn with -- vertex declaration, streams, indices, shaders and their
- * constants, textures, render states -- is still bound: DrawIndexedPrimitive with these numbers
- * draws the batch again (wxl.gx gives the device).
+ * On Direct3D 9, everything it was drawn with -- vertex declaration, streams, indices, shaders and
+ * their constants, textures, render states -- is still bound: DrawIndexedPrimitive with these
+ * numbers draws the batch again (wxl.gx gives the device). On the Vulkan renderer the numbers are
+ * the same draw's, in Direct3D 9's terms (primitive_type is a D3DPRIMITIVETYPE, the viewport as
+ * D3DVIEWPORT9 holds it), and `batch` draws it again: wxl.render's draw_batch, or keep_batch to draw
+ * it later in the frame.
  */
 WXL_ARGS(wxl_model_batch_args)
 WXL_ARGS_PTR(wxl_model_batch_args, model, void*)      ///< the model the batch belongs to (opaque)
@@ -1354,7 +1390,53 @@ WXL_ARGS_FIELD(wxl_model_batch_args, viewport_width, u32)
 WXL_ARGS_FIELD(wxl_model_batch_args, viewport_height, u32)
 WXL_ARGS_FIELD(wxl_model_batch_args, viewport_min_z, f32)
 WXL_ARGS_FIELD(wxl_model_batch_args, viewport_max_z, f32)
+WXL_ARGS_PTR(wxl_model_batch_args, batch, void*)        ///< the draw for wxl.render, valid during the event; null on a device without wxl.render (Direct3D 9)
 WXL_ARGS_END(wxl_model_batch_args)
+
+/// A name the client looked for that no layer has.
+WXL_ARGS(wxl_file_missing_args)
+WXL_ARGS_FIELD(wxl_file_missing_args, path, str)                  ///< the name as the client asked for it
+WXL_ARGS_ENUM(wxl_file_missing_args, kind, wxl_asset_kind)        ///< what the file is for, by its extension
+WXL_ARGS_FIELD(wxl_file_missing_args, open, bool)                 ///< asked to open it; false: only whether it exists
+WXL_ARGS_FIELD(wxl_file_missing_args, pending, bool)              ///< a provider answered "not yet" (WXL_E_PENDING) for it
+WXL_ARGS_FIELD(wxl_file_missing_args, loader, bool)               ///< asked off the client's main thread: a loader thread
+WXL_ARGS_END(wxl_file_missing_args)
+
+/// The mouse moved, in the device's counts, before any acceleration or pointer speed applies.
+WXL_ARGS(wxl_mouse_motion_args)
+WXL_ARGS_FIELD(wxl_mouse_motion_args, dx, i32) ///< right is positive
+WXL_ARGS_FIELD(wxl_mouse_motion_args, dy, i32) ///< towards the player is positive, as on the screen
+WXL_ARGS_END(wxl_mouse_motion_args)
+
+/// The mouse wheel turned.
+WXL_ARGS(wxl_mouse_wheel_args)
+WXL_ARGS_FIELD(wxl_mouse_wheel_args, delta, f32) ///< in notches: away from the player is positive, a fraction for a fine wheel
+WXL_ARGS_ANSWER(wxl_mouse_wheel_args, handled)   ///< write WXL_TRUE to keep the game from seeing the turn
+WXL_ARGS_END(wxl_mouse_wheel_args)
+
+/// A click in the world, before the game acts on it: what it met, and the answer that stops it.
+WXL_ARGS(wxl_world_click_request_args)
+WXL_ARGS_ENUM(wxl_world_click_request_args, button, wxl_mouse_button)
+WXL_ARGS_ENUM(wxl_world_click_request_args, hit, wxl_world_hit)
+WXL_ARGS_FIELD(wxl_world_click_request_args, object, handle)     ///< the unit, game object or corpse it met, or the name plate's unit; WXL_HANDLE_NONE for none or one not in view
+WXL_ARGS_FIELD(wxl_world_click_request_args, object_guid, guid)  ///< its guid, also for a building or a transport the world met; 0 for none
+WXL_ARGS_FIELD(wxl_world_click_request_args, point, vec3)        ///< where the ray met it; the origin for a name plate, or a click that met nothing
+WXL_ARGS_FIELD(wxl_world_click_request_args, targeting, bool)    ///< WXL_TRUE while a spell waits for its target: the click aims or places it
+WXL_ARGS_ANSWER(wxl_world_click_request_args, refused)           ///< write WXL_TRUE to keep the game from acting on the click
+WXL_ARGS_END(wxl_world_click_request_args)
+
+/// An interface's signature as the client judged it, and the answer that has it taken as signed.
+WXL_ARGS(wxl_interface_signature_args)
+WXL_ARGS_FIELD(wxl_interface_signature_args, file, str)                    ///< the .toc judged, as the client names it: "Interface\FrameXML\FrameXML.toc"
+WXL_ARGS_FIELD(wxl_interface_signature_args, extra, str)                   ///< the file hashed with it, "Interface\FrameXML\Bindings.xml" or an add-on's; empty for none (GlueXML)
+WXL_ARGS_ENUM(wxl_interface_signature_args, verdict, wxl_interface_signature) ///< the client's own verdict
+WXL_ARGS_ANSWER(wxl_interface_signature_args, accepted)                    ///< write WXL_TRUE to have the client take the file as signed
+WXL_ARGS_END(wxl_interface_signature_args)
+
+/// The client is about to move its loose interface folders aside: the answer that keeps them.
+WXL_ARGS(wxl_interface_cleanup_args)
+WXL_ARGS_ANSWER(wxl_interface_cleanup_args, refused) ///< write WXL_TRUE to leave the folders where they are
+WXL_ARGS_END(wxl_interface_cleanup_args)
 
 #ifdef WXL_ARGS_ENUM_DEFAULTED
     #undef WXL_ARGS_ENUM

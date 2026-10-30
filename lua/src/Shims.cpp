@@ -7,13 +7,23 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <limits>
+#include <new>
+#include <type_traits>
 #include <deque>
 #include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <functional>
+#include <memory>
 #include <string>
 #include <system_error>
 #include <vector>
 
+#include "Objects.hpp"
 #include "Profile.hpp"
 #include "Runtime.hpp"
 #include "ScriptMod.hpp"
@@ -22,8 +32,21 @@
 #include "wxl/sdk.hpp"
 #include "wxl/services/rows.hpp"
 #include "wxl/services/script.h"
+#include "wxl/services/camera.h"
 #include "wxl/services/footprint.h"
+#include "wxl/services/input.h"
+#include "wxl/services/pose.h"
+#include "wxl/services/highlight.h"
+#include "wxl/services/selectioncircle.h"
+#include "wxl/services/texture.h"
+#include "wxl/services/cvar.h"
+#include "wxl/services/render.h"
+#include "wxl/services/relay.h"
 #include "wxl/services/storage.h"
+#include "wxl/services/terrain.h"
+#include "wxl/services/draw.h"
+#include "wxl/services/animation.h"
+#include "wxl/services/net.h"
 
 namespace wxl::lua::shims
 {
@@ -779,6 +802,3863 @@ namespace wxl::lua::shims
                                g_thresholds.end());
             if (g_thresholds.size() != before) WatchHighest();
         }
+
+        // --- calling back into a mod -----------------------------------------------------------
+
+        /// Calls the function a mod keeps at @p ref with what @p push leaves on the stack (it
+        /// answers how many), under the mod's traceback. @p after reads the returns, from the
+        /// index it is given to the top, before the stack is put back. False on a Lua error,
+        /// which counts against the mod.
+        template <class Push, class After>
+        bool CallBack(ScriptMod& mod, int ref, const char* what, Push&& push, After&& after)
+        {
+            if (!mod.Runs() || ref == LUA_NOREF) return false;
+            lua_State* L    = mod.State();
+            const int  base = lua_gettop(L);
+            if (!lua_checkstack(L, 8)) return false;
+            lua_rawgeti(L, LUA_REGISTRYINDEX, mod.TracebackRef());
+            lua_rawgeti(L, LUA_REGISTRYINDEX, ref);
+            const int count = push(L);
+            ++g_calling;
+            const bool ok = lua_pcall(L, count, LUA_MULTRET, base + 1) == 0;
+            --g_calling;
+            if (!ok)
+            {
+                const char* message = lua_tostring(L, -1) ? lua_tostring(L, -1) : "?";
+                mod.ReportError(what, message);
+            }
+            else
+            {
+                after(L, base + 2);
+            }
+            lua_settop(L, base);
+            return ok;
+        }
+
+        bool CallBack(ScriptMod& mod, int ref, const char* what, const std::function<int(lua_State*)>& push)
+        {
+            return CallBack(mod, ref, what, push, [](lua_State*, int) {});
+        }
+
+        /// Pushes values that cross the boundary as Lua values; how many.
+        int PushValues(lua_State* L, const wxl_value* values, uint32_t count)
+        {
+            if (!values || !lua_checkstack(L, static_cast<int>(count) + 4)) return 0;
+            for (uint32_t i = 0; i < count; ++i)
+            {
+                const wxl_value& value = values[i];
+                switch (value.type)
+                {
+                case WXL_VALUE_NUMBER: lua_pushnumber(L, value.as.number); break;
+                case WXL_VALUE_STRING:
+                    lua_pushlstring(L, value.as.string.data ? value.as.string.data : "",
+                                    value.as.string.data ? value.as.string.size : 0);
+                    break;
+                case WXL_VALUE_BOOL: lua_pushboolean(L, value.as.boolean == WXL_TRUE); break;
+                default: lua_pushnil(L); break;
+                }
+            }
+            return static_cast<int>(count);
+        }
+
+        /// The Lua values from @p first to @p last as values that cross the boundary: numbers,
+        /// strings, booleans; anything else, nil. Strings point into the state, valid while the
+        /// values stay on the stack.
+        std::vector<wxl_value> ValuesOf(lua_State* L, int first, int last)
+        {
+            std::vector<wxl_value> values;
+            for (int i = first; i <= last; ++i)
+            {
+                wxl_value value{};
+                switch (lua_type(L, i))
+                {
+                case LUA_TNUMBER:
+                    value.type      = WXL_VALUE_NUMBER;
+                    value.as.number = lua_tonumber(L, i);
+                    break;
+                case LUA_TSTRING:
+                {
+                    size_t      size = 0;
+                    const char* text = lua_tolstring(L, i, &size);
+                    value.type       = WXL_VALUE_STRING;
+                    value.as.string  = wxl_str{text, static_cast<uint32_t>(size)};
+                    break;
+                }
+                case LUA_TBOOLEAN:
+                    value.type       = WXL_VALUE_BOOL;
+                    value.as.boolean = lua_toboolean(L, i) ? WXL_TRUE : WXL_FALSE;
+                    break;
+                default: value.type = WXL_VALUE_NIL; break;
+                }
+                values.push_back(value);
+            }
+            return values;
+        }
+
+        /// A request number argument: a whole number from 1.
+        uint64_t CheckRequest(lua_State* L, int index, const char* function)
+        {
+            if (lua_isnoneornil(L, index))
+                luaL_error(L, "wxl.relay.%s: 'request' (argument %d) is missing; it takes a whole number", function,
+                           index);
+            const lua_Number value = luaL_checknumber(L, index);
+            if (std::floor(value) != value || value < 1 || value > 9007199254740992.0)
+                luaL_argerror(L, index, "a request number");
+            return static_cast<uint64_t>(value);
+        }
+
+        // --- wxl.storage: the files each mod overrides ----------------------------------------
+        //
+        // The host sees every override of a Lua mod as wxl.lua's, one per name. Each mod's are kept
+        // here in the order they were made, as the redirects are.
+
+        std::vector<Redirected> g_overrides;
+
+        wxl_result SettleOverride(const Redirected& entry)
+        {
+            const wxl_storage_api* api = Storage();
+            if (!api || !wxl::detail::Carries(api, &wxl_storage_api::restore_file)) return WXL_E_UNSUPPORTED;
+            if (entry.holders.empty()) return api->restore_file(Str(entry.from));
+            return api->override_file(Str(entry.from), Str(entry.holders.back().second));
+        }
+
+        void LetGoOverride(size_t index, ScriptMod& mod)
+        {
+            Redirected& entry  = g_overrides[index];
+            const bool  latest = !entry.holders.empty() && entry.holders.back().first == &mod;
+            entry.holders.erase(std::remove_if(entry.holders.begin(), entry.holders.end(),
+                                               [&](const auto& holder) { return holder.first == &mod; }),
+                                entry.holders.end());
+            if (latest) SettleOverride(entry);
+            if (entry.holders.empty()) g_overrides.erase(g_overrides.begin() + static_cast<std::ptrdiff_t>(index));
+        }
+
+        int L_OverrideFile(lua_State* L)
+        {
+            ScriptMod&        mod  = Self(L);
+            const std::string path = CheckName(L, 1, "OverrideFile", "path");
+            const std::string with = CheckName(L, 2, "OverrideFile", "with");
+            const wxl_storage_api* api = Storage();
+            if (!api || !wxl::detail::Carries(api, &wxl_storage_api::override_file))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->override_file(Str(path), Str(with));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+
+            const std::string key   = NameKey(path);
+            auto              known = std::find_if(g_overrides.begin(), g_overrides.end(),
+                                                   [&](const Redirected& entry) { return entry.key == key; });
+            if (known == g_overrides.end())
+            {
+                g_overrides.push_back(Redirected{key, path, {}});
+                known = g_overrides.end() - 1;
+            }
+            known->holders.erase(std::remove_if(known->holders.begin(), known->holders.end(),
+                                                [&](const auto& holder) { return holder.first == &mod; }),
+                                 known->holders.end());
+            known->holders.emplace_back(&mod, with);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_RestoreFile(lua_State* L)
+        {
+            ScriptMod&        mod  = Self(L);
+            const std::string path = CheckName(L, 1, "RestoreFile", "path");
+            const wxl_storage_api* api = Storage();
+            if (!api || !wxl::detail::Carries(api, &wxl_storage_api::restore_file))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const std::string key = NameKey(path);
+            for (size_t i = 0; i < g_overrides.size(); ++i)
+            {
+                const Redirected& entry = g_overrides[i];
+                if (entry.key != key || std::none_of(entry.holders.begin(), entry.holders.end(),
+                                                     [&](const auto& holder) { return holder.first == &mod; }))
+                    continue;
+                LetGoOverride(i, mod);
+                lua_pushboolean(L, 1);
+                return 1;
+            }
+            return PushResultFailure(L, WXL_E_NOT_FOUND);
+        }
+
+        // --- wxl.storage: hashes, reloads -------------------------------------------------------
+
+        const char* LayerName(uint32_t layer)
+        {
+            switch (layer)
+            {
+            case WXL_FILE_LAYER_ARCHIVE: return "archive";
+            case WXL_FILE_LAYER_DISK: return "disk";
+            case WXL_FILE_LAYER_FOLDER: return "folder";
+            case WXL_FILE_LAYER_PROVIDER: return "provider";
+            case WXL_FILE_LAYER_SERVED: return "served";
+            default: return "none";
+            }
+        }
+
+        /// A file hash as the table a script reads.
+        void PushHash(lua_State* L, const wxl_file_hash& hash)
+        {
+            static const char kDigits[] = "0123456789abcdef";
+            char              hex[32];
+            for (int i = 0; i < 16; ++i)
+            {
+                hex[2 * i]     = kDigits[hash.md5[i] >> 4];
+                hex[2 * i + 1] = kDigits[hash.md5[i] & 0xF];
+            }
+            lua_createtable(L, 0, 4);
+            lua_pushlstring(L, hex, sizeof hex);
+            lua_setfield(L, -2, "md5");
+            lua_pushnumber(L, static_cast<lua_Number>(hash.size));
+            lua_setfield(L, -2, "size");
+            lua_pushstring(L, LayerName(hash.layer));
+            lua_setfield(L, -2, "layer");
+            lua_pushlstring(L, hash.source.data ? hash.source.data : "", hash.source.data ? hash.source.size : 0);
+            lua_setfield(L, -2, "source");
+        }
+
+        int L_HashFile(lua_State* L)
+        {
+            const std::string path  = CheckName(L, 1, "HashFile", "path");
+            const bool        fresh = lua_toboolean(L, 2) != 0;
+            const wxl_storage_api* api = Storage();
+            if (!api || !wxl::detail::Carries(api, &wxl_storage_api::hash_file))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_file_hash hash{};
+            hash.struct_size        = sizeof hash;
+            const wxl_result result = api->hash_file(Str(path), fresh ? WXL_HASH_FRESH : 0u, &hash);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            PushHash(L, hash);
+            return 1;
+        }
+
+        /// A hash a Lua mod waits for. Kept until the runtime answers it, which it always does
+        /// while wxl.lua runs: a mod that went in between is forgotten, not the wait.
+        struct HashWait
+        {
+            ScriptMod* mod;
+            int        ref;
+        };
+
+        std::vector<std::unique_ptr<HashWait>> g_hashWaits;
+
+        void WXL_CALL HashAnswered(void* user, uint64_t, wxl_result result, const wxl_file_hash* hash)
+        {
+            const auto found = std::find_if(g_hashWaits.begin(), g_hashWaits.end(),
+                                            [&](const std::unique_ptr<HashWait>& wait) { return wait.get() == user; });
+            if (found == g_hashWaits.end()) return;
+            const std::unique_ptr<HashWait> wait = std::move(*found);
+            g_hashWaits.erase(found);
+            if (!wait->mod) return;
+            ScriptMod& mod = *wait->mod;
+            CallBack(mod, wait->ref, "in its HashFileAsync function", [&](lua_State* L) {
+                if (result == WXL_OK && hash)
+                {
+                    PushHash(L, *hash);
+                    return 1;
+                }
+                lua_pushnil(L);
+                lua_pushstring(L, ReasonOf(result == WXL_OK ? WXL_E_FAILED : result));
+                return 2;
+            });
+            if (mod.State()) luaL_unref(mod.State(), LUA_REGISTRYINDEX, wait->ref);
+        }
+
+        int L_HashFileAsync(lua_State* L)
+        {
+            ScriptMod&        mod  = Self(L);
+            const std::string path = CheckName(L, 1, "HashFileAsync", "path");
+            if (lua_isnoneornil(L, 2))
+                return luaL_error(L, "wxl.storage.HashFileAsync: 'fn' (argument 2) is missing; it takes a function");
+            luaL_checktype(L, 2, LUA_TFUNCTION);
+            const bool fresh = lua_toboolean(L, 3) != 0;
+            const wxl_storage_api* api = Storage();
+            if (!api || !wxl::detail::Carries(api, &wxl_storage_api::hash_file_async))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            lua_pushvalue(L, 2);
+            auto wait  = std::make_unique<HashWait>();
+            wait->mod  = &mod;
+            wait->ref  = luaL_ref(L, LUA_REGISTRYINDEX);
+            HashWait* kept = wait.get();
+            g_hashWaits.push_back(std::move(wait));
+            uint64_t         request = 0;
+            const wxl_result result  = api->hash_file_async(Str(path), fresh ? WXL_HASH_FRESH : 0u, &HashAnswered, kept,
+                                                            &request);
+            if (result != WXL_OK)
+            {
+                luaL_unref(L, LUA_REGISTRYINDEX, kept->ref);
+                g_hashWaits.erase(std::find_if(g_hashWaits.begin(), g_hashWaits.end(),
+                                               [&](const std::unique_ptr<HashWait>& w) { return w.get() == kept; }));
+                return PushResultFailure(L, result);
+            }
+            lua_pushnumber(L, static_cast<lua_Number>(request));
+            return 1;
+        }
+
+        int L_ReloadAsset(lua_State* L)
+        {
+            const std::string path = CheckName(L, 1, "ReloadAsset", "path");
+            const wxl_storage_api* api = Storage();
+            if (!api || !wxl::detail::Carries(api, &wxl_storage_api::reload_asset))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_asset_reload done{};
+            done.struct_size        = sizeof done;
+            const wxl_result result = api->reload_asset(Str(path), &done);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_createtable(L, 0, 4);
+            lua_pushnumber(L, done.textures);
+            lua_setfield(L, -2, "textures");
+            lua_pushnumber(L, done.models);
+            lua_setfield(L, -2, "models");
+            lua_pushnumber(L, done.objects);
+            lua_setfield(L, -2, "objects");
+            lua_pushnumber(L, done.busy);
+            lua_setfield(L, -2, "busy");
+            return 1;
+        }
+
+        /// What a mod held of hashes and overrides goes with it.
+        void ReleaseStorage(ScriptMod& mod)
+        {
+            for (size_t i = g_overrides.size(); i-- > 0;)
+                if (std::any_of(g_overrides[i].holders.begin(), g_overrides[i].holders.end(),
+                                [&](const auto& holder) { return holder.first == &mod; }))
+                    LetGoOverride(i, mod);
+            for (const std::unique_ptr<HashWait>& wait : g_hashWaits)
+            {
+                if (wait->mod != &mod) continue;
+                if (mod.State()) luaL_unref(mod.State(), LUA_REGISTRYINDEX, wait->ref);
+                wait->mod = nullptr;
+            }
+        }
+
+        // --- wxl.relay: the services each mod publishes and the requests it waits on ----------
+        //
+        // The host sees every Lua mod's services and requests as wxl.lua's. Each mod's are kept
+        // here: a mod that goes takes its services back (their requests fail for their callers)
+        // and cancels its requests (their services are told).
+
+        const wxl_relay_api* Relay() { return wxl::api::Table<wxl_relay_api>(); }
+
+        struct Published
+        {
+            ScriptMod*         mod;
+            std::string        name;
+            int                fn;
+            int                cancelled; ///< LUA_NOREF for none
+            wxl_relay_endpoint table{};
+        };
+
+        std::vector<std::unique_ptr<Published>> g_published;
+
+        /// A request a Lua mod made and waits on. Kept until answered, or cancelled.
+        struct Waiting
+        {
+            ScriptMod*  mod;
+            int         fn;
+            wxl_request request = 0;
+        };
+
+        std::vector<std::unique_ptr<Waiting>> g_waiting;
+
+        void WXL_CALL RelayRequested(void* user, wxl_request request, wxl_str method, const wxl_value* args,
+                                     uint32_t count)
+        {
+            const auto found = std::find_if(g_published.begin(), g_published.end(),
+                                            [&](const std::unique_ptr<Published>& p) { return p.get() == user; });
+            if (found == g_published.end()) return;
+            Published& published = **found;
+            ScriptMod& mod       = *published.mod;
+            const std::string what = "in its wxl.relay service " + published.name;
+            const bool ok = CallBack(
+                mod, published.fn, what.c_str(),
+                [&](lua_State* L) {
+                    lua_pushnumber(L, static_cast<lua_Number>(request));
+                    lua_pushlstring(L, method.data ? method.data : "", method.data ? method.size : 0);
+                    return 2 + PushValues(L, args, count);
+                },
+                [&](lua_State* L, int first) {
+                    // Values returned are the answer; none, an answer to come.
+                    const int last = lua_gettop(L);
+                    if (last < first) return;
+                    const std::vector<wxl_value> values = ValuesOf(L, first, last);
+                    if (const wxl_relay_api* api = Relay())
+                        api->answer(request, values.data(), static_cast<uint32_t>(values.size()));
+                });
+            if (!ok)
+                if (const wxl_relay_api* api = Relay()) api->fail(request, Str("the service's Lua function errored"));
+        }
+
+        void WXL_CALL RelayCancelled(void* user, wxl_request request)
+        {
+            const auto found = std::find_if(g_published.begin(), g_published.end(),
+                                            [&](const std::unique_ptr<Published>& p) { return p.get() == user; });
+            if (found == g_published.end() || (*found)->cancelled == LUA_NOREF) return;
+            Published& published = **found;
+            const std::string what = "in its wxl.relay cancel function of " + published.name;
+            CallBack(*published.mod, published.cancelled, what.c_str(), [&](lua_State* L) {
+                lua_pushnumber(L, static_cast<lua_Number>(request));
+                return 1;
+            });
+        }
+
+        void WXL_CALL RelayReplied(void* user, wxl_request, wxl_result result, const wxl_value* values, uint32_t count)
+        {
+            const auto found = std::find_if(g_waiting.begin(), g_waiting.end(),
+                                            [&](const std::unique_ptr<Waiting>& w) { return w.get() == user; });
+            if (found == g_waiting.end()) return;
+            const std::unique_ptr<Waiting> waiting = std::move(*found);
+            g_waiting.erase(found);
+            if (!waiting->mod) return;
+            ScriptMod& mod = *waiting->mod;
+            CallBack(mod, waiting->fn, "in its wxl.relay answer function", [&](lua_State* L) {
+                if (result == WXL_OK)
+                {
+                    lua_pushboolean(L, 1);
+                    return 1 + PushValues(L, values, count);
+                }
+                lua_pushboolean(L, 0);
+                if (result == WXL_E_FAILED && values && count && values[0].type == WXL_VALUE_STRING)
+                    PushValues(L, values, 1);
+                else
+                    lua_pushstring(L, ReasonOf(result));
+                return 2;
+            });
+            if (mod.State()) luaL_unref(mod.State(), LUA_REGISTRYINDEX, waiting->fn);
+        }
+
+        std::string CheckRelayName(lua_State* L, int index, const char* function, const char* parameter)
+        {
+            if (lua_isnoneornil(L, index))
+                luaL_error(L, "wxl.relay.%s: '%s' (argument %d) is missing; it takes a string", function, parameter,
+                           index);
+            size_t      size = 0;
+            const char* text = luaL_checklstring(L, index, &size);
+            return std::string(text, size);
+        }
+
+        /// Takes one service of a Lua mod back from the runtime and forgets it.
+        void Withdraw(size_t index)
+        {
+            const std::unique_ptr<Published> published = std::move(g_published[index]);
+            g_published.erase(g_published.begin() + static_cast<std::ptrdiff_t>(index));
+            if (const wxl_relay_api* api = Relay()) api->unpublish(Str(published->name));
+            if (lua_State* L = published->mod->State())
+            {
+                luaL_unref(L, LUA_REGISTRYINDEX, published->fn);
+                luaL_unref(L, LUA_REGISTRYINDEX, published->cancelled);
+            }
+        }
+
+        int L_Publish(lua_State* L)
+        {
+            ScriptMod&        mod  = Self(L);
+            const std::string name = CheckRelayName(L, 1, "Publish", "name");
+            if (lua_isnoneornil(L, 2))
+                return luaL_error(L, "wxl.relay.Publish: 'fn' (argument 2) is missing; it takes a function");
+            luaL_checktype(L, 2, LUA_TFUNCTION);
+            if (!lua_isnoneornil(L, 3)) luaL_checktype(L, 3, LUA_TFUNCTION);
+            const wxl_relay_api* api = Relay();
+            if (!api || !wxl::detail::Carries(api, &wxl_relay_api::publish)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+
+            // The runtime sees every Lua mod as one: a name another Lua mod publishes is refused
+            // here, and the mod's own is published again, its old functions let go.
+            const std::string          key = NameKey(name);
+            std::unique_ptr<Published> replaced; // kept until the runtime holds the new entry
+            for (size_t i = 0; i < g_published.size(); ++i)
+            {
+                if (NameKey(g_published[i]->name) != key) continue;
+                if (g_published[i]->mod != &mod) return PushResultFailure(L, WXL_E_INVALID);
+                // Published again: the runtime's entry is replaced below, its requests kept.
+                luaL_unref(L, LUA_REGISTRYINDEX, g_published[i]->fn);
+                luaL_unref(L, LUA_REGISTRYINDEX, g_published[i]->cancelled);
+                replaced = std::move(g_published[i]);
+                g_published.erase(g_published.begin() + static_cast<std::ptrdiff_t>(i));
+                break;
+            }
+
+            auto published  = std::make_unique<Published>();
+            published->mod  = &mod;
+            published->name = name;
+            lua_pushvalue(L, 2);
+            published->fn = luaL_ref(L, LUA_REGISTRYINDEX);
+            if (!lua_isnoneornil(L, 3))
+            {
+                lua_pushvalue(L, 3);
+                published->cancelled = luaL_ref(L, LUA_REGISTRYINDEX);
+            }
+            else
+            {
+                published->cancelled = LUA_NOREF;
+            }
+            published->table.struct_size = sizeof published->table;
+            published->table.user        = published.get();
+            published->table.request     = &RelayRequested;
+            published->table.cancelled   = &RelayCancelled;
+            const wxl_result result      = api->publish(Str(name), &published->table);
+            if (result != WXL_OK)
+            {
+                if (replaced) api->unpublish(Str(name)); // the runtime must not keep the old entry
+                luaL_unref(L, LUA_REGISTRYINDEX, published->fn);
+                luaL_unref(L, LUA_REGISTRYINDEX, published->cancelled);
+                return PushResultFailure(L, result);
+            }
+            g_published.push_back(std::move(published));
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_Unpublish(lua_State* L)
+        {
+            ScriptMod&        mod  = Self(L);
+            const std::string name = CheckRelayName(L, 1, "Unpublish", "name");
+            const std::string key  = NameKey(name);
+            for (size_t i = 0; i < g_published.size(); ++i)
+            {
+                if (g_published[i]->mod != &mod || NameKey(g_published[i]->name) != key) continue;
+                Withdraw(i);
+                lua_pushboolean(L, 1);
+                return 1;
+            }
+            return PushResultFailure(L, WXL_E_NOT_FOUND);
+        }
+
+        int L_Call(lua_State* L)
+        {
+            ScriptMod&        mod    = Self(L);
+            const std::string name   = CheckRelayName(L, 1, "Call", "name");
+            const std::string method = CheckRelayName(L, 2, "Call", "method");
+            if (!lua_isnoneornil(L, 3)) luaL_checktype(L, 3, LUA_TTABLE);
+            if (lua_isnoneornil(L, 4))
+                return luaL_error(L, "wxl.relay.Call: 'fn' (argument 4) is missing; it takes a function");
+            luaL_checktype(L, 4, LUA_TFUNCTION);
+            const wxl_relay_api* api = Relay();
+            if (!api || !wxl::detail::Carries(api, &wxl_relay_api::call)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+
+            // The list's values, pushed in order so that their strings live through the call.
+            const int base  = lua_gettop(L);
+            const int count = lua_istable(L, 3) ? static_cast<int>(lua_objlen(L, 3)) : 0;
+            luaL_checkstack(L, count + 2, "too many arguments");
+            for (int i = 1; i <= count; ++i) lua_rawgeti(L, 3, i);
+            const std::vector<wxl_value> args = ValuesOf(L, base + 1, base + count);
+
+            lua_pushvalue(L, 4);
+            auto waiting  = std::make_unique<Waiting>();
+            waiting->mod  = &mod;
+            waiting->fn   = luaL_ref(L, LUA_REGISTRYINDEX);
+            Waiting* kept = waiting.get();
+            g_waiting.push_back(std::move(waiting));
+            wxl_request      request = 0;
+            const wxl_result result  = api->call(Str(name), Str(method), args.data(), static_cast<uint32_t>(args.size()),
+                                                 &RelayReplied, kept, &request);
+            lua_settop(L, base);
+            if (result != WXL_OK)
+            {
+                luaL_unref(L, LUA_REGISTRYINDEX, kept->fn);
+                g_waiting.erase(std::find_if(g_waiting.begin(), g_waiting.end(),
+                                             [&](const std::unique_ptr<Waiting>& w) { return w.get() == kept; }));
+                return PushResultFailure(L, result);
+            }
+            kept->request = request;
+            lua_pushnumber(L, static_cast<lua_Number>(request));
+            return 1;
+        }
+
+        int L_Answer(lua_State* L)
+        {
+            const uint64_t       request = CheckRequest(L, 1, "Answer");
+            const wxl_relay_api* api     = Relay();
+            if (!api || !wxl::detail::Carries(api, &wxl_relay_api::answer)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const std::vector<wxl_value> values = ValuesOf(L, 2, lua_gettop(L));
+            const wxl_result result = api->answer(request, values.data(), static_cast<uint32_t>(values.size()));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_Fail(lua_State* L)
+        {
+            const uint64_t    request = CheckRequest(L, 1, "Fail");
+            const std::string reason  = CheckRelayName(L, 2, "Fail", "reason");
+            const wxl_relay_api* api  = Relay();
+            if (!api || !wxl::detail::Carries(api, &wxl_relay_api::fail)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->fail(request, Str(reason));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_Cancel(lua_State* L)
+        {
+            ScriptMod&     mod     = Self(L);
+            const uint64_t request = CheckRequest(L, 1, "Cancel");
+            const auto     found   = std::find_if(g_waiting.begin(), g_waiting.end(), [&](const std::unique_ptr<Waiting>& w) {
+                return w->mod == &mod && w->request == request;
+            });
+            if (found == g_waiting.end()) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            const wxl_relay_api* api = Relay();
+            if (!api || !wxl::detail::Carries(api, &wxl_relay_api::cancel)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->cancel(request);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            luaL_unref(L, LUA_REGISTRYINDEX, (*found)->fn);
+            g_waiting.erase(found);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// A mod's services go and its requests are cancelled.
+        void ReleaseRelay(ScriptMod& mod)
+        {
+            for (size_t i = g_published.size(); i-- > 0;)
+                if (g_published[i]->mod == &mod) Withdraw(i);
+            const wxl_relay_api* api = Relay();
+            for (size_t i = g_waiting.size(); i-- > 0;)
+            {
+                Waiting& waiting = *g_waiting[i];
+                if (waiting.mod != &mod) continue;
+                if (mod.State()) luaL_unref(mod.State(), LUA_REGISTRYINDEX, waiting.fn);
+                waiting.mod = nullptr;
+                // Cancelled, the runtime never answers it: forgotten now. Otherwise its answer is
+                // on its way, and finds nobody.
+                if (api && wxl::detail::Carries(api, &wxl_relay_api::cancel) && waiting.request &&
+                    api->cancel(waiting.request) == WXL_OK)
+                    g_waiting.erase(g_waiting.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
+        // --- wxl.camera and wxl.input: the view and the pointer each mod holds ---------------
+
+        const wxl_camera_api* Camera() { return wxl::api::Table<wxl_camera_api>(); }
+        const wxl_input_api*  Input() { return wxl::api::Table<wxl_input_api>(); }
+
+        /// A view a Lua mod holds, as it last set it.
+        struct View
+        {
+            ScriptMod* mod;
+            wxl_vec3   position;
+            wxl_vec3   forward;
+            double     fov;
+            double     roll; ///< 0 for a view set by SetView
+        };
+
+        /// The Lua mods holding a view, the last set first: the runtime sees them all as
+        /// wxl.lua, which holds one view, the first mod's here.
+        std::vector<View> g_viewers;
+
+        bool HoldsView(const View& view, const ScriptMod& mod) { return view.mod == &mod; }
+
+        /// A Lua mod holding the pointer, and the point of the window it holds it at.
+        struct Capture
+        {
+            ScriptMod* mod;
+            double     x;
+            double     y;
+        };
+
+        /// The Lua mods holding the pointer, the last to capture or move it last: wxl.lua holds it
+        /// while one does, at the last one's point.
+        std::vector<Capture> g_capturers;
+
+        /// The point wxl.lua holds the pointer at in the runtime, while it holds it.
+        double g_heldX = 0.5;
+        double g_heldY = 0.5;
+
+        /// A point argument: a table with numbers x, y and z.
+        wxl_vec3 CheckPoint(lua_State* L, int index, const char* function, const char* name)
+        {
+            if (lua_isnoneornil(L, index))
+                luaL_error(L, "wxl.camera.%s: '%s' (argument %d) is missing; it takes a point, a table with x, y and z",
+                           function, name, index);
+            luaL_checktype(L, index, LUA_TTABLE);
+            lua_getfield(L, index, "x");
+            lua_getfield(L, index, "y");
+            lua_getfield(L, index, "z");
+            if (!lua_isnumber(L, -3) || !lua_isnumber(L, -2) || !lua_isnumber(L, -1))
+                luaL_argerror(L, index, "a point: a table with numbers x, y and z");
+            const wxl_vec3 point{static_cast<float>(lua_tonumber(L, -3)), static_cast<float>(lua_tonumber(L, -2)),
+                                 static_cast<float>(lua_tonumber(L, -1))};
+            lua_pop(L, 3);
+            return point;
+        }
+
+        /// A number argument the function cannot do without.
+        lua_Number CheckNumber(lua_State* L, int index, const char* function, const char* name, const char* takes)
+        {
+            if (lua_isnoneornil(L, index))
+                luaL_error(L, "%s: '%s' (argument %d) is missing; it takes %s", function, name, index, takes);
+            return luaL_checknumber(L, index);
+        }
+
+        /// Sets a view in the runtime: through set_view_rolled when it is rolled, so that an
+        /// unrolled one reaches a runtime older than the roll too.
+        wxl_result Place(const wxl_camera_api* api, const View& view)
+        {
+            if (view.roll != 0.0)
+            {
+                if (!wxl::detail::Carries(api, &wxl_camera_api::set_view_rolled)) return WXL_E_UNSUPPORTED;
+                return api->set_view_rolled(view.position, view.forward, view.fov, view.roll);
+            }
+            if (!wxl::detail::Carries(api, &wxl_camera_api::set_view)) return WXL_E_UNSUPPORTED;
+            return api->set_view(view.position, view.forward, view.fov);
+        }
+
+        /// SetView and SetViewRolled: the view is the mod's, the last set applied.
+        int SetViewFor(lua_State* L, const char* function, bool rolled)
+        {
+            ScriptMod&     mod      = Self(L);
+            const char*    name     = rolled ? "SetViewRolled" : "SetView";
+            const wxl_vec3 position = CheckPoint(L, 1, name, "position");
+            const wxl_vec3 forward  = CheckPoint(L, 2, name, "forward");
+            const lua_Number fov    = CheckNumber(L, 3, function, "fov", "a number of radians, 0 to keep the client's");
+            const lua_Number roll   = rolled ? CheckNumber(L, 4, function, "roll",
+                                                           "a number of radians, positive to the camera's right")
+                                             : 0.0;
+
+            const wxl_camera_api* api = Camera();
+            if (!api) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const View       view{&mod, position, forward, static_cast<double>(fov), static_cast<double>(roll)};
+            const wxl_result result =
+                rolled ? (wxl::detail::Carries(api, &wxl_camera_api::set_view_rolled)
+                              ? api->set_view_rolled(position, forward, view.fov, view.roll)
+                              : WXL_E_UNSUPPORTED)
+                       : Place(api, view);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            g_viewers.erase(std::remove_if(g_viewers.begin(), g_viewers.end(),
+                                           [&](const View& held) { return HoldsView(held, mod); }),
+                            g_viewers.end());
+            g_viewers.insert(g_viewers.begin(), view);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_SetView(lua_State* L) { return SetViewFor(L, "wxl.camera.SetView", false); }
+        int L_SetViewRolled(lua_State* L) { return SetViewFor(L, "wxl.camera.SetViewRolled", true); }
+
+        /// A mod lets its view go: the view set before it, by a Lua mod still holding one,
+        /// becomes the runtime's again; with none left, the runtime's goes.
+        wxl_result LetGoView(ScriptMod& mod)
+        {
+            const auto held = std::find_if(g_viewers.begin(), g_viewers.end(),
+                                           [&](const View& view) { return HoldsView(view, mod); });
+            if (held == g_viewers.end()) return WXL_E_NOT_FOUND;
+            const bool applied = held == g_viewers.begin();
+            g_viewers.erase(held);
+            if (!applied) return WXL_OK;
+            const wxl_camera_api* api = Camera();
+            if (!api) return WXL_E_UNSUPPORTED;
+            if (!g_viewers.empty()) return Place(api, g_viewers.front());
+            if (!wxl::detail::Carries(api, &wxl_camera_api::release_view)) return WXL_E_UNSUPPORTED;
+            return api->release_view();
+        }
+
+        int L_ReleaseView(lua_State* L)
+        {
+            const wxl_result result = LetGoView(Self(L));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// Holds the pointer in the runtime at a point, for wxl.lua: at the centre through
+        /// capture_cursor, so that a runtime older than the point serves it too.
+        wxl_result HoldAt(const wxl_input_api* api, double x, double y)
+        {
+            if (x == 0.5 && y == 0.5)
+            {
+                if (!wxl::detail::Carries(api, &wxl_input_api::capture_cursor)) return WXL_E_UNSUPPORTED;
+                return api->capture_cursor(WXL_TRUE);
+            }
+            if (!wxl::detail::Carries(api, &wxl_input_api::capture_cursor_at)) return WXL_E_UNSUPPORTED;
+            return api->capture_cursor_at(x, y);
+        }
+
+        /// The runtime holds the pointer for wxl.lua while one Lua mod does, at the point of the
+        /// last to capture or move it.
+        wxl_result CaptureFor(ScriptMod& mod, bool captured, double x = 0.5, double y = 0.5)
+        {
+            const wxl_input_api* api = Input();
+            if (!api || !wxl::detail::Carries(api, &wxl_input_api::capture_cursor)) return WXL_E_UNSUPPORTED;
+            const auto held = std::find_if(g_capturers.begin(), g_capturers.end(),
+                                           [&](const Capture& capture) { return capture.mod == &mod; });
+            if (captured)
+            {
+                const bool moves = g_capturers.empty() || x != g_heldX || y != g_heldY;
+                if (moves)
+                {
+                    const wxl_result result = HoldAt(api, x, y);
+                    if (result != WXL_OK) return result;
+                    g_heldX = x;
+                    g_heldY = y;
+                }
+                if (held != g_capturers.end()) g_capturers.erase(held);
+                g_capturers.push_back(Capture{&mod, x, y});
+                return WXL_OK;
+            }
+            if (held == g_capturers.end()) return WXL_OK;
+            g_capturers.erase(held);
+            if (g_capturers.empty()) return api->capture_cursor(WXL_FALSE);
+            const Capture& last = g_capturers.back();
+            if (last.x == g_heldX && last.y == g_heldY) return WXL_OK;
+            g_heldX = last.x;
+            g_heldY = last.y;
+            return HoldAt(api, last.x, last.y);
+        }
+
+        int L_CaptureCursor(lua_State* L)
+        {
+            if (lua_isnone(L, 1))
+                return luaL_error(L, "wxl.input.CaptureCursor: 'captured' (argument 1) is missing; it takes a boolean");
+            luaL_checktype(L, 1, LUA_TBOOLEAN);
+            const wxl_result result = CaptureFor(Self(L), lua_toboolean(L, 1) != 0);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_CaptureCursorAt(lua_State* L)
+        {
+            const char*      function = "wxl.input.CaptureCursorAt";
+            const lua_Number x = CheckNumber(L, 1, function, "x", "a number from 0 (left) to 1 (right)");
+            const lua_Number y = CheckNumber(L, 2, function, "y", "a number from 0 (top) to 1 (bottom)");
+            if (!(x >= 0.0 && x <= 1.0 && y >= 0.0 && y <= 1.0)) return PushResultFailure(L, WXL_E_INVALID);
+            const wxl_result result = CaptureFor(Self(L), true, static_cast<double>(x), static_cast<double>(y));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// The Lua mods keeping the game out of its mouse look: wxl.lua blocks it while one does.
+        std::vector<ScriptMod*> g_blockers;
+
+        wxl_result BlockFor(ScriptMod& mod, bool blocked)
+        {
+            const wxl_input_api* api = Input();
+            if (!api || !wxl::detail::Carries(api, &wxl_input_api::block_mouse_look)) return WXL_E_UNSUPPORTED;
+            const auto held = std::find(g_blockers.begin(), g_blockers.end(), &mod);
+            if (blocked)
+            {
+                if (held != g_blockers.end()) return WXL_OK;
+                if (g_blockers.empty())
+                {
+                    const wxl_result result = api->block_mouse_look(WXL_TRUE);
+                    if (result != WXL_OK) return result;
+                }
+                g_blockers.push_back(&mod);
+                return WXL_OK;
+            }
+            if (held == g_blockers.end()) return WXL_OK;
+            g_blockers.erase(held);
+            return g_blockers.empty() ? api->block_mouse_look(WXL_FALSE) : WXL_OK;
+        }
+
+        int L_BlockMouseLook(lua_State* L)
+        {
+            if (lua_isnone(L, 1))
+                return luaL_error(L, "wxl.input.BlockMouseLook: 'blocked' (argument 1) is missing; it takes a boolean");
+            luaL_checktype(L, 1, LUA_TBOOLEAN);
+            const wxl_result result = BlockFor(Self(L), lua_toboolean(L, 1) != 0);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        // --- wxl.pose: the heads each Lua mod turned ------------------------------------------
+
+        const wxl_pose_api* Pose() { return wxl::api::Table<wxl_pose_api>(); }
+
+        /// The heads a Lua mod holds: the runtime sees them as wxl.lua's.
+        struct Head
+        {
+            ScriptMod* mod;
+            wxl_handle unit;
+        };
+        std::vector<Head> g_heads;
+
+        double CheckAngle(lua_State* L, int index, const char* name)
+        {
+            if (lua_isnoneornil(L, index))
+                luaL_error(L, "wxl.pose.Head: '%s' (argument %d) is missing; it takes a number", name, index);
+            return static_cast<double>(luaL_checknumber(L, index));
+        }
+
+        int L_Head(lua_State* L)
+        {
+            ScriptMod&       mod       = Self(L);
+            const wxl_handle unit      = CheckObject(L, 1);
+            const double     yaw       = CheckAngle(L, 2, "yaw");
+            const double     pitch     = CheckAngle(L, 3, "pitch");
+            const double     smoothing = CheckAngle(L, 4, "smoothing");
+            const wxl_pose_api* api = Pose();
+            if (!api || !wxl::detail::Carries(api, &wxl_pose_api::head)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->head(unit, yaw, pitch, smoothing);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            for (Head& head : g_heads)
+                if (head.unit == unit)
+                {
+                    head.mod = &mod;
+                    lua_pushboolean(L, 1);
+                    return 1;
+                }
+            g_heads.push_back(Head{&mod, unit});
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_ReleaseHead(lua_State* L)
+        {
+            ScriptMod&       mod  = Self(L);
+            const wxl_handle unit = CheckObject(L, 1);
+            const auto held = std::find_if(g_heads.begin(), g_heads.end(),
+                                           [&](const Head& head) { return head.mod == &mod && head.unit == unit; });
+            if (held == g_heads.end()) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            g_heads.erase(held);
+            const wxl_pose_api* api = Pose();
+            if (!api || !wxl::detail::Carries(api, &wxl_pose_api::release_head)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->release_head(unit);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        // --- wxl.animation: the animations each Lua mod plays ------------------------------------
+
+        const wxl_animation_api* Animations() { return wxl::api::Table<wxl_animation_api>(); }
+
+        /// The unit a Lua mod plays an animation on: the runtime sees every one as wxl.lua's, one
+        /// per unit, so the last Lua mod to play on a unit holds it.
+        struct Played
+        {
+            ScriptMod* mod;
+            wxl_handle unit;
+        };
+        std::vector<Played> g_played;
+
+        uint32_t CheckU32(lua_State* L, int index, const char* name, uint32_t absent)
+        {
+            if (lua_isnoneornil(L, index)) return absent;
+            const lua_Number value = luaL_checknumber(L, index);
+            if (!(value >= 0.0) || value > 4294967295.0 || value != std::floor(value))
+                luaL_error(L, "wxl.animation.Play: '%s' (argument %d) takes a whole number from 0", name, index);
+            return static_cast<uint32_t>(value);
+        }
+
+        int L_AnimationPlay(lua_State* L)
+        {
+            ScriptMod&       mod   = Self(L);
+            const wxl_handle unit  = CheckObject(L, 1);
+            if (lua_isnoneornil(L, 2)) luaL_error(L, "wxl.animation.Play: 'anim_id' (argument 2) is missing; it takes an AnimationData id");
+            const uint32_t   anim  = CheckU32(L, 2, "anim_id", 0);
+            const uint32_t   flags = CheckU32(L, 3, "flags", 0);
+            const double     speed = lua_isnoneornil(L, 4) ? 0.0 : static_cast<double>(luaL_checknumber(L, 4));
+            const wxl_animation_api* api = Animations();
+            if (!api || !wxl::detail::Carries(api, &wxl_animation_api::play)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->play(unit, anim, flags, speed);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            const auto held = std::find_if(g_played.begin(), g_played.end(), [&](const Played& p) { return p.unit == unit; });
+            if (held != g_played.end())
+                held->mod = &mod;
+            else
+                g_played.push_back(Played{&mod, unit});
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_AnimationStop(lua_State* L)
+        {
+            ScriptMod&       mod  = Self(L);
+            const wxl_handle unit = CheckObject(L, 1);
+            const auto held = std::find_if(g_played.begin(), g_played.end(),
+                                           [&](const Played& p) { return p.mod == &mod && p.unit == unit; });
+            if (held == g_played.end()) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            g_played.erase(held);
+            const wxl_animation_api* api = Animations();
+            if (!api || !wxl::detail::Carries(api, &wxl_animation_api::stop)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->stop(unit);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// A Lua mod's animations end with it; one that ended by itself answers not found, which
+        /// is fine.
+        void StopAnimations(ScriptMod& mod)
+        {
+            const wxl_animation_api* api = Animations();
+            for (size_t i = g_played.size(); i-- > 0;)
+            {
+                if (g_played[i].mod != &mod) continue;
+                if (api && wxl::detail::Carries(api, &wxl_animation_api::stop)) api->stop(g_played[i].unit);
+                g_played.erase(g_played.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
+
+        // --- wxl.highlight: the objects each Lua mod highlighted -------------------------------
+
+        const wxl_highlight_api* Highlight() { return wxl::api::Table<wxl_highlight_api>(); }
+
+        /// The highlights a Lua mod holds: the runtime sees them as wxl.lua's, one per object.
+        struct Lit
+        {
+            ScriptMod* mod;
+            wxl_handle target;
+        };
+        std::vector<Lit> g_lit;
+
+        float CheckWidth(lua_State* L, int index, const char* name)
+        {
+            if (lua_isnoneornil(L, index))
+                luaL_error(L, "wxl.highlight.Set: '%s' (argument %d) is missing; it takes a number", name, index);
+            return static_cast<float>(luaL_checknumber(L, index));
+        }
+
+        int L_HighlightSet(lua_State* L)
+        {
+            ScriptMod&       mod    = Self(L);
+            const wxl_handle target = CheckObject(L, 1);
+            if (lua_isnoneornil(L, 2)) luaL_error(L, "wxl.highlight.Set: 'color' (argument 2) is missing; it takes 0xAARRGGBB");
+            const double color = luaL_checknumber(L, 2);
+            if (!(color >= 0.0 && color <= 4294967295.0) || color != static_cast<double>(static_cast<uint32_t>(color)))
+                luaL_error(L, "wxl.highlight.Set: 'color' (argument 2) must be a whole number from 0 to 0xFFFFFFFF");
+            const float outline  = CheckWidth(L, 3, "outline");
+            const float glow     = CheckWidth(L, 4, "glow");
+            const float strength = CheckWidth(L, 5, "glow_strength");
+            const wxl_highlight_api* api = Highlight();
+            if (!api || !wxl::detail::Carries(api, &wxl_highlight_api::set)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set(target, static_cast<uint32_t>(color), outline, glow, strength);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            for (Lit& lit : g_lit)
+                if (lit.target == target)
+                {
+                    lit.mod = &mod; // the last Lua mod to set it holds it, as among native mods
+                    lua_pushboolean(L, 1);
+                    return 1;
+                }
+            g_lit.push_back(Lit{&mod, target});
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_HighlightClear(lua_State* L)
+        {
+            ScriptMod&       mod    = Self(L);
+            const wxl_handle target = CheckObject(L, 1);
+            const auto held = std::find_if(g_lit.begin(), g_lit.end(),
+                                           [&](const Lit& lit) { return lit.mod == &mod && lit.target == target; });
+            if (held == g_lit.end()) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            g_lit.erase(held);
+            const wxl_highlight_api* api = Highlight();
+            if (!api || !wxl::detail::Carries(api, &wxl_highlight_api::clear)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->clear(target);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// A Lua mod's highlights are taken off.
+        void ClearHighlights(ScriptMod& mod)
+        {
+            const wxl_highlight_api* api = Highlight();
+            for (size_t i = g_lit.size(); i-- > 0;)
+            {
+                if (g_lit[i].mod != &mod) continue;
+                if (api && wxl::detail::Carries(api, &wxl_highlight_api::clear)) api->clear(g_lit[i].target);
+                g_lit.erase(g_lit.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
+
+        int L_HighlightClearAll(lua_State* L)
+        {
+            ClearHighlights(Self(L));
+            return 0;
+        }
+
+        // --- wxl.selectioncircle: the circles each Lua mod changed ---------------------------
+
+        const wxl_selectioncircle_api* Circles() { return wxl::api::Table<wxl_selectioncircle_api>(); }
+
+        constexpr uint32_t kCircleKinds     = 3;
+        constexpr uint32_t kCircleReactions = 9; ///< the eight wxl_reaction values, then none
+
+        /// The Lua mod that last changed each kind and reaction: the runtime sees them all as
+        /// wxl.lua's, so a mod's reset gives back only what it holds.
+        ScriptMod* g_circleCells[kCircleKinds][kCircleReactions] = {};
+
+        struct CircleObject
+        {
+            ScriptMod* mod;
+            wxl_handle target;
+        };
+        std::vector<CircleObject> g_circleObjects;
+
+        constexpr const char* kCircleKindNames[kCircleKinds] = {"target", "pet_target", "move_marker"};
+        constexpr const char* kCircleReactionNames[kCircleReactions] = {
+            "hated", "hostile", "unfriendly", "neutral", "friendly", "honored", "revered", "exalted", "none"};
+
+        /// One name of `names`, as its bit; 0 for a name not there.
+        uint32_t CircleBit(const char* name, const char* const* names, uint32_t count)
+        {
+            for (uint32_t i = 0; i < count; ++i)
+                if (std::strcmp(names[i], name) == 0) return 1u << i;
+            return 0;
+        }
+
+        /// A mask of kinds or reactions as a Lua mod gives it: nil (all), a whole number (the
+        /// mask), a name, or a list of names. `all` is the mask of every bit.
+        uint32_t CheckCircleMask(lua_State* L, int index, const char* call, const char* what, const char* const* names,
+                                 uint32_t count, uint32_t all)
+        {
+            if (lua_isnoneornil(L, index)) return 0;
+            if (lua_type(L, index) == LUA_TNUMBER)
+            {
+                const double mask = lua_tonumber(L, index);
+                if (!(mask >= 0.0 && mask <= static_cast<double>(all)) || mask != static_cast<double>(static_cast<uint32_t>(mask)))
+                    luaL_error(L, "wxl.selectioncircle.%s: '%s' (argument %d) must be a mask from 0 to %u", call, what, index, all);
+                return static_cast<uint32_t>(mask);
+            }
+            if (lua_type(L, index) == LUA_TSTRING)
+            {
+                const char* name = lua_tostring(L, index);
+                if (std::strcmp(name, "all") == 0) return 0;
+                if (const uint32_t bit = CircleBit(name, names, count)) return bit;
+                luaL_error(L, "wxl.selectioncircle.%s: '%s' (argument %d) has no %s named \"%s\"", call, what, index,
+                           what, name);
+            }
+            if (lua_type(L, index) == LUA_TTABLE)
+            {
+                uint32_t mask = 0;
+                for (int i = 1;; ++i)
+                {
+                    lua_rawgeti(L, index, i);
+                    if (lua_isnil(L, -1))
+                    {
+                        lua_pop(L, 1);
+                        break;
+                    }
+                    const char*    name = lua_tostring(L, -1);
+                    const uint32_t bit  = name ? CircleBit(name, names, count) : 0;
+                    lua_pop(L, 1);
+                    if (!bit)
+                        luaL_error(L, "wxl.selectioncircle.%s: '%s' (argument %d) has an entry %d that names no %s", call,
+                                   what, index, i, what);
+                    mask |= bit;
+                }
+                return mask;
+            }
+            luaL_error(L, "wxl.selectioncircle.%s: '%s' (argument %d) takes nil, a name, a list of names or a mask", call,
+                       what, index);
+            return 0;
+        }
+
+        uint32_t CheckCircleKinds(lua_State* L, int index, const char* call)
+        {
+            return CheckCircleMask(L, index, call, "kinds", kCircleKindNames, kCircleKinds, WXL_SELECTIONCIRCLE_ALL_KINDS);
+        }
+
+        uint32_t CheckCircleReactions(lua_State* L, int index, const char* call)
+        {
+            return CheckCircleMask(L, index, call, "reactions", kCircleReactionNames, kCircleReactions,
+                                   WXL_SELECTIONCIRCLE_ALL_REACTIONS);
+        }
+
+        struct CircleStyle
+        {
+            std::string texture;
+            uint32_t    color = 0;
+            float       scale = 0.0f;
+        };
+
+        /// A style table {texture, color, scale}, each left out keeping the game's.
+        CircleStyle CheckCircleStyle(lua_State* L, int index, const char* call)
+        {
+            if (!lua_istable(L, index))
+                luaL_error(L, "wxl.selectioncircle.%s: 'style' (argument %d) is missing; it takes a table {texture, color, scale}",
+                           call, index);
+            CircleStyle style;
+            lua_getfield(L, index, "texture");
+            if (!lua_isnil(L, -1))
+            {
+                if (lua_type(L, -1) != LUA_TSTRING)
+                    luaL_error(L, "wxl.selectioncircle.%s: the style's 'texture' must be a file's path", call);
+                size_t      size = 0;
+                const char* text = lua_tolstring(L, -1, &size);
+                style.texture.assign(text, size);
+            }
+            lua_pop(L, 1);
+            lua_getfield(L, index, "color");
+            if (!lua_isnil(L, -1))
+            {
+                const double color = lua_type(L, -1) == LUA_TNUMBER ? lua_tonumber(L, -1) : -1.0;
+                if (!(color >= 0.0 && color <= 4294967295.0) || color != static_cast<double>(static_cast<uint32_t>(color)))
+                    luaL_error(L, "wxl.selectioncircle.%s: the style's 'color' must be a whole number from 0 to 0xFFFFFFFF", call);
+                style.color = static_cast<uint32_t>(color);
+            }
+            lua_pop(L, 1);
+            lua_getfield(L, index, "scale");
+            if (!lua_isnil(L, -1))
+            {
+                if (lua_type(L, -1) != LUA_TNUMBER) luaL_error(L, "wxl.selectioncircle.%s: the style's 'scale' must be a number", call);
+                style.scale = static_cast<float>(lua_tonumber(L, -1));
+            }
+            lua_pop(L, 1);
+            return style;
+        }
+
+        /// The cells of a mask of kinds and reactions, 0 meaning all of either.
+        template <class Fn>
+        void ForCircleCells(uint32_t kinds, uint32_t reactions, Fn&& fn)
+        {
+            if (!kinds) kinds = WXL_SELECTIONCIRCLE_ALL_KINDS;
+            if (!reactions) reactions = WXL_SELECTIONCIRCLE_ALL_REACTIONS;
+            for (uint32_t k = 0; k < kCircleKinds; ++k)
+                for (uint32_t r = 0; r < kCircleReactions; ++r)
+                    if ((kinds & (1u << k)) && (reactions & (1u << r))) fn(k, r);
+        }
+
+        void HoldCircleCells(ScriptMod& mod, uint32_t kinds, uint32_t reactions)
+        {
+            ForCircleCells(kinds, reactions, [&](uint32_t k, uint32_t r) { g_circleCells[k][r] = &mod; });
+        }
+
+        void HoldCircleObject(ScriptMod& mod, wxl_handle target)
+        {
+            for (CircleObject& held : g_circleObjects)
+                if (held.target == target)
+                {
+                    held.mod = &mod; // the last Lua mod to change it holds it, as among native mods
+                    return;
+                }
+            g_circleObjects.push_back(CircleObject{&mod, target});
+        }
+
+        int PushCircleResult(lua_State* L, wxl_result result)
+        {
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_CircleHide(lua_State* L)
+        {
+            ScriptMod&     mod       = Self(L);
+            const uint32_t kinds     = CheckCircleKinds(L, 1, "Hide");
+            const uint32_t reactions = CheckCircleReactions(L, 2, "Hide");
+            const wxl_selectioncircle_api* api = Circles();
+            if (!api || !wxl::detail::Carries(api, &wxl_selectioncircle_api::hide)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->hide(kinds, reactions);
+            if (result == WXL_OK) HoldCircleCells(mod, kinds, reactions);
+            return PushCircleResult(L, result);
+        }
+
+        int L_CircleSetStyle(lua_State* L)
+        {
+            ScriptMod&        mod       = Self(L);
+            const uint32_t    kinds     = CheckCircleKinds(L, 1, "SetStyle");
+            const uint32_t    reactions = CheckCircleReactions(L, 2, "SetStyle");
+            const CircleStyle style     = CheckCircleStyle(L, 3, "SetStyle");
+            const wxl_selectioncircle_api* api = Circles();
+            if (!api || !wxl::detail::Carries(api, &wxl_selectioncircle_api::set_style))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set_style(kinds, reactions, Str(style.texture), style.color, style.scale);
+            if (result == WXL_OK) HoldCircleCells(mod, kinds, reactions);
+            return PushCircleResult(L, result);
+        }
+
+        /// Gives back the cells of a mask a Lua mod holds; the others stay as their holder left them.
+        void ResetCircleCells(ScriptMod& mod, uint32_t kinds, uint32_t reactions)
+        {
+            const wxl_selectioncircle_api* api = Circles();
+            ForCircleCells(kinds, reactions, [&](uint32_t k, uint32_t r) {
+                if (g_circleCells[k][r] != &mod) return;
+                g_circleCells[k][r] = nullptr;
+                if (api && wxl::detail::Carries(api, &wxl_selectioncircle_api::reset)) api->reset(1u << k, 1u << r);
+            });
+        }
+
+        int L_CircleReset(lua_State* L)
+        {
+            ScriptMod&     mod       = Self(L);
+            const uint32_t kinds     = CheckCircleKinds(L, 1, "Reset");
+            const uint32_t reactions = CheckCircleReactions(L, 2, "Reset");
+            const wxl_selectioncircle_api* api = Circles();
+            if (!api || !wxl::detail::Carries(api, &wxl_selectioncircle_api::reset)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            ResetCircleCells(mod, kinds, reactions);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_CircleHideObject(lua_State* L)
+        {
+            ScriptMod&       mod    = Self(L);
+            const wxl_handle target = CheckObject(L, 1);
+            const wxl_selectioncircle_api* api = Circles();
+            if (!api || !wxl::detail::Carries(api, &wxl_selectioncircle_api::hide_object))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->hide_object(target);
+            if (result == WXL_OK) HoldCircleObject(mod, target);
+            return PushCircleResult(L, result);
+        }
+
+        int L_CircleSetObjectStyle(lua_State* L)
+        {
+            ScriptMod&        mod    = Self(L);
+            const wxl_handle  target = CheckObject(L, 1);
+            const CircleStyle style  = CheckCircleStyle(L, 2, "SetObjectStyle");
+            const wxl_selectioncircle_api* api = Circles();
+            if (!api || !wxl::detail::Carries(api, &wxl_selectioncircle_api::set_object_style))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set_object_style(target, Str(style.texture), style.color, style.scale);
+            if (result == WXL_OK) HoldCircleObject(mod, target);
+            return PushCircleResult(L, result);
+        }
+
+        int L_CircleResetObject(lua_State* L)
+        {
+            ScriptMod&       mod    = Self(L);
+            const wxl_handle target = CheckObject(L, 1);
+            const auto held = std::find_if(g_circleObjects.begin(), g_circleObjects.end(),
+                                           [&](const CircleObject& o) { return o.mod == &mod && o.target == target; });
+            if (held == g_circleObjects.end()) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            g_circleObjects.erase(held);
+            const wxl_selectioncircle_api* api = Circles();
+            if (!api || !wxl::detail::Carries(api, &wxl_selectioncircle_api::reset_object))
+                return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            return PushCircleResult(L, api->reset_object(target));
+        }
+
+        /// Everything a Lua mod changed on the circles is given back.
+        void ResetCircles(ScriptMod& mod)
+        {
+            ResetCircleCells(mod, 0, 0);
+            const wxl_selectioncircle_api* api = Circles();
+            for (size_t i = g_circleObjects.size(); i-- > 0;)
+            {
+                if (g_circleObjects[i].mod != &mod) continue;
+                if (api && wxl::detail::Carries(api, &wxl_selectioncircle_api::reset_object))
+                    api->reset_object(g_circleObjects[i].target);
+                g_circleObjects.erase(g_circleObjects.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
+
+        int L_CircleResetAll(lua_State* L)
+        {
+            ResetCircles(Self(L));
+            return 0;
+        }
+
+        // --- wxl.cvar: the names each Lua mod registered -------------------------------------
+
+        const wxl_cvar_api* CVars() { return wxl::api::Table<wxl_cvar_api>(); }
+
+        /// A variable a Lua mod registered: the runtime sees every Lua mod as wxl.lua, so which
+        /// of them holds a name is kept here.
+        struct CVarName
+        {
+            std::string key; ///< the name without case, as the client compares names
+            std::string name;
+            ScriptMod*  mod;
+        };
+        std::vector<CVarName> g_cvarNames;
+
+        constexpr uint32_t    kCVarFlagCount                 = 7;
+        constexpr const char* kCVarFlagNames[kCVarFlagCount] = {"saved",   "account",   "character", "read_only",
+                                                                "latched", "protected", "hidden"};
+
+        std::string CVarKey(std::string_view name)
+        {
+            std::string key(name);
+            for (char& c : key) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            return key;
+        }
+
+        CVarName* HeldCVar(std::string_view name)
+        {
+            const std::string key = CVarKey(name);
+            for (CVarName& held : g_cvarNames)
+                if (held.key == key) return &held;
+            return nullptr;
+        }
+
+        /// A variable's flags as a Lua mod gives them: nil (none), a whole number (the mask), a
+        /// flag's name, or a list of names.
+        uint32_t CheckCVarFlags(lua_State* L, int index)
+        {
+            if (lua_isnoneornil(L, index)) return 0;
+            if (lua_type(L, index) == LUA_TNUMBER)
+            {
+                const double mask = lua_tonumber(L, index);
+                if (!(mask >= 0.0 && mask <= static_cast<double>(WXL_CVAR_ALL_FLAGS)) ||
+                    mask != static_cast<double>(static_cast<uint32_t>(mask)))
+                    luaL_error(L, "wxl.cvar.Register: 'flags' (argument %d) must be a mask from 0 to %u", index,
+                               WXL_CVAR_ALL_FLAGS);
+                return static_cast<uint32_t>(mask);
+            }
+            const auto bitOf = [](const char* name) -> uint32_t {
+                for (uint32_t i = 0; i < kCVarFlagCount; ++i)
+                    if (std::strcmp(kCVarFlagNames[i], name) == 0) return 1u << i;
+                return 0;
+            };
+            if (lua_type(L, index) == LUA_TSTRING)
+            {
+                const char* name = lua_tostring(L, index);
+                if (const uint32_t bit = bitOf(name)) return bit;
+                luaL_error(L,
+                           "wxl.cvar.Register: 'flags' (argument %d) has no flag named \"%s\"; the flags are saved, "
+                           "account, character, read_only, latched, protected and hidden",
+                           index, name);
+            }
+            if (lua_type(L, index) == LUA_TTABLE)
+            {
+                uint32_t mask = 0;
+                for (int i = 1;; ++i)
+                {
+                    lua_rawgeti(L, index, i);
+                    if (lua_isnil(L, -1))
+                    {
+                        lua_pop(L, 1);
+                        break;
+                    }
+                    const char*    name = lua_tostring(L, -1);
+                    const uint32_t bit  = name ? bitOf(name) : 0;
+                    lua_pop(L, 1);
+                    if (!bit)
+                        luaL_error(L, "wxl.cvar.Register: 'flags' (argument %d) has an entry %d that names no flag", index, i);
+                    mask |= bit;
+                }
+                return mask;
+            }
+            luaL_error(L, "wxl.cvar.Register: 'flags' (argument %d) takes nil, a flag's name, a list of names or a mask",
+                       index);
+            return 0;
+        }
+
+        /// A value as a Lua mod gives it: a string, a number (as Lua writes it) or a boolean
+        /// ("1" or "0").
+        std::string CheckCVarValue(lua_State* L, int index, const char* call, const char* what)
+        {
+            switch (lua_type(L, index))
+            {
+            case LUA_TSTRING:
+            case LUA_TNUMBER:
+            {
+                size_t      size = 0;
+                const char* text = lua_tolstring(L, index, &size);
+                return std::string(text, size);
+            }
+            case LUA_TBOOLEAN: return lua_toboolean(L, index) ? "1" : "0";
+            default:
+                luaL_error(L, "wxl.cvar.%s: '%s' (argument %d) is missing; it takes a string, a number or a boolean", call,
+                           what, index);
+                return {};
+            }
+        }
+
+        int L_CVarRegister(lua_State* L)
+        {
+            ScriptMod&        mod = Self(L);
+            size_t            size = 0;
+            const char*       text = luaL_checklstring(L, 1, &size);
+            const std::string name(text, size);
+            const std::string value = CheckCVarValue(L, 2, "Register", "default");
+            const uint32_t    flags = CheckCVarFlags(L, 3);
+            std::string       help;
+            if (!lua_isnoneornil(L, 4))
+            {
+                const char* line = luaL_checklstring(L, 4, &size);
+                help.assign(line, size);
+            }
+            CVarName* held = HeldCVar(name);
+            if (held && held->mod != &mod)
+            {
+                wxl::Log(WXL_LOG_WARN, kTag,
+                         "mod " + mod.Id() + ": wxl.cvar.Register refused '" + name + "': Lua mod " + held->mod->Id() +
+                             " holds it; choose a name of your own (start it with a prefix of your mod)");
+                return PushResultFailure(L, WXL_E_INVALID);
+            }
+            const wxl_cvar_api* api = CVars();
+            if (!api || !wxl::detail::Carries(api, &wxl_cvar_api::register_cvar)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->register_cvar(Str(name), Str(value), flags, Str(help));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            if (!held) g_cvarNames.push_back(CVarName{CVarKey(name), name, &mod});
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_CVarRelease(lua_State* L)
+        {
+            ScriptMod&        mod  = Self(L);
+            size_t            size = 0;
+            const char*       text = luaL_checklstring(L, 1, &size);
+            const std::string name(text, size);
+            CVarName*         held = HeldCVar(name);
+            if (!held || held->mod != &mod) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            g_cvarNames.erase(g_cvarNames.begin() + (held - g_cvarNames.data()));
+            const wxl_cvar_api* api = CVars();
+            if (!api || !wxl::detail::Carries(api, &wxl_cvar_api::release)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->release(Str(name));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// A Lua mod's variables are given up: they stay, with their values.
+        void ReleaseCVars(ScriptMod& mod)
+        {
+            const wxl_cvar_api* api = CVars();
+            for (size_t i = g_cvarNames.size(); i-- > 0;)
+            {
+                if (g_cvarNames[i].mod != &mod) continue;
+                if (api && wxl::detail::Carries(api, &wxl_cvar_api::release)) api->release(Str(g_cvarNames[i].name));
+                g_cvarNames.erase(g_cvarNames.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
+
+        /// A mod's animations, its view, its hold on the pointer, its block of the mouse look, its heads, its
+        /// highlights, its circles and its console variables go with it.
+        void ReleaseViewAndPointer(ScriptMod& mod)
+        {
+            StopAnimations(mod);
+            ReleaseCVars(mod);
+            ResetCircles(mod);
+            ClearHighlights(mod);
+            LetGoView(mod);
+            CaptureFor(mod, false);
+            BlockFor(mod, false);
+            const wxl_pose_api* api = Pose();
+            for (size_t i = g_heads.size(); i-- > 0;)
+            {
+                if (g_heads[i].mod != &mod) continue;
+                if (api && wxl::detail::Carries(api, &wxl_pose_api::release_head)) api->release_head(g_heads[i].unit);
+                g_heads.erase(g_heads.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
+
+        // --- wxl.texture: a table of groups and colours as Lua writes them ---------------------
+
+        const wxl_texture_api* Textures() { return wxl::api::Table<wxl_texture_api>(); }
+
+        int HexDigit(char c)
+        {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
+        }
+
+        /// A colour as a Lua mod writes it: "rrggbbaa" or "rrggbb" (an optional '#' first, the
+        /// order CSS writes), or a whole number 0xAARRGGBB. Answers it as 0xAARRGGBB.
+        uint32_t CheckTextureColor(lua_State* L, int index, const std::string& what)
+        {
+            if (lua_type(L, index) == LUA_TNUMBER)
+            {
+                const double value = lua_tonumber(L, index);
+                if (!(value >= 0.0 && value <= 4294967295.0) || value != static_cast<double>(static_cast<uint32_t>(value)))
+                    luaL_error(L, "wxl.texture.Make: %s must be a whole number from 0 to 0xFFFFFFFF (0xAARRGGBB)", what.c_str());
+                return static_cast<uint32_t>(value);
+            }
+            if (lua_type(L, index) == LUA_TSTRING)
+            {
+                size_t      size = 0;
+                const char* text = lua_tolstring(L, index, &size);
+                if (size && text[0] == '#')
+                {
+                    ++text;
+                    --size;
+                }
+                uint32_t rgba = 0;
+                bool     ok   = size == 6 || size == 8;
+                for (size_t i = 0; ok && i < size; ++i)
+                {
+                    const int digit = HexDigit(text[i]);
+                    ok              = digit >= 0;
+                    rgba            = (rgba << 4) | static_cast<uint32_t>(digit < 0 ? 0 : digit);
+                }
+                if (ok) return size == 6 ? (0xFF000000u | rgba) : ((rgba & 0xFFu) << 24) | (rgba >> 8);
+                luaL_error(L, "wxl.texture.Make: %s \"%s\" is not a colour: write \"rrggbb\" or \"rrggbbaa\" in hex",
+                           what.c_str(), lua_tostring(L, index));
+            }
+            luaL_error(L, "wxl.texture.Make: %s must be a colour, \"rrggbbaa\" or 0xAARRGGBB", what.c_str());
+            return 0;
+        }
+
+        /// The groups table: {id = colour}, {id = false} (hidden), or {id = {color, width, visible}}.
+        std::vector<wxl_texture_group> CheckTextureGroups(lua_State* L, int index, std::deque<std::string>& ids)
+        {
+            std::vector<wxl_texture_group> groups;
+            if (lua_isnoneornil(L, index)) return groups;
+            if (!lua_istable(L, index))
+                luaL_error(L, "wxl.texture.Make: 'groups' (argument %d) takes a table {id = colour or {color, width, visible}}",
+                           index);
+            lua_pushnil(L);
+            while (lua_next(L, index) != 0)
+            {
+                if (lua_type(L, -2) != LUA_TSTRING)
+                    luaL_error(L, "wxl.texture.Make: the groups are named by the SVG's ids, strings; one key is a %s",
+                               luaL_typename(L, -2));
+                ids.emplace_back(lua_tostring(L, -2));
+                const std::string& id = ids.back();
+                wxl_texture_group  group{};
+                group.struct_size = sizeof group;
+                group.id          = Str(id);
+                const int value   = lua_gettop(L);
+                switch (lua_type(L, value))
+                {
+                case LUA_TSTRING:
+                case LUA_TNUMBER:
+                    group.set |= WXL_TEXTURE_SET_COLOR;
+                    group.color = CheckTextureColor(L, value, "group '" + id + "'");
+                    break;
+                case LUA_TBOOLEAN:
+                    group.set |= WXL_TEXTURE_SET_VISIBLE;
+                    group.visible = lua_toboolean(L, value) ? WXL_TRUE : WXL_FALSE;
+                    break;
+                case LUA_TTABLE:
+                    lua_pushnil(L);
+                    while (lua_next(L, value) != 0)
+                    {
+                        const char* field = lua_type(L, -2) == LUA_TSTRING ? lua_tostring(L, -2) : "";
+                        if (std::strcmp(field, "color") == 0)
+                        {
+                            group.set |= WXL_TEXTURE_SET_COLOR;
+                            group.color = CheckTextureColor(L, lua_gettop(L), "group '" + id + "' color");
+                        }
+                        else if (std::strcmp(field, "width") == 0)
+                        {
+                            if (lua_type(L, -1) != LUA_TNUMBER || !(lua_tonumber(L, -1) >= 0.0))
+                                luaL_error(L, "wxl.texture.Make: group '%s' width must be a number, 0 or more", id.c_str());
+                            group.set |= WXL_TEXTURE_SET_WIDTH;
+                            group.width = static_cast<float>(lua_tonumber(L, -1));
+                        }
+                        else if (std::strcmp(field, "visible") == 0)
+                        {
+                            if (lua_type(L, -1) != LUA_TBOOLEAN)
+                                luaL_error(L, "wxl.texture.Make: group '%s' visible must be true or false", id.c_str());
+                            group.set |= WXL_TEXTURE_SET_VISIBLE;
+                            group.visible = lua_toboolean(L, -1) ? WXL_TRUE : WXL_FALSE;
+                        }
+                        else
+                            luaL_error(L, "wxl.texture.Make: group '%s' has a field '%s'; it takes color, width and visible",
+                                       id.c_str(), field);
+                        lua_pop(L, 1);
+                    }
+                    break;
+                default:
+                    luaL_error(L, "wxl.texture.Make: group '%s' takes a colour, false, or a table {color, width, visible}",
+                               id.c_str());
+                }
+                groups.push_back(group);
+                lua_pop(L, 1);
+            }
+            return groups;
+        }
+
+        uint32_t CheckTextureEdge(lua_State* L, int index, const char* what)
+        {
+            if (lua_isnoneornil(L, index)) return 0;
+            const double edge = lua_type(L, index) == LUA_TNUMBER ? lua_tonumber(L, index) : -1.0;
+            if (!(edge >= 0.0 && edge <= 4294967295.0) || edge != static_cast<double>(static_cast<uint32_t>(edge)))
+                luaL_error(L, "wxl.texture.Make: '%s' (argument %d) must be a whole number of pixels, or nil for the source's own",
+                           what, index);
+            return static_cast<uint32_t>(edge);
+        }
+
+        /// Make(source, width, height [, groups [, tint]]): path, right, bottom, texture width and
+        /// height, or nil and why. ".\\" names this Lua mod's own folder.
+        int L_TextureMake(lua_State* L)
+        {
+            ScriptMod&  mod  = Self(L);
+            size_t      size = 0;
+            const char* text = luaL_checklstring(L, 1, &size);
+            std::string source(text, size);
+            if (source.size() >= 2 && source[0] == '.' && (source[1] == '\\' || source[1] == '/'))
+                source = "Mods\\" + mod.Directory().filename().string() + "\\" + source.substr(2);
+            const uint32_t                       width  = CheckTextureEdge(L, 2, "width");
+            const uint32_t                       height = CheckTextureEdge(L, 3, "height");
+            std::deque<std::string>              ids;
+            const std::vector<wxl_texture_group> groups = CheckTextureGroups(L, 4, ids);
+            const uint32_t tint = lua_isnoneornil(L, 5) ? 0u : CheckTextureColor(L, 5, "'tint' (argument 5)");
+
+            const wxl_texture_api* api = Textures();
+            if (!api || !wxl::detail::Carries(api, &wxl_texture_api::make)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_texture_request request{};
+            request.struct_size = sizeof request;
+            request.source      = Str(source);
+            request.width       = width;
+            request.height      = height;
+            request.groups      = groups.empty() ? nullptr : groups.data();
+            request.group_count = static_cast<uint32_t>(groups.size());
+            request.tint        = tint;
+            wxl_texture made{};
+            made.struct_size        = sizeof made;
+            const wxl_result result = api->make(&request, &made);
+            if (result != WXL_OK)
+            {
+                if (!made.reason[0]) return PushResultFailure(L, result);
+                lua_pushnil(L);
+                lua_pushstring(L, made.reason);
+                return 2;
+            }
+            lua_pushstring(L, made.path);
+            lua_pushnumber(L, made.right);
+            lua_pushnumber(L, made.bottom);
+            lua_pushnumber(L, made.texture_width);
+            lua_pushnumber(L, made.texture_height);
+            return 5;
+        }
+
+        int L_TextureStats(lua_State* L)
+        {
+            const wxl_texture_api* api = Textures();
+            if (!api || !wxl::detail::Carries(api, &wxl_texture_api::stats)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_texture_stats stats{};
+            stats.struct_size       = sizeof stats;
+            const wxl_result result = api->stats(&stats);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_createtable(L, 0, 8);
+            const auto field = [&](const char* name, double value) {
+                lua_pushnumber(L, value);
+                lua_setfield(L, -2, name);
+            };
+            field("textures", stats.textures);
+            field("resident", stats.resident);
+            field("texture_limit", stats.texture_limit);
+            field("bytes", static_cast<double>(stats.bytes));
+            field("byte_limit", static_cast<double>(stats.byte_limit));
+            field("made", static_cast<double>(stats.made));
+            field("reused", static_cast<double>(stats.reused));
+            field("released", static_cast<double>(stats.released));
+            return 1;
+        }
+
+        // --- wxl.terrain: each Lua mod's edits in a layer of its own ------------------------
+
+        const wxl_terrain_api* Terrain() { return wxl::api::Table<wxl_terrain_api>(); }
+
+        /// The layer of wxl.lua's edits each Lua mod writes in: the runtime sees every Lua mod as
+        /// wxl.lua, so a mod's reset and its unload take off its own edits only.
+        std::vector<std::pair<ScriptMod*, uint32_t>> g_terrainLayers;
+        uint32_t                                     g_nextTerrainLayer = 1;
+
+        uint32_t TerrainLayer(ScriptMod& mod)
+        {
+            for (const auto& held : g_terrainLayers)
+                if (held.first == &mod) return held.second;
+            g_terrainLayers.emplace_back(&mod, g_nextTerrainLayer);
+            return g_nextTerrainLayer++;
+        }
+
+        void PushVec3(lua_State* L, const wxl_vec3& v)
+        {
+            lua_createtable(L, 0, 3);
+            lua_pushnumber(L, v.x);
+            lua_setfield(L, -2, "x");
+            lua_pushnumber(L, v.y);
+            lua_setfield(L, -2, "y");
+            lua_pushnumber(L, v.z);
+            lua_setfield(L, -2, "z");
+        }
+
+        wxl_vec3 CheckTerrainPoint(lua_State* L, int index, const char* call, const char* what)
+        {
+            if (!lua_istable(L, index))
+                luaL_error(L, "wxl.terrain.%s: '%s' (argument %d) must be a point {x, y, z}", call, what, index);
+            lua_getfield(L, index, "x");
+            lua_getfield(L, index, "y");
+            lua_getfield(L, index, "z");
+            if (!lua_isnumber(L, -3) || !lua_isnumber(L, -2) || !lua_isnumber(L, -1))
+                luaL_error(L, "wxl.terrain.%s: '%s' (argument %d) must be a point with numbers x, y and z", call, what, index);
+            const wxl_vec3 v{static_cast<float>(lua_tonumber(L, -3)), static_cast<float>(lua_tonumber(L, -2)),
+                             static_cast<float>(lua_tonumber(L, -1))};
+            lua_pop(L, 3);
+            return v;
+        }
+
+        int32_t CheckChunk(lua_State* L, int index, const char* call, const char* what)
+        {
+            if (!lua_isnumber(L, index))
+                luaL_error(L, "wxl.terrain.%s: '%s' (argument %d) must be a chunk's column or row, 0 to 1023", call, what, index);
+            return static_cast<int32_t>(lua_tointeger(L, index));
+        }
+
+        int L_TerrainTrace(lua_State* L)
+        {
+            const wxl_vec3         start  = CheckTerrainPoint(L, 1, "Trace", "start");
+            const wxl_vec3         finish = CheckTerrainPoint(L, 2, "Trace", "finish");
+            const wxl_terrain_api* api    = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::trace)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_terrain_hit hit{};
+            hit.struct_size = sizeof hit;
+            if (api->trace(start, finish, &hit) != WXL_TRUE)
+            {
+                lua_pushnil(L);
+                return 1;
+            }
+            lua_createtable(L, 0, 5);
+            PushVec3(L, hit.point);
+            lua_setfield(L, -2, "point");
+            PushVec3(L, hit.normal);
+            lua_setfield(L, -2, "normal");
+            lua_pushinteger(L, hit.chunk_x);
+            lua_setfield(L, -2, "chunk_x");
+            lua_pushinteger(L, hit.chunk_y);
+            lua_setfield(L, -2, "chunk_y");
+            lua_pushnumber(L, hit.fraction);
+            lua_setfield(L, -2, "fraction");
+            return 1;
+        }
+
+        int L_TerrainLocate(lua_State* L)
+        {
+            const double           x   = luaL_checknumber(L, 1);
+            const double           y   = luaL_checknumber(L, 2);
+            const wxl_terrain_api* api = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::locate)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_terrain_place place{};
+            place.struct_size = sizeof place;
+            if (api->locate(x, y, &place) != WXL_TRUE)
+            {
+                lua_pushnil(L);
+                return 1;
+            }
+            lua_createtable(L, 0, 6);
+            lua_pushinteger(L, place.chunk_x);
+            lua_setfield(L, -2, "chunk_x");
+            lua_pushinteger(L, place.chunk_y);
+            lua_setfield(L, -2, "chunk_y");
+            lua_pushinteger(L, place.cell_row);
+            lua_setfield(L, -2, "cell_row");
+            lua_pushinteger(L, place.cell_col);
+            lua_setfield(L, -2, "cell_col");
+            lua_pushinteger(L, place.nearest);
+            lua_setfield(L, -2, "nearest");
+            lua_pushboolean(L, place.loaded == WXL_TRUE);
+            lua_setfield(L, -2, "loaded");
+            return 1;
+        }
+
+        int L_TerrainVertices(lua_State* L)
+        {
+            const int32_t          cx       = CheckChunk(L, 1, "Vertices", "chunk_x");
+            const int32_t          cy       = CheckChunk(L, 2, "Vertices", "chunk_y");
+            const bool             original = lua_toboolean(L, 3) != 0;
+            const wxl_terrain_api* api      = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::vertices)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_vec3       out[WXL_TERRAIN_CHUNK_VERTICES];
+            const uint32_t count = api->vertices(cx, cy, original ? WXL_TRUE : WXL_FALSE, out, WXL_TERRAIN_CHUNK_VERTICES);
+            if (!count) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            lua_createtable(L, static_cast<int>(count), 0);
+            for (uint32_t i = 0; i < count && i < WXL_TERRAIN_CHUNK_VERTICES; ++i)
+            {
+                PushVec3(L, out[i]);
+                lua_rawseti(L, -2, static_cast<int>(i) + 1);
+            }
+            return 1;
+        }
+
+        int L_TerrainVerticesIn(lua_State* L)
+        {
+            const double           x      = luaL_checknumber(L, 1);
+            const double           y      = luaL_checknumber(L, 2);
+            const double           radius = luaL_checknumber(L, 3);
+            const wxl_terrain_api* api    = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::vertices_in)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const uint32_t                  count = api->vertices_in(x, y, radius, nullptr, 0);
+            std::vector<wxl_terrain_vertex> out(count);
+            const uint32_t written = count ? api->vertices_in(x, y, radius, out.data(), count) : 0;
+            const uint32_t n       = written < count ? written : count;
+            lua_createtable(L, static_cast<int>(n), 0);
+            for (uint32_t i = 0; i < n; ++i)
+            {
+                const wxl_terrain_vertex& v = out[i];
+                lua_createtable(L, 0, 9);
+                lua_pushinteger(L, v.chunk_x);
+                lua_setfield(L, -2, "chunk_x");
+                lua_pushinteger(L, v.chunk_y);
+                lua_setfield(L, -2, "chunk_y");
+                lua_pushinteger(L, v.index);
+                lua_setfield(L, -2, "index");
+                lua_pushnumber(L, v.x);
+                lua_setfield(L, -2, "x");
+                lua_pushnumber(L, v.y);
+                lua_setfield(L, -2, "y");
+                lua_pushnumber(L, v.z);
+                lua_setfield(L, -2, "z");
+                lua_pushnumber(L, v.original_z);
+                lua_setfield(L, -2, "original_z");
+                lua_pushboolean(L, v.inner == WXL_TRUE);
+                lua_setfield(L, -2, "inner");
+                lua_pushboolean(L, v.loaded == WXL_TRUE);
+                lua_setfield(L, -2, "loaded");
+                lua_rawseti(L, -2, static_cast<int>(i) + 1);
+            }
+            return 1;
+        }
+
+        /// A number field of an edit's entry; a Lua error naming the entry when it is not one.
+        double EditField(lua_State* L, int position, const char* name)
+        {
+            lua_getfield(L, -1, name);
+            if (!lua_isnumber(L, -1))
+                luaL_error(L, "wxl.terrain.SetHeights: entry %d must be a table {chunk_x, chunk_y, index, height} of numbers; its %s is %s",
+                           position, name, luaL_typename(L, -1));
+            const double value = lua_tonumber(L, -1);
+            lua_pop(L, 1);
+            return value;
+        }
+
+        int L_TerrainSetHeights(lua_State* L)
+        {
+            ScriptMod& mod = Self(L);
+            if (!lua_istable(L, 1))
+                luaL_error(L, "wxl.terrain.SetHeights: 'heights' (argument 1) must be a list of {chunk_x, chunk_y, index, height}");
+            const int                       count = static_cast<int>(lua_objlen(L, 1));
+            std::vector<wxl_terrain_height> heights;
+            heights.reserve(static_cast<size_t>(count));
+            for (int n = 1; n <= count; ++n)
+            {
+                lua_rawgeti(L, 1, n);
+                if (!lua_istable(L, -1))
+                    luaL_error(L, "wxl.terrain.SetHeights: entry %d must be a table {chunk_x, chunk_y, index, height}", n);
+                wxl_terrain_height h{};
+                h.chunk_x = static_cast<int32_t>(EditField(L, n, "chunk_x"));
+                h.chunk_y = static_cast<int32_t>(EditField(L, n, "chunk_y"));
+                const double index = EditField(L, n, "index");
+                h.index  = index < 0 ? 0xFFFFFFFFu : static_cast<uint32_t>(index);
+                h.height = static_cast<float>(EditField(L, n, "height"));
+                lua_pop(L, 1);
+                heights.push_back(h);
+            }
+            const wxl_terrain_api* api = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::set_heights)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set_heights(heights.data(), static_cast<uint32_t>(heights.size()), TerrainLayer(mod));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_TerrainReset(lua_State* L)
+        {
+            ScriptMod&             mod = Self(L);
+            const int32_t          cx  = CheckChunk(L, 1, "Reset", "chunk_x");
+            const int32_t          cy  = CheckChunk(L, 2, "Reset", "chunk_y");
+            const wxl_terrain_api* api = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::reset_chunk)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->reset_chunk(cx, cy, TerrainLayer(mod));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_TerrainResetAll(lua_State* L)
+        {
+            ScriptMod&             mod = Self(L);
+            const wxl_terrain_api* api = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::reset_all)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->reset_all(TerrainLayer(mod));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_TerrainStats(lua_State* L)
+        {
+            const wxl_terrain_api* api = Terrain();
+            if (!api || !wxl::detail::Carries(api, &wxl_terrain_api::stats)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_terrain_stats stats{};
+            stats.struct_size       = sizeof stats;
+            const wxl_result result = api->stats(&stats);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_createtable(L, 0, 8);
+            const auto field = [&](const char* name, double value) {
+                lua_pushnumber(L, value);
+                lua_setfield(L, -2, name);
+            };
+            field("edited_chunks", stats.edited_chunks);
+            field("edited_vertices", stats.edited_vertices);
+            field("edits", static_cast<double>(stats.edits));
+            field("reapplied", static_cast<double>(stats.reapplied));
+            field("last_vertices", stats.last_vertices);
+            field("last_chunks", stats.last_chunks);
+            field("last_microseconds", stats.last_microseconds);
+            field("max_microseconds", stats.max_microseconds);
+            return 1;
+        }
+
+        /// A Lua mod's edits come off when it goes.
+        void ReleaseTerrain(ScriptMod& mod)
+        {
+            for (size_t i = 0; i < g_terrainLayers.size(); ++i)
+            {
+                if (g_terrainLayers[i].first != &mod) continue;
+                const wxl_terrain_api* api = Terrain();
+                if (api && wxl::detail::Carries(api, &wxl_terrain_api::reset_all)) api->reset_all(g_terrainLayers[i].second);
+                g_terrainLayers.erase(g_terrainLayers.begin() + static_cast<std::ptrdiff_t>(i));
+                return;
+            }
+        }
+
+        // --- wxl.render: tables into descriptions, push constants, the shaders each Lua mod replaced -
+
+        const wxl_render_api* Render() { return wxl::api::Table<wxl_render_api>(); }
+
+        /// A name of a list, or a whole number; @p where names the function and parameter for an error.
+        uint32_t CheckNamed(lua_State* L, int index, const char* const* names, uint32_t count, uint32_t first, const char* where)
+        {
+            if (lua_type(L, index) == LUA_TNUMBER)
+            {
+                const double value = lua_tonumber(L, index);
+                if (value < 0.0 || value > 4294967295.0 || value != static_cast<double>(static_cast<uint32_t>(value)))
+                    luaL_error(L, "%s must be a whole number from 0, or a name", where);
+                return static_cast<uint32_t>(value);
+            }
+            if (lua_type(L, index) == LUA_TSTRING)
+            {
+                const char* text = lua_tostring(L, index);
+                for (uint32_t i = 0; i < count; ++i)
+                    if (std::strcmp(text, names[i]) == 0) return first + i;
+            }
+            std::string choices;
+            for (uint32_t i = 0; i < count; ++i) choices += std::string(i ? ", \"" : "\"") + names[i] + "\"";
+            luaL_error(L, "%s must be one of %s, or its number", where, choices.c_str());
+            return 0;
+        }
+
+        constexpr const char* kRenderFormats[] = {"rgba8", "bgra8", "r8", "rg8", "r16f", "rg16f", "rgba16f", "r32f", "rgba32f", "depth32f"};
+        constexpr const char* kRenderKinds[]   = {"graphics", "fullscreen", "batch", "compute"};
+        constexpr const char* kRenderBlends[]  = {"none", "alpha", "add", "premultiplied", "multiply"};
+        constexpr const char* kRenderDepths[]  = {"off", "less", "less_equal", "equal", "greater", "greater_equal", "always"};
+        constexpr const char* kRenderCulls[]   = {"none", "back", "front", "batch"};
+        constexpr const char* kRenderShapes[]  = {"triangles", "triangle_strip", "lines", "points"};
+        constexpr uint32_t    kSpirvMagic      = 0x07230203u;
+
+        /// SPIR-V from a Lua string: the bytes themselves when they start with SPIR-V's magic,
+        /// otherwise the path of a file of the mod's own folder, read into @p bytes.
+        bool ReadSpirv(lua_State* L, ScriptMod& mod, int index, std::string& bytes, const char* where)
+        {
+            size_t      size = 0;
+            const char* text = lua_tolstring(L, index, &size);
+            if (!text) luaL_error(L, "%s must be SPIR-V: a string of its bytes, or the path of a .spv file of the mod's folder", where);
+            uint32_t magic = 0;
+            if (size >= 4) std::memcpy(&magic, text, 4);
+            if (magic == kSpirvMagic)
+            {
+                bytes.assign(text, size);
+                return true;
+            }
+            const std::filesystem::path relative = std::filesystem::path(std::string(text, size)).lexically_normal();
+            const std::string           first    = relative.empty() ? std::string() : relative.begin()->string();
+            if (relative.empty() || relative.is_absolute() || relative.has_root_name() || first == "..")
+                luaL_error(L, "%s: \"%s\" is not inside the mod's folder; give a path relative to it", where, text);
+            std::ifstream file(mod.Directory() / relative, std::ios::binary);
+            if (!file) luaL_error(L, "%s: \"%s\" cannot be read from the mod's folder", where, text);
+            bytes.assign(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+            std::memcpy(&magic, bytes.size() >= 4 ? bytes.data() : "\0\0\0\0", 4);
+            if (magic != kSpirvMagic) luaL_error(L, "%s: \"%s\" is not SPIR-V (no magic number at its start)", where, text);
+            return true;
+        }
+
+        /// Push constants or a batch's constants: a string of bytes, a table of numbers (each a
+        /// 32-bit float), or nothing.
+        void ReadPush(lua_State* L, int index, std::string& bytes, const char* where)
+        {
+            bytes.clear();
+            if (lua_isnoneornil(L, index)) return;
+            if (lua_type(L, index) == LUA_TSTRING)
+            {
+                size_t      size = 0;
+                const char* text = lua_tolstring(L, index, &size);
+                bytes.assign(text, size);
+                return;
+            }
+            if (lua_type(L, index) != LUA_TTABLE) luaL_error(L, "%s must be a table of numbers or a string of bytes", where);
+            const size_t count = lua_objlen(L, index);
+            if (count > WXL_RENDER_BATCH_BYTES / 4) luaL_error(L, "%s holds more than %d numbers", where, WXL_RENDER_BATCH_BYTES / 4);
+            bytes.resize(count * 4);
+            for (size_t i = 0; i < count; ++i)
+            {
+                lua_rawgeti(L, index, static_cast<int>(i) + 1);
+                if (lua_type(L, -1) != LUA_TNUMBER) luaL_error(L, "%s: entry %d is not a number", where, static_cast<int>(i) + 1);
+                const float value = static_cast<float>(lua_tonumber(L, -1));
+                std::memcpy(&bytes[i * 4], &value, 4);
+                lua_pop(L, 1);
+            }
+        }
+
+        /// A table field as a named value (absent: @p absent).
+        uint32_t FieldNamed(lua_State* L, int table, const char* field, const char* const* names, uint32_t count, uint32_t first,
+                            uint32_t absent, const char* function)
+        {
+            lua_getfield(L, table, field);
+            uint32_t value = absent;
+            if (!lua_isnil(L, -1))
+            {
+                const std::string where = std::string(function) + ": '" + field + "'";
+                value                   = CheckNamed(L, lua_gettop(L), names, count, first, where.c_str());
+            }
+            lua_pop(L, 1);
+            return value;
+        }
+
+        /// CreatePipeline(desc): a Pipeline, or nil and why.
+        int L_RenderCreatePipeline(lua_State* L)
+        {
+            ScriptMod& mod = Self(L);
+            const char* fn = "wxl.render.CreatePipeline";
+            if (!lua_istable(L, 1)) luaL_error(L, "%s: 'desc' (argument 1) must be a table", fn);
+            wxl_render_pipeline_desc desc{};
+            desc.struct_size = sizeof desc;
+            desc.kind        = FieldNamed(L, 1, "kind", kRenderKinds, 4, 0, WXL_RENDER_PIPELINE_GRAPHICS, fn);
+
+            std::string vertex, fragment, compute, name;
+            lua_getfield(L, 1, "name");
+            if (lua_type(L, -1) == LUA_TSTRING) name = lua_tostring(L, -1);
+            lua_pop(L, 1);
+            desc.name = name.empty() ? nullptr : name.c_str();
+            if (desc.kind == WXL_RENDER_PIPELINE_COMPUTE)
+            {
+                // A compute program alone: it draws into nothing.
+                lua_getfield(L, 1, "compute");
+                if (lua_isnil(L, -1)) luaL_error(L, "%s: 'compute' is missing; a compute pipeline takes SPIR-V", fn);
+                ReadSpirv(L, mod, lua_gettop(L), compute, "wxl.render.CreatePipeline: 'compute'");
+                lua_pop(L, 1);
+                desc.compute      = compute.data();
+                desc.compute_size = static_cast<uint32_t>(compute.size());
+                const wxl_render_api* api = Render();
+                if (!api || !wxl::detail::Carries(api, &wxl_render_api::create_pipeline)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+                const wxl_handle made = api->create_pipeline(&desc);
+                if (made == WXL_HANDLE_NONE)
+                    return PushResultFailure(L, api->supported && api->supported() ? WXL_E_INVALID : WXL_E_UNSUPPORTED);
+                PushRenderResource(L, RenderResource::pipeline, made);
+                return 1;
+            }
+            lua_getfield(L, 1, "vertex");
+            if (!lua_isnil(L, -1)) ReadSpirv(L, mod, lua_gettop(L), vertex, "wxl.render.CreatePipeline: 'vertex'");
+            lua_pop(L, 1);
+            lua_getfield(L, 1, "fragment");
+            if (lua_isnil(L, -1)) luaL_error(L, "%s: 'fragment' is missing; it takes SPIR-V", fn);
+            ReadSpirv(L, mod, lua_gettop(L), fragment, "wxl.render.CreatePipeline: 'fragment'");
+            lua_pop(L, 1);
+            if (desc.kind == WXL_RENDER_PIPELINE_GRAPHICS && vertex.empty())
+                luaL_error(L, "%s: 'vertex' is missing; a graphics pipeline takes a vertex program", fn);
+            desc.vertex        = vertex.empty() ? nullptr : vertex.data();
+            desc.vertex_size   = static_cast<uint32_t>(vertex.size());
+            desc.fragment      = fragment.data();
+            desc.fragment_size = static_cast<uint32_t>(fragment.size());
+
+            // The colour formats: a list, one name, or the frame's format when left out.
+            lua_getfield(L, 1, "colors");
+            const int colors = lua_gettop(L);
+            if (lua_isnil(L, colors))
+            {
+                desc.color_count      = 1;
+                desc.color_formats[0] = WXL_RENDER_FORMAT_BGRA8;
+            }
+            else if (lua_istable(L, colors))
+            {
+                const size_t count = lua_objlen(L, colors);
+                if (count > WXL_RENDER_MAX_COLORS) luaL_error(L, "%s: 'colors' holds more than %d formats", fn, WXL_RENDER_MAX_COLORS);
+                for (size_t i = 0; i < count; ++i)
+                {
+                    lua_rawgeti(L, colors, static_cast<int>(i) + 1);
+                    desc.color_formats[i] = CheckNamed(L, lua_gettop(L), kRenderFormats, 9, 1, "wxl.render.CreatePipeline: an entry of 'colors'");
+                    lua_pop(L, 1);
+                }
+                desc.color_count = static_cast<uint32_t>(count);
+            }
+            else
+            {
+                desc.color_formats[0] = CheckNamed(L, colors, kRenderFormats, 9, 1, "wxl.render.CreatePipeline: 'colors'");
+                desc.color_count      = 1;
+            }
+            lua_pop(L, 1);
+
+            lua_getfield(L, 1, "depth");
+            if (!lua_isnil(L, -1)) desc.depth_format = CheckNamed(L, lua_gettop(L), kRenderFormats + 9, 1, WXL_RENDER_FORMAT_DEPTH32F,
+                                                                  "wxl.render.CreatePipeline: 'depth'");
+            lua_pop(L, 1);
+            lua_getfield(L, 1, "samples");
+            if (!lua_isnil(L, -1))
+            {
+                const double samples = luaL_checknumber(L, -1);
+                if (samples != 0 && samples != 1 && samples != 2 && samples != 4 && samples != 8)
+                    luaL_error(L, "%s: 'samples' must be 0 (the frame's), 1, 2, 4 or 8", fn);
+                desc.samples = static_cast<uint32_t>(samples);
+            }
+            lua_pop(L, 1);
+
+            // Blending: one mode for every attachment, or one per attachment.
+            lua_getfield(L, 1, "blend");
+            const int blend = lua_gettop(L);
+            if (lua_istable(L, blend))
+            {
+                const size_t count = lua_objlen(L, blend);
+                for (size_t i = 0; i < count && i < WXL_RENDER_MAX_COLORS; ++i)
+                {
+                    lua_rawgeti(L, blend, static_cast<int>(i) + 1);
+                    desc.blend[i] = CheckNamed(L, lua_gettop(L), kRenderBlends, 5, 0, "wxl.render.CreatePipeline: an entry of 'blend'");
+                    lua_pop(L, 1);
+                }
+            }
+            else if (!lua_isnil(L, blend))
+            {
+                const uint32_t mode = CheckNamed(L, blend, kRenderBlends, 5, 0, "wxl.render.CreatePipeline: 'blend'");
+                for (uint32_t& b : desc.blend) b = mode;
+            }
+            lua_pop(L, 1);
+
+            desc.depth_test = FieldNamed(L, 1, "depth_test", kRenderDepths, 7, 0, WXL_RENDER_DEPTH_OFF, fn);
+            lua_getfield(L, 1, "depth_write");
+            desc.depth_write = lua_toboolean(L, -1) ? WXL_TRUE : WXL_FALSE;
+            lua_pop(L, 1);
+            desc.cull     = FieldNamed(L, 1, "cull", kRenderCulls, 4, 0,
+                                       desc.kind == WXL_RENDER_PIPELINE_BATCH ? WXL_RENDER_CULL_BATCH : WXL_RENDER_CULL_NONE, fn);
+            desc.topology = FieldNamed(L, 1, "topology", kRenderShapes, 4, 0, WXL_RENDER_TOPOLOGY_TRIANGLES, fn);
+
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::create_pipeline)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_handle made = api->create_pipeline(&desc);
+            if (made == WXL_HANDLE_NONE)
+                return PushResultFailure(L, api->supported && api->supported() ? WXL_E_INVALID : WXL_E_UNSUPPORTED);
+            PushRenderResource(L, RenderResource::pipeline, made);
+            return 1;
+        }
+
+        /// An attachment of a pass: an Image, the frame's "scene_color" or "scene_depth", or a
+        /// table {image, clear = ...}; @p cleared says whether the table asked for a clear.
+        wxl_handle CheckAttachment(lua_State* L, int index, bool depth, bool& cleared, float* clear, const char* where)
+        {
+            cleared = false;
+            int at  = index;
+            if (lua_istable(L, index))
+            {
+                lua_rawgeti(L, index, 1);
+                at = lua_gettop(L);
+                lua_getfield(L, index, "clear");
+                if (!lua_isnil(L, -1))
+                {
+                    cleared = true;
+                    if (depth)
+                    {
+                        if (lua_type(L, -1) != LUA_TNUMBER) luaL_error(L, "%s: 'clear' must be a depth, a number from 0 to 1", where);
+                        clear[0] = static_cast<float>(lua_tonumber(L, -1));
+                    }
+                    else
+                    {
+                        if (!lua_istable(L, -1)) luaL_error(L, "%s: 'clear' must be a colour, a table {r, g, b, a}", where);
+                        for (int c = 0; c < 4; ++c)
+                        {
+                            lua_rawgeti(L, -1, c + 1);
+                            clear[c] = lua_isnumber(L, -1) ? static_cast<float>(lua_tonumber(L, -1)) : (c == 3 ? 1.0f : 0.0f);
+                            lua_pop(L, 1);
+                        }
+                    }
+                }
+                lua_pop(L, 1);
+            }
+            wxl_handle handle = WXL_HANDLE_NONE;
+            if (lua_type(L, at) == LUA_TSTRING)
+            {
+                const char* text = lua_tostring(L, at);
+                if (!depth && std::strcmp(text, "scene_color") == 0) handle = WXL_RENDER_SCENE_COLOR;
+                if (depth && std::strcmp(text, "scene_depth") == 0) handle = WXL_RENDER_SCENE_DEPTH;
+            }
+            else
+                handle = ToRenderResource(L, at, RenderResource::image);
+            if (handle == WXL_HANDLE_NONE)
+                luaL_error(L, "%s must be an image of wxl.render (not given back), \"%s\", or a table {image, clear = ...}", where,
+                           depth ? "scene_depth" : "scene_color");
+            if (at != index) lua_pop(L, 1);
+            return handle;
+        }
+
+        /// Begin(pass): true, or nil and why.
+        int L_RenderBegin(lua_State* L)
+        {
+            if (!lua_istable(L, 1)) luaL_error(L, "wxl.render.Begin: 'pass' (argument 1) must be a table {colors = {...}, depth = ...}");
+            wxl_render_pass pass{};
+            pass.struct_size = sizeof pass;
+            lua_getfield(L, 1, "colors");
+            const int colors = lua_gettop(L);
+            if (lua_istable(L, colors))
+            {
+                const size_t count = lua_objlen(L, colors);
+                if (count > WXL_RENDER_MAX_COLORS) luaL_error(L, "wxl.render.Begin: 'colors' holds more than %d attachments", WXL_RENDER_MAX_COLORS);
+                for (size_t i = 0; i < count; ++i)
+                {
+                    lua_rawgeti(L, colors, static_cast<int>(i) + 1);
+                    bool cleared = false;
+                    pass.colors[i] = CheckAttachment(L, lua_gettop(L), false, cleared, pass.clear_colors[i],
+                                                     "wxl.render.Begin: an entry of 'colors'");
+                    if (cleared) pass.clear |= 1u << i;
+                    lua_pop(L, 1);
+                }
+                pass.color_count = static_cast<uint32_t>(count);
+            }
+            else if (!lua_isnil(L, colors))
+                luaL_error(L, "wxl.render.Begin: 'colors' must be a list of attachments");
+            lua_pop(L, 1);
+            lua_getfield(L, 1, "depth");
+            if (!lua_isnil(L, -1))
+            {
+                bool  cleared = false;
+                float value[4] = {1.0f, 0.0f, 0.0f, 0.0f};
+                pass.depth     = CheckAttachment(L, lua_gettop(L), true, cleared, value, "wxl.render.Begin: 'depth'");
+                if (cleared)
+                {
+                    pass.clear |= WXL_RENDER_CLEAR_DEPTH;
+                    pass.clear_depth = value[0];
+                }
+            }
+            lua_pop(L, 1);
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::begin)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->begin(&pass);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        wxl_handle CheckPipeline(lua_State* L, int index, const char* fn)
+        {
+            const wxl_handle pipeline = ToRenderResource(L, index, RenderResource::pipeline);
+            if (pipeline == WXL_HANDLE_NONE)
+                luaL_error(L, "%s: 'pipeline' (argument %d) must be a pipeline of wxl.render, not given back", fn, index);
+            return pipeline;
+        }
+
+        uint32_t CheckRenderCount(lua_State* L, int index, const char* fn, const char* name)
+        {
+            if (lua_isnoneornil(L, index)) luaL_error(L, "%s: '%s' (argument %d) is missing; it takes a whole number", fn, name, index);
+            const double value = luaL_checknumber(L, index);
+            if (value < 0.0 || value > 4294967295.0 || value != static_cast<double>(static_cast<uint32_t>(value)))
+                luaL_error(L, "%s: '%s' (argument %d) must be a whole number from 0", fn, name, index);
+            return static_cast<uint32_t>(value);
+        }
+
+        int PushOk(lua_State* L, wxl_result result)
+        {
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// Draw(pipeline, vertex_count, instance_count [, push])
+        int L_RenderDraw(lua_State* L)
+        {
+            const char*      fn       = "wxl.render.Draw";
+            const wxl_handle pipeline = CheckPipeline(L, 1, fn);
+            const uint32_t   vertices = CheckRenderCount(L, 2, fn, "vertex_count");
+            const uint32_t   copies   = lua_isnoneornil(L, 3) ? 1u : CheckRenderCount(L, 3, fn, "instance_count");
+            std::string      push;
+            ReadPush(L, 4, push, "wxl.render.Draw: 'push' (argument 4)");
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::draw)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            return PushOk(L, api->draw(pipeline, vertices, copies, push.empty() ? nullptr : push.data(), static_cast<uint32_t>(push.size())));
+        }
+
+        /// DrawIndexed(pipeline, indices, first_index, index_count, instance_count [, push])
+        int L_RenderDrawIndexed(lua_State* L)
+        {
+            const char*      fn       = "wxl.render.DrawIndexed";
+            const wxl_handle pipeline = CheckPipeline(L, 1, fn);
+            const wxl_handle indices  = ToRenderResource(L, 2, RenderResource::buffer);
+            if (indices == WXL_HANDLE_NONE) luaL_error(L, "%s: 'indices' (argument 2) must be a buffer of wxl.render, not given back", fn);
+            const uint32_t first  = CheckRenderCount(L, 3, fn, "first_index");
+            const uint32_t count  = CheckRenderCount(L, 4, fn, "index_count");
+            const uint32_t copies = lua_isnoneornil(L, 5) ? 1u : CheckRenderCount(L, 5, fn, "instance_count");
+            std::string    push;
+            ReadPush(L, 6, push, "wxl.render.DrawIndexed: 'push' (argument 6)");
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::draw_indexed)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            return PushOk(L, api->draw_indexed(pipeline, indices, first, count, copies, push.empty() ? nullptr : push.data(),
+                                               static_cast<uint32_t>(push.size())));
+        }
+
+        /// Fullscreen(pipeline [, push])
+        int L_RenderFullscreen(lua_State* L)
+        {
+            const wxl_handle pipeline = CheckPipeline(L, 1, "wxl.render.Fullscreen");
+            std::string      push;
+            ReadPush(L, 2, push, "wxl.render.Fullscreen: 'push' (argument 2)");
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::fullscreen)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            return PushOk(L, api->fullscreen(pipeline, push.empty() ? nullptr : push.data(), static_cast<uint32_t>(push.size())));
+        }
+
+        /// DrawBatch(batch, pipeline [, constants])
+        int L_RenderDrawBatch(lua_State* L)
+        {
+            const char* fn = "wxl.render.DrawBatch";
+            if (lua_type(L, 1) != LUA_TLIGHTUSERDATA)
+                luaL_error(L, "%s: 'batch' (argument 1) must be a batch: OnModelBatchDrawn's, or one KeepBatch answered", fn);
+            const void*      batch    = lua_touserdata(L, 1);
+            const wxl_handle pipeline = CheckPipeline(L, 2, fn);
+            std::string      constants;
+            ReadPush(L, 3, constants, "wxl.render.DrawBatch: 'constants' (argument 3)");
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::draw_batch)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            return PushOk(L, api->draw_batch(batch, pipeline, constants.empty() ? nullptr : constants.data(),
+                                             static_cast<uint32_t>(constants.size())));
+        }
+
+        /// Dispatch(pipeline, x, y, z [, push])
+        int L_RenderDispatch(lua_State* L)
+        {
+            const char*      fn       = "wxl.render.Dispatch";
+            const wxl_handle pipeline = CheckPipeline(L, 1, fn);
+            const uint32_t   x        = CheckRenderCount(L, 2, fn, "x");
+            const uint32_t   y        = CheckRenderCount(L, 3, fn, "y");
+            const uint32_t   z        = CheckRenderCount(L, 4, fn, "z");
+            std::string      push;
+            ReadPush(L, 5, push, "wxl.render.Dispatch: 'push' (argument 5)");
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::dispatch)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            return PushOk(L, api->dispatch(pipeline, x, y, z, push.empty() ? nullptr : push.data(), static_cast<uint32_t>(push.size())));
+        }
+
+        /// BonePalette(matrices): their address on the GPU, or nil and why. A string of bytes, or a
+        /// table of numbers (32-bit floats), 12 a matrix.
+        int L_RenderBonePalette(lua_State* L)
+        {
+            const char* fn = "wxl.render.BonePalette";
+            std::string bytes;
+            if (lua_type(L, 1) == LUA_TSTRING)
+            {
+                size_t      size = 0;
+                const char* text = lua_tolstring(L, 1, &size);
+                bytes.assign(text, size);
+            }
+            else if (lua_type(L, 1) == LUA_TTABLE)
+            {
+                const size_t count = lua_objlen(L, 1);
+                if (count > (16u << 20) / 4) luaL_error(L, "%s: 'matrices' (argument 1) holds more than 16 MiB of numbers", fn);
+                bytes.resize(count * 4);
+                for (size_t i = 0; i < count; ++i)
+                {
+                    lua_rawgeti(L, 1, static_cast<int>(i) + 1);
+                    if (lua_type(L, -1) != LUA_TNUMBER) luaL_error(L, "%s: entry %d of 'matrices' is not a number", fn, static_cast<int>(i) + 1);
+                    const float value = static_cast<float>(lua_tonumber(L, -1));
+                    std::memcpy(&bytes[i * 4], &value, 4);
+                    lua_pop(L, 1);
+                }
+            }
+            else luaL_error(L, "%s: 'matrices' (argument 1) must be a table of numbers (12 a matrix) or a string of bytes", fn);
+            if (bytes.empty() || bytes.size() % WXL_RENDER_PALETTE_MATRIX_BYTES)
+                luaL_error(L, "%s: 'matrices' (argument 1) must hold whole matrices: 12 numbers, or 48 bytes, each", fn);
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::bone_palette)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            uint64_t         address = 0;
+            const wxl_result result  = api->bone_palette(bytes.data(), static_cast<uint32_t>(bytes.size()), &address);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushnumber(L, static_cast<lua_Number>(address));
+            return 1;
+        }
+
+        /// The client shaders a Lua mod replaced: the runtime sees them as wxl.lua's, by name and stage.
+        struct Replaced
+        {
+            ScriptMod*  mod;
+            std::string name;
+            uint32_t    stage;
+        };
+        std::vector<Replaced> g_replaced;
+
+        uint32_t CheckStage(lua_State* L, int index, const char* fn)
+        {
+            const uint32_t stage = CheckRenderCount(L, index, fn, "stage");
+            if (stage > 1) luaL_error(L, "%s: 'stage' (argument %d) must be 0 (vertex) or 1 (pixel)", fn, index);
+            return stage;
+        }
+
+        /// ReplaceShader(name, stage, spirv): spirv the bytes, or a .spv file of the mod's folder.
+        int L_RenderReplaceShader(lua_State* L)
+        {
+            ScriptMod&  mod  = Self(L);
+            const char* fn   = "wxl.render.ReplaceShader";
+            size_t      size = 0;
+            if (lua_type(L, 1) != LUA_TSTRING) luaL_error(L, "%s: 'name' (argument 1) must be a shader's name, or the start of names", fn);
+            const char*    text  = lua_tolstring(L, 1, &size);
+            const uint32_t stage = CheckStage(L, 2, fn);
+            if (lua_isnoneornil(L, 3)) luaL_error(L, "%s: 'spirv' (argument 3) is missing; it takes SPIR-V", fn);
+            std::string spirv;
+            ReadSpirv(L, mod, 3, spirv, "wxl.render.ReplaceShader: 'spirv' (argument 3)");
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::replace_shader)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const std::string name(text, size);
+            const wxl_result  result = api->replace_shader(Str(name), stage, spirv.data(), static_cast<uint32_t>(spirv.size()));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            for (Replaced& held : g_replaced)
+                if (held.name == name && held.stage == stage)
+                {
+                    held.mod = &mod; // the last Lua mod to replace it holds it
+                    lua_pushboolean(L, 1);
+                    return 1;
+                }
+            g_replaced.push_back(Replaced{&mod, name, stage});
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        /// RestoreShader(name, stage)
+        int L_RenderRestoreShader(lua_State* L)
+        {
+            ScriptMod&  mod  = Self(L);
+            const char* fn   = "wxl.render.RestoreShader";
+            size_t      size = 0;
+            if (lua_type(L, 1) != LUA_TSTRING) luaL_error(L, "%s: 'name' (argument 1) must be the name ReplaceShader was given", fn);
+            const std::string name(lua_tolstring(L, 1, &size), size);
+            const uint32_t    stage = CheckStage(L, 2, fn);
+            const auto held = std::find_if(g_replaced.begin(), g_replaced.end(), [&](const Replaced& r) {
+                return r.mod == &mod && r.name == name && r.stage == stage;
+            });
+            if (held == g_replaced.end()) return PushResultFailure(L, WXL_E_NOT_FOUND);
+            g_replaced.erase(held);
+            const wxl_render_api* api = Render();
+            if (!api || !wxl::detail::Carries(api, &wxl_render_api::restore_shader)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            return PushOk(L, api->restore_shader(Str(name), stage));
+        }
+
+        /// A Lua mod's replaced shaders get the client's programs back.
+        void RestoreShaders(ScriptMod& mod)
+        {
+            const wxl_render_api* api = Render();
+            for (size_t i = g_replaced.size(); i-- > 0;)
+            {
+                if (g_replaced[i].mod != &mod) continue;
+                if (api && wxl::detail::Carries(api, &wxl_render_api::restore_shader))
+                    api->restore_shader(Str(g_replaced[i].name), g_replaced[i].stage);
+                g_replaced.erase(g_replaced.begin() + static_cast<std::ptrdiff_t>(i));
+            }
+        }
+        // --- wxl.draw: tables into shapes and styles ---------------------------------------------
+
+        const wxl_draw_api* Draw() { return wxl::api::Table<wxl_draw_api>(); }
+
+        constexpr const char* kDrawKinds[]  = {"line", "circle", "ring", "sector", "rectangle", "polygon", "grid", "box", "sphere", "cylinder", "beam"};
+        constexpr const char* kDrawDepths[] = {"tested", "on_top"};
+        constexpr const char* kDrawUvs[]    = {"fit", "tile", "world"};
+        constexpr const char* kDrawBlends[] = {"alpha", "add", "modulate"};
+        constexpr const char* kDrawSpawns[] = {"point", "disc", "box", "segment"};
+        constexpr const char* kDrawGrounds[] = {"none", "bounce", "settle"};
+        constexpr const char* kDrawModes[]  = {"camera", "ground", "stretched"};
+
+        /// A point of a table {x, y, z} or {x, y, z} by position; false for anything else.
+        bool ReadPoint(lua_State* L, int index, wxl_vec3& out)
+        {
+            if (!lua_istable(L, index)) return false;
+            index = index < 0 ? lua_gettop(L) + index + 1 : index;
+            lua_getfield(L, index, "x");
+            if (lua_isnil(L, -1))
+            {
+                lua_pop(L, 1);
+                lua_rawgeti(L, index, 1);
+                lua_rawgeti(L, index, 2);
+                lua_rawgeti(L, index, 3);
+            }
+            else
+            {
+                lua_getfield(L, index, "y");
+                lua_getfield(L, index, "z");
+            }
+            const bool ok = lua_isnumber(L, -3) && lua_isnumber(L, -2) && (lua_isnumber(L, -1) || lua_isnil(L, -1));
+            if (ok)
+                out = wxl_vec3{static_cast<float>(lua_tonumber(L, -3)), static_cast<float>(lua_tonumber(L, -2)),
+                               static_cast<float>(lua_tonumber(L, -1))};
+            lua_pop(L, 3);
+            return ok;
+        }
+
+        /// The number in field @p name of the table at @p index, or @p otherwise when it is nil.
+        float FieldNumber(lua_State* L, int index, const char* name, float otherwise, const char* where)
+        {
+            lua_getfield(L, index, name);
+            float value = otherwise;
+            if (lua_isnumber(L, -1)) value = static_cast<float>(lua_tonumber(L, -1));
+            else if (!lua_isnil(L, -1)) luaL_error(L, "%s: '%s' must be a number", where, name);
+            lua_pop(L, 1);
+            return value;
+        }
+
+        bool FieldFlag(lua_State* L, int index, const char* name, const char* where)
+        {
+            lua_getfield(L, index, name);
+            const int type = lua_type(L, -1);
+            if (type != LUA_TNIL && type != LUA_TBOOLEAN) luaL_error(L, "%s: '%s' must be true or false", where, name);
+            const bool value = lua_toboolean(L, -1) != 0;
+            lua_pop(L, 1);
+            return value;
+        }
+
+        /// A shape table into @p shape, its points into @p points and their opacities into @p alphas
+        /// (which the shape points into).
+        bool FieldPair(lua_State* L, int index, const char* name, float& x, float& y, bool number_ok, const char* where);
+
+        void ReadDrawShape(lua_State* L, int index, const char* where, wxl_draw_shape& shape, std::vector<wxl_vec3>& points,
+                           std::vector<float>& alphas)
+        {
+            if (!lua_istable(L, index))
+                luaL_error(L, "%s: the shape (argument %d) must be a table {kind = \"circle\", center = {x, y, z}, radius = 5, ...}", where,
+                           index);
+            shape             = wxl_draw_shape{};
+            shape.struct_size = sizeof shape;
+            lua_getfield(L, index, "kind");
+            if (lua_isnil(L, -1)) luaL_error(L, "%s: the shape has no 'kind'; it takes \"line\", \"circle\", \"ring\", \"sector\", "
+                                               "\"rectangle\", \"polygon\", \"grid\", \"box\", \"sphere\" or \"cylinder\"", where);
+            const std::string kindWhere = std::string(where) + ": the shape's 'kind'";
+            shape.kind = CheckNamed(L, lua_gettop(L), kDrawKinds, 11, 0, kindWhere.c_str());
+            lua_pop(L, 1);
+            lua_getfield(L, index, "center");
+            if (!lua_isnil(L, -1) && !ReadPoint(L, -1, shape.center))
+                luaL_error(L, "%s: the shape's 'center' must be a point {x, y, z}", where);
+            lua_pop(L, 1);
+            lua_getfield(L, index, "size");
+            if (!lua_isnil(L, -1) && !ReadPoint(L, -1, shape.size))
+                luaL_error(L, "%s: the shape's 'size' must be {x, y, z}", where);
+            lua_pop(L, 1);
+            shape.radius  = FieldNumber(L, index, "radius", 0.0f, where);
+            shape.inner   = FieldNumber(L, index, "inner", 0.0f, where);
+            shape.angle   = FieldNumber(L, index, "angle", 0.0f, where);
+            shape.facing  = FieldNumber(L, index, "facing", 0.0f, where);
+            shape.pitch   = FieldNumber(L, index, "pitch", 0.0f, where);
+            shape.roll    = FieldNumber(L, index, "roll", 0.0f, where);
+            shape.spacing = FieldNumber(L, index, "spacing", 0.0f, where);
+            // A rectangle's and a grid's sides may be given by name.
+            shape.size.x = FieldNumber(L, index, "length", shape.size.x, where);
+            shape.size.y = FieldNumber(L, index, "width", shape.size.y, where);
+            shape.size.z = FieldNumber(L, index, "height", shape.size.z, where);
+            // A beam's widths at its two ends: a number or {start, end}.
+            FieldPair(L, index, "widths", shape.size.x, shape.size.y, true, where);
+            if (FieldFlag(L, index, "flat", where)) shape.flags |= WXL_DRAW_FLAT;
+            if (FieldFlag(L, index, "on_ground", where)) shape.flags |= WXL_DRAW_ON_GROUND;
+            if (FieldFlag(L, index, "closed", where)) shape.flags |= WXL_DRAW_CLOSED;
+            lua_getfield(L, index, "points");
+            points.clear();
+            if (!lua_isnil(L, -1))
+            {
+                if (!lua_istable(L, -1)) luaL_error(L, "%s: the shape's 'points' must be a list of points {x, y, z}", where);
+                const int list  = lua_gettop(L);
+                const size_t n  = lua_objlen(L, list);
+                if (n > WXL_DRAW_MAX_POINTS)
+                    luaL_error(L, "%s: the shape has %d points, more than a shape may (%d)", where, static_cast<int>(n),
+                               static_cast<int>(WXL_DRAW_MAX_POINTS));
+                points.resize(n);
+                for (size_t i = 0; i < n; ++i)
+                {
+                    lua_rawgeti(L, list, static_cast<int>(i + 1));
+                    if (!ReadPoint(L, -1, points[i]))
+                        luaL_error(L, "%s: point %d of the shape is not a point {x, y, z}", where, static_cast<int>(i + 1));
+                    lua_pop(L, 1);
+                }
+                shape.points      = points.data();
+                shape.point_count = static_cast<uint32_t>(n);
+            }
+            lua_pop(L, 1);
+            lua_getfield(L, index, "alphas");
+            alphas.clear();
+            if (!lua_isnil(L, -1))
+            {
+                if (!lua_istable(L, -1)) luaL_error(L, "%s: the shape's 'alphas' must be a list of opacities, one per point", where);
+                const int    list = lua_gettop(L);
+                const size_t n    = lua_objlen(L, list);
+                if (n != points.size())
+                    luaL_error(L, "%s: the shape has %d points and %d 'alphas': give one opacity per point", where,
+                               static_cast<int>(points.size()), static_cast<int>(n));
+                alphas.resize(n);
+                for (size_t i = 0; i < n; ++i)
+                {
+                    lua_rawgeti(L, list, static_cast<int>(i + 1));
+                    if (!lua_isnumber(L, -1)) luaL_error(L, "%s: alpha %d of the shape is not a number", where, static_cast<int>(i + 1));
+                    alphas[i] = static_cast<float>(lua_tonumber(L, -1));
+                    lua_pop(L, 1);
+                }
+                shape.point_alphas = alphas.empty() ? nullptr : alphas.data();
+            }
+            lua_pop(L, 1);
+        }
+
+        /// A colour field 0xRRGGBB of the table at @p index; false when it is nil.
+        bool FieldColor(lua_State* L, int index, const char* name, uint32_t& out, const char* where)
+        {
+            lua_getfield(L, index, name);
+            bool given = false;
+            if (lua_isnumber(L, -1))
+            {
+                const double value = lua_tonumber(L, -1);
+                if (value < 0.0 || value > 16777215.0) luaL_error(L, "%s: the style's '%s' must be 0xRRGGBB", where, name);
+                out   = static_cast<uint32_t>(value);
+                given = true;
+            }
+            else if (!lua_isnil(L, -1)) luaL_error(L, "%s: the style's '%s' must be a number 0xRRGGBB", where, name);
+            lua_pop(L, 1);
+            return given;
+        }
+
+        /// A pair field: a number (both the same) or {x, y}; false when it is nil.
+        bool FieldPair(lua_State* L, int index, const char* name, float& x, float& y, bool number_ok, const char* where)
+        {
+            lua_getfield(L, index, name);
+            bool given = true;
+            if (number_ok && lua_isnumber(L, -1)) x = y = static_cast<float>(lua_tonumber(L, -1));
+            else if (lua_istable(L, -1))
+            {
+                const int at = lua_gettop(L);
+                lua_getfield(L, at, "x");
+                if (lua_isnil(L, -1))
+                {
+                    lua_pop(L, 1);
+                    lua_rawgeti(L, at, 1);
+                    lua_rawgeti(L, at, 2);
+                }
+                else
+                    lua_getfield(L, at, "y");
+                if (!lua_isnumber(L, -2) || !lua_isnumber(L, -1))
+                    luaL_error(L, "%s: the style's '%s' must be {x, y}%s", where, name, number_ok ? " or a number" : "");
+                x = static_cast<float>(lua_tonumber(L, -2));
+                y = static_cast<float>(lua_tonumber(L, -1));
+                lua_pop(L, 2);
+            }
+            else if (lua_isnil(L, -1)) given = false;
+            else luaL_error(L, "%s: the style's '%s' must be {x, y}%s", where, name, number_ok ? " or a number" : "");
+            lua_pop(L, 1);
+            return given;
+        }
+
+        /// A style table (nil: the service's default) into @p style, its texture's path into
+        /// @p texture (which the style points into); false for nil.
+        bool ReadDrawStyle(lua_State* L, int index, const char* where, wxl_draw_style& style, std::string& texture)
+        {
+            style             = wxl_draw_style{};
+            style.struct_size = sizeof style;
+            style.color       = 0xFFFFFFu;
+            style.alpha       = 1.0f;
+            style.width       = 2.0f;
+            if (lua_isnoneornil(L, index)) return false;
+            if (!lua_istable(L, index))
+                luaL_error(L, "%s: the style (argument %d) must be a table {color = 0xRRGGBB, alpha, fill_alpha, width, depth, pulse}",
+                           where, index);
+            lua_getfield(L, index, "color");
+            if (lua_isnumber(L, -1))
+            {
+                const double value = lua_tonumber(L, -1);
+                if (value < 0.0 || value > 16777215.0) luaL_error(L, "%s: the style's 'color' must be 0xRRGGBB", where);
+                style.color = static_cast<uint32_t>(value);
+            }
+            else if (!lua_isnil(L, -1)) luaL_error(L, "%s: the style's 'color' must be a number 0xRRGGBB", where);
+            lua_pop(L, 1);
+            style.alpha      = FieldNumber(L, index, "alpha", 1.0f, where);
+            style.fill_alpha = FieldNumber(L, index, "fill_alpha", 0.0f, where);
+            style.width      = FieldNumber(L, index, "width", 2.0f, where);
+            style.pulse      = FieldNumber(L, index, "pulse", 0.0f, where);
+            style.fade_in    = FieldNumber(L, index, "fade_in", 0.0f, where);
+            style.fade_out   = FieldNumber(L, index, "fade_out", 0.0f, where);
+            lua_getfield(L, index, "depth");
+            if (!lua_isnil(L, -1))
+            {
+                const std::string depthWhere = std::string(where) + ": the style's 'depth'";
+                style.depth = CheckNamed(L, lua_gettop(L), kDrawDepths, 2, 0, depthWhere.c_str());
+            }
+            lua_pop(L, 1);
+
+            // abi 0.1.38: lines' softness, opacity along them and shadow; the inside's texture.
+            if (FieldColor(L, index, "fill_color", style.fill_color, where)) style.flags |= WXL_DRAW_STYLE_FILL_COLOR;
+            style.softness = FieldNumber(L, index, "softness", 0.0f, where);
+            lua_getfield(L, index, "alpha_start");
+            lua_getfield(L, index, "alpha_end");
+            const bool along = !lua_isnil(L, -1) || !lua_isnil(L, -2);
+            lua_pop(L, 2);
+            if (along)
+            {
+                style.flags |= WXL_DRAW_STYLE_LINE_ALPHA;
+                style.alpha_start = FieldNumber(L, index, "alpha_start", 1.0f, where);
+                style.alpha_end   = FieldNumber(L, index, "alpha_end", 1.0f, where);
+            }
+            style.shadow_alpha = FieldNumber(L, index, "shadow_alpha", 0.0f, where);
+            if (style.shadow_alpha > 0.0f)
+            {
+                // A shadow asked for by its opacity alone: black, 1.5 pixels down and right, 1 soft.
+                style.shadow_x        = 1.5f;
+                style.shadow_y        = 1.5f;
+                style.shadow_softness = 1.0f;
+            }
+            FieldColor(L, index, "shadow_color", style.shadow_color, where);
+            FieldPair(L, index, "shadow_offset", style.shadow_x, style.shadow_y, false, where);
+            style.shadow_softness = FieldNumber(L, index, "shadow_softness", style.shadow_softness, where);
+            lua_getfield(L, index, "texture");
+            if (lua_type(L, -1) == LUA_TSTRING) texture = lua_tostring(L, -1);
+            else if (lua_istable(L, -1))
+            {
+                // wxl.texture.Make's answers in a list: {path, right, bottom}.
+                const int at = lua_gettop(L);
+                lua_rawgeti(L, at, 1);
+                lua_rawgeti(L, at, 2);
+                lua_rawgeti(L, at, 3);
+                if (lua_type(L, -3) != LUA_TSTRING || (!lua_isnil(L, -2) && !lua_isnumber(L, -2)) || (!lua_isnil(L, -1) && !lua_isnumber(L, -1)))
+                    luaL_error(L, "%s: the style's 'texture' must be a path, or {path, right, bottom} as wxl.texture.Make answers", where);
+                texture              = lua_tostring(L, -3);
+                style.texture_right  = lua_isnumber(L, -2) ? static_cast<float>(lua_tonumber(L, -2)) : 0.0f;
+                style.texture_bottom = lua_isnumber(L, -1) ? static_cast<float>(lua_tonumber(L, -1)) : 0.0f;
+                lua_pop(L, 3);
+            }
+            else if (!lua_isnil(L, -1))
+                luaL_error(L, "%s: the style's 'texture' must be a path, or {path, right, bottom} as wxl.texture.Make answers", where);
+            lua_pop(L, 1);
+            if (!texture.empty()) style.texture = texture.c_str();
+            style.texture_right  = FieldNumber(L, index, "texture_right", style.texture_right, where);
+            style.texture_bottom = FieldNumber(L, index, "texture_bottom", style.texture_bottom, where);
+            lua_getfield(L, index, "uv");
+            if (!lua_isnil(L, -1))
+            {
+                const std::string uvWhere = std::string(where) + ": the style's 'uv'";
+                style.uv = CheckNamed(L, lua_gettop(L), kDrawUvs, 3, 0, uvWhere.c_str());
+            }
+            lua_pop(L, 1);
+            FieldPair(L, index, "uv_size", style.uv_size_x, style.uv_size_y, true, where);
+            style.uv_rotation = FieldNumber(L, index, "uv_rotation", 0.0f, where);
+            FieldPair(L, index, "uv_offset", style.uv_offset_x, style.uv_offset_y, false, where);
+            lua_getfield(L, index, "blend");
+            if (!lua_isnil(L, -1))
+            {
+                const std::string blendWhere = std::string(where) + ": the style's 'blend'";
+                style.blend = CheckNamed(L, lua_gettop(L), kDrawBlends, 3, 0, blendWhere.c_str());
+            }
+            lua_pop(L, 1);
+            style.feather     = FieldNumber(L, index, "feather", 0.0f, where);
+            style.radial_fade = FieldNumber(L, index, "radial_fade", 0.0f, where);
+            style.occluded_alpha = FieldNumber(L, index, "occluded_alpha", 0.0f, where);
+            if (FieldFlag(L, index, "mask", where)) style.flags |= WXL_DRAW_STYLE_MASK;
+            style.texture_blur = FieldNumber(L, index, "texture_blur", 0.0f, where);
+            return true;
+        }
+
+        // --- wxl.draw's particles (abi 0.1.40) ------------------------------------------------------
+
+        /// A named choice of the table at @p index (a name of @p names, or its number); @p otherwise when nil.
+        uint32_t FieldNamed(lua_State* L, int index, const char* name, const char* const* names, uint32_t count, uint32_t otherwise,
+                            const char* where)
+        {
+            lua_getfield(L, index, name);
+            uint32_t value = otherwise;
+            if (!lua_isnil(L, -1))
+            {
+                const std::string what = std::string(where) + ": '" + name + "'";
+                value                  = CheckNamed(L, lua_gettop(L), names, count, 0, what.c_str());
+            }
+            lua_pop(L, 1);
+            return value;
+        }
+
+        /// A range field: a number (min = max) or {min, max}; false when nil.
+        bool FieldRange(lua_State* L, int index, const char* name, float& min, float& max, const char* where)
+        {
+            lua_getfield(L, index, name);
+            bool given = true;
+            if (lua_isnumber(L, -1)) min = max = static_cast<float>(lua_tonumber(L, -1));
+            else if (lua_istable(L, -1))
+            {
+                lua_rawgeti(L, -1, 1);
+                lua_rawgeti(L, -2, 2);
+                if (!lua_isnumber(L, -2) || !lua_isnumber(L, -1)) luaL_error(L, "%s: '%s' must be a number or {min, max}", where, name);
+                min = static_cast<float>(lua_tonumber(L, -2));
+                max = static_cast<float>(lua_tonumber(L, -1));
+                lua_pop(L, 2);
+            }
+            else if (lua_isnil(L, -1)) given = false;
+            else luaL_error(L, "%s: '%s' must be a number or {min, max}", where, name);
+            lua_pop(L, 1);
+            return given;
+        }
+
+        /// An emitter table into @p e (wxl::DrawEmitter's defaults for what it leaves out).
+        void ReadDrawEmitter(lua_State* L, int index, const char* where, wxl_draw_emitter& e)
+        {
+            if (!lua_istable(L, index))
+                luaL_error(L, "%s: the emitter (argument %d) must be a table {spawn = \"point\", center = {x, y, z}, burst = 10, ...}", where, index);
+            e             = wxl_draw_emitter{};
+            e.struct_size = sizeof e;
+            e.speed_min   = 1.0f;
+            e.speed_max   = 2.0f;
+            e.life_min = e.life_max = 1.0f;
+            e.size_min = e.size_max = 0.3f;
+            e.spawn = FieldNamed(L, index, "spawn", kDrawSpawns, 4, 0, where);
+            const auto point = [&](const char* name, wxl_vec3& out) {
+                lua_getfield(L, index, name);
+                if (!lua_isnil(L, -1) && !ReadPoint(L, -1, out)) luaL_error(L, "%s: the emitter's '%s' must be a point {x, y, z}", where, name);
+                lua_pop(L, 1);
+            };
+            point("center", e.center);
+            point("extent", e.extent);
+            point("direction", e.direction);
+            point("attractor", e.attractor);
+            e.facing = FieldNumber(L, index, "facing", 0.0f, where);
+            e.spread = FieldNumber(L, index, "spread", 0.0f, where);
+            const float burst = FieldNumber(L, index, "burst", 0.0f, where);
+            if (burst < 0.0f || burst > 4294967295.0f) luaL_error(L, "%s: the emitter's 'burst' must be a count", where);
+            e.burst    = static_cast<uint32_t>(burst);
+            e.rate     = FieldNumber(L, index, "rate", 0.0f, where);
+            e.duration = FieldNumber(L, index, "duration", 0.0f, where);
+            FieldRange(L, index, "speed", e.speed_min, e.speed_max, where);
+            FieldRange(L, index, "life", e.life_min, e.life_max, where);
+            FieldRange(L, index, "size", e.size_min, e.size_max, where);
+            FieldRange(L, index, "spin", e.spin_min, e.spin_max, where);
+            e.gravity        = FieldNumber(L, index, "gravity", 0.0f, where);
+            e.drag           = FieldNumber(L, index, "drag", 0.0f, where);
+            e.ground         = FieldNamed(L, index, "ground", kDrawGrounds, 3, 0, where);
+            e.restitution    = FieldNumber(L, index, "restitution", 0.0f, where);
+            e.friction       = FieldNumber(L, index, "friction", 0.0f, where);
+            e.attraction     = FieldNumber(L, index, "attraction", 0.0f, where);
+            e.attract_radius = FieldNumber(L, index, "attract_radius", 0.0f, where);
+            const float seed = FieldNumber(L, index, "seed", 0.0f, where);
+            e.seed           = seed > 0.0f ? static_cast<uint32_t>(seed) : 0u;
+        }
+
+        /// A look table (nil: the service's default) into @p p, its texture's path into @p texture.
+        bool ReadDrawParticles(lua_State* L, int index, const char* where, wxl_draw_particles& p, std::string& texture)
+        {
+            p             = wxl_draw_particles{};
+            p.struct_size = sizeof p;
+            if (lua_isnoneornil(L, index)) return false;
+            if (!lua_istable(L, index))
+                luaL_error(L, "%s: the look (argument %d) must be a table {mode = \"camera\", texture, keys = {...}, ...}", where, index);
+            p.mode  = FieldNamed(L, index, "mode", kDrawModes, 3, 0, where);
+            p.blend = FieldNamed(L, index, "blend", kDrawBlends, 3, 0, where);
+            p.depth = FieldNamed(L, index, "depth", kDrawDepths, 2, 0, where);
+            lua_getfield(L, index, "texture");
+            if (lua_type(L, -1) == LUA_TSTRING) texture = lua_tostring(L, -1);
+            else if (lua_istable(L, -1))
+            {
+                const int at = lua_gettop(L);
+                lua_rawgeti(L, at, 1);
+                lua_rawgeti(L, at, 2);
+                lua_rawgeti(L, at, 3);
+                if (lua_type(L, -3) != LUA_TSTRING)
+                    luaL_error(L, "%s: the look's 'texture' must be a path, or {path, right, bottom} as wxl.texture.Make answers", where);
+                texture          = lua_tostring(L, -3);
+                p.texture_right  = lua_isnumber(L, -2) ? static_cast<float>(lua_tonumber(L, -2)) : 0.0f;
+                p.texture_bottom = lua_isnumber(L, -1) ? static_cast<float>(lua_tonumber(L, -1)) : 0.0f;
+                lua_pop(L, 3);
+            }
+            else if (!lua_isnil(L, -1))
+                luaL_error(L, "%s: the look's 'texture' must be a path, or {path, right, bottom} as wxl.texture.Make answers", where);
+            lua_pop(L, 1);
+            if (!texture.empty()) p.texture = texture.c_str();
+            float fx = 0.0f, fy = 0.0f;
+            if (FieldPair(L, index, "frames", fx, fy, true, where))
+            {
+                p.frames_x = static_cast<uint32_t>(std::max(fx, 0.0f));
+                p.frames_y = static_cast<uint32_t>(std::max(fy, 0.0f));
+            }
+            p.frame_rate     = FieldNumber(L, index, "frame_rate", 0.0f, where);
+            p.occluded_alpha = FieldNumber(L, index, "occluded_alpha", 0.0f, where);
+            p.stretch        = FieldNumber(L, index, "stretch", 0.0f, where);
+            p.softness       = FieldNumber(L, index, "softness", 0.0f, where);
+            p.texture_blur   = FieldNumber(L, index, "texture_blur", 0.0f, where);
+            if (FieldFlag(L, index, "mask", where)) p.flags |= WXL_DRAW_PARTICLES_MASK;
+            lua_getfield(L, index, "keys");
+            if (!lua_isnil(L, -1))
+            {
+                if (!lua_istable(L, -1)) luaL_error(L, "%s: the look's 'keys' must be a list of {t, size, color, alpha}", where);
+                const int    list = lua_gettop(L);
+                const size_t n    = lua_objlen(L, list);
+                if (n > WXL_DRAW_MAX_PARTICLE_KEYS)
+                    luaL_error(L, "%s: the look has %d keys, more than a look may (%d)", where, static_cast<int>(n), static_cast<int>(WXL_DRAW_MAX_PARTICLE_KEYS));
+                for (size_t i = 0; i < n; ++i)
+                {
+                    lua_rawgeti(L, list, static_cast<int>(i + 1));
+                    if (!lua_istable(L, -1)) luaL_error(L, "%s: key %d must be a table {t, size, color, alpha}", where, static_cast<int>(i + 1));
+                    const int key = lua_gettop(L);
+                    wxl_draw_particle_key& k = p.keys[i];
+                    k.t     = FieldNumber(L, key, "t", 0.0f, where);
+                    k.size  = FieldNumber(L, key, "size", 1.0f, where);
+                    k.alpha = FieldNumber(L, key, "alpha", 1.0f, where);
+                    k.color = 0xFFFFFFu;
+                    FieldColor(L, key, "color", k.color, where);
+                    lua_pop(L, 1);
+                }
+                p.key_count = static_cast<uint32_t>(n);
+            }
+            lua_pop(L, 1);
+            return true;
+        }
+
+        int L_DrawEmit(lua_State* L)
+        {
+            wxl_draw_emitter   e{};
+            wxl_draw_particles p{};
+            std::string        texture;
+            ReadDrawEmitter(L, 1, "wxl.draw.Emit", e);
+            const bool          looked = ReadDrawParticles(L, 2, "wxl.draw.Emit", p, texture);
+            const wxl_draw_api* api    = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::emit)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->emit(&e, looked ? &p : nullptr);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_DrawAddEmitter(lua_State* L)
+        {
+            wxl_draw_emitter   e{};
+            wxl_draw_particles p{};
+            std::string        texture;
+            ReadDrawEmitter(L, 1, "wxl.draw.AddEmitter", e);
+            const bool          looked = ReadDrawParticles(L, 2, "wxl.draw.AddEmitter", p, texture);
+            const wxl_draw_api* api    = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::add_emitter)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_handle made = api->add_emitter(&e, looked ? &p : nullptr);
+            if (made == WXL_HANDLE_NONE) return PushResultFailure(L, WXL_E_INVALID);
+            PushDrawEmitter(L, made);
+            return 1;
+        }
+
+        wxl_handle CheckDrawEmitter(lua_State* L, const char* where)
+        {
+            const wxl_handle handle = ToDrawEmitter(L, 1);
+            if (handle == WXL_HANDLE_NONE) luaL_error(L, "%s: 'self' (argument 1) must be an Emitter wxl.draw.AddEmitter answered, not stopped", where);
+            return handle;
+        }
+
+        int L_DrawUpdateEmitter(lua_State* L)
+        {
+            const wxl_handle handle = CheckDrawEmitter(L, "wxl.draw.UpdateEmitter");
+            wxl_draw_emitter e{};
+            ReadDrawEmitter(L, 2, "wxl.draw.UpdateEmitter", e);
+            const wxl_draw_api* api = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::update_emitter)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->update_emitter(handle, &e);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_DrawSetEmitterStyle(lua_State* L)
+        {
+            const wxl_handle   handle = CheckDrawEmitter(L, "wxl.draw.SetEmitterStyle");
+            wxl_draw_particles p{};
+            std::string        texture;
+            const bool          looked = ReadDrawParticles(L, 2, "wxl.draw.SetEmitterStyle", p, texture);
+            const wxl_draw_api* api    = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::set_emitter_style)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set_emitter_style(handle, looked ? &p : nullptr);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_DrawDraw(lua_State* L)
+        {
+            wxl_draw_shape        shape{};
+            wxl_draw_style        style{};
+            std::vector<wxl_vec3> points;
+            std::vector<float>    alphas;
+            std::string           texture;
+            ReadDrawShape(L, 1, "wxl.draw.Draw", shape, points, alphas);
+            const bool          styled = ReadDrawStyle(L, 2, "wxl.draw.Draw", style, texture);
+            const wxl_draw_api* api    = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::draw)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->draw(&shape, styled ? &style : nullptr);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_DrawAdd(lua_State* L)
+        {
+            wxl_draw_shape        shape{};
+            wxl_draw_style        style{};
+            std::vector<wxl_vec3> points;
+            std::vector<float>    alphas;
+            std::string           texture;
+            ReadDrawShape(L, 1, "wxl.draw.Add", shape, points, alphas);
+            const bool styled = ReadDrawStyle(L, 2, "wxl.draw.Add", style, texture);
+            float      duration = 0.0f;
+            if (!lua_isnoneornil(L, 3))
+            {
+                if (!lua_isnumber(L, 3)) luaL_error(L, "wxl.draw.Add: 'duration' (argument 3) must be seconds, or nil to keep it until removed");
+                duration = static_cast<float>(lua_tonumber(L, 3));
+            }
+            const wxl_draw_api* api = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::add)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_handle made = api->add(&shape, styled ? &style : nullptr, duration);
+            if (made == WXL_HANDLE_NONE) return PushResultFailure(L, WXL_E_INVALID);
+            PushDrawShape(L, made);
+            return 1;
+        }
+
+        wxl_handle CheckDrawShape(lua_State* L, const char* where)
+        {
+            const wxl_handle handle = ToDrawShape(L, 1);
+            if (handle == WXL_HANDLE_NONE) luaL_error(L, "%s: 'self' (argument 1) must be a Shape wxl.draw.Add answered, not removed", where);
+            return handle;
+        }
+
+        int L_DrawUpdate(lua_State* L)
+        {
+            const wxl_handle      handle = CheckDrawShape(L, "wxl.draw.Update");
+            wxl_draw_shape        shape{};
+            std::vector<wxl_vec3> points;
+            std::vector<float>    alphas;
+            ReadDrawShape(L, 2, "wxl.draw.Update", shape, points, alphas);
+            const wxl_draw_api* api = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::update)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->update(handle, &shape);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_DrawSetStyle(lua_State* L)
+        {
+            const wxl_handle handle = CheckDrawShape(L, "wxl.draw.SetStyle");
+            wxl_draw_style   style{};
+            std::string      texture;
+            const bool       styled = ReadDrawStyle(L, 2, "wxl.draw.SetStyle", style, texture);
+            const wxl_draw_api* api = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::set_style)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set_style(handle, styled ? &style : nullptr);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_DrawClear(lua_State* L)
+        {
+            CloseDrawShapes(L);
+            CloseDrawEmitters(L);
+            return 0;
+        }
+
+        int L_DrawStats(lua_State* L)
+        {
+            const wxl_draw_api* api = Draw();
+            if (!api || !wxl::detail::Carries(api, &wxl_draw_api::stats)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            wxl_draw_stats stats{};
+            stats.struct_size       = sizeof stats;
+            const wxl_result result = api->stats(&stats);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_createtable(L, 0, 22);
+            const auto field = [&](const char* name, double value) {
+                lua_pushnumber(L, value);
+                lua_setfield(L, -2, name);
+            };
+            field("shapes", stats.shapes);
+            field("immediate", stats.immediate);
+            field("drawn", stats.drawn);
+            field("vertices", stats.vertices);
+            field("left_out", stats.left_out);
+            field("rebuilt", stats.rebuilt);
+            field("build_microseconds", stats.build_microseconds);
+            field("max_build_microseconds", stats.max_build_microseconds);
+            field("immediate_microseconds", stats.immediate_microseconds);
+            field("frames", stats.frames);
+            field("textured", stats.textured);
+            field("textures", stats.textures);
+            field("textures_loading", stats.textures_loading);
+            field("shadows", stats.shadows);
+            field("occluded", stats.occluded);
+            field("reused", stats.reused);
+            field("particles", stats.particles);
+            field("particles_emitted", stats.particles_emitted);
+            field("particles_culled", stats.particles_culled);
+            field("particle_draws", stats.particle_draws);
+            field("emitters", stats.emitters);
+            field("particle_microseconds", stats.particle_microseconds);
+            return 1;
+        }
+
+
+        // --- wxl.net: the opcode numbers each Lua mod claims, and its readers and writers -----
+        //
+        // The runtime sees every Lua mod's numbers as wxl.lua's. Each is kept here with the mod
+        // that claimed it: another Lua mod's claim of it is refused, its messages reach that
+        // mod's function alone, and the send gate is kept for each mod, not for wxl.lua.
+
+        const wxl_net_api* Net() { return wxl::api::Table<wxl_net_api>(); }
+
+        constexpr const char* kNetReader = "wxl.net.Reader";
+        constexpr const char* kNetWriter = "wxl.net.Writer";
+
+        struct NetClaim
+        {
+            ScriptMod* mod    = nullptr;
+            uint32_t   opcode = 0;
+            int        fn     = LUA_NOREF;
+            bool       warned = false; ///< "malformed" was logged once
+        };
+
+        std::vector<std::unique_ptr<NetClaim>> g_netClaims;
+
+        /// The connection on which each Lua mod last heard one of its numbers.
+        std::vector<std::pair<ScriptMod*, uint32_t>> g_netHeard;
+
+        NetClaim* NetClaimOf(uint32_t opcode)
+        {
+            for (const std::unique_ptr<NetClaim>& claim : g_netClaims)
+                if (claim->opcode == opcode) return claim.get();
+            return nullptr;
+        }
+
+        std::string Hex(uint32_t value)
+        {
+            char text[16];
+            std::snprintf(text, sizeof text, "0x%X", static_cast<unsigned>(value));
+            return text;
+        }
+
+        bool NetHeard(const ScriptMod& mod)
+        {
+            const wxl_net_api* api = Net();
+            if (!api || !wxl::detail::Carries(api, &wxl_net_api::connection)) return false;
+            const uint32_t connection = api->connection();
+            if (!connection) return false;
+            for (const auto& [who, on] : g_netHeard)
+                if (who == &mod) return on == connection;
+            return false;
+        }
+
+        void NetHear(ScriptMod& mod)
+        {
+            const wxl_net_api* api = Net();
+            if (!api || !wxl::detail::Carries(api, &wxl_net_api::connection)) return;
+            const uint32_t connection = api->connection();
+            for (auto& [who, on] : g_netHeard)
+                if (who == &mod)
+                {
+                    on = connection;
+                    return;
+                }
+            g_netHeard.emplace_back(&mod, connection);
+        }
+
+        uint32_t CheckOpcode(lua_State* L, int index, const char* function, const char* parameter)
+        {
+            if (lua_isnoneornil(L, index))
+                luaL_error(L, "wxl.net.%s: '%s' (argument %d) is missing; it takes an opcode number", function,
+                           parameter, index);
+            const lua_Number value = luaL_checknumber(L, index);
+            if (!(value >= 0.0) || value > 4294967295.0 || value != std::floor(value))
+                luaL_error(L, "wxl.net.%s: '%s' (argument %d) takes a whole number from 0", function, parameter, index);
+            return static_cast<uint32_t>(value);
+        }
+
+        // --- the reader ----------------------------------------------------------------------
+
+        struct NetReader
+        {
+            std::string bytes;
+            size_t      at     = 0;
+            bool        failed = false;
+
+            bool Take(size_t count, const char*& out)
+            {
+                if (failed || count > bytes.size() - at)
+                {
+                    failed = true;
+                    at     = bytes.size();
+                    return false;
+                }
+                out = bytes.data() + at;
+                at += count;
+                return true;
+            }
+        };
+
+        struct NetWriter
+        {
+            std::string bytes;
+            size_t      limit  = WXL_NET_MAX_SEND;
+            bool        failed = false;
+
+            bool Put(const void* data, size_t size)
+            {
+                if (failed || size > limit - bytes.size())
+                {
+                    failed = true;
+                    return false;
+                }
+                bytes.append(static_cast<const char*>(data), size);
+                return true;
+            }
+        };
+
+        template <class T>
+        int L_NetDestroy(lua_State* L)
+        {
+            static_cast<T*>(lua_touserdata(L, 1))->~T();
+            return 0;
+        }
+
+        NetReader& ToReader(lua_State* L) { return *static_cast<NetReader*>(luaL_checkudata(L, 1, kNetReader)); }
+        NetWriter& ToWriter(lua_State* L) { return *static_cast<NetWriter*>(luaL_checkudata(L, 1, kNetWriter)); }
+
+        void PushNetReader(lua_State* L, const void* data, size_t size);
+
+        template <class T>
+        T ReadNumber(NetReader& reader)
+        {
+            T           value{};
+            const char* at = nullptr;
+            if (reader.Take(sizeof(T), at)) std::memcpy(&value, at, sizeof(T));
+            return value;
+        }
+
+        template <class T>
+        int L_ReadNumber(lua_State* L)
+        {
+            lua_pushnumber(L, static_cast<lua_Number>(ReadNumber<T>(ToReader(L))));
+            return 1;
+        }
+
+        int L_ReadBool(lua_State* L)
+        {
+            lua_pushboolean(L, ReadNumber<uint8_t>(ToReader(L)) != 0);
+            return 1;
+        }
+
+        void PushGuidText(lua_State* L, uint64_t guid)
+        {
+            char text[24];
+            std::snprintf(text, sizeof text, "0x%016llX", static_cast<unsigned long long>(guid));
+            lua_pushstring(L, text);
+        }
+
+        int L_ReadGuid(lua_State* L)
+        {
+            PushGuidText(L, ReadNumber<uint64_t>(ToReader(L)));
+            return 1;
+        }
+
+        int L_ReadPackedGuid(lua_State* L)
+        {
+            NetReader&    reader = ToReader(L);
+            const uint8_t mask   = ReadNumber<uint8_t>(reader);
+            uint64_t      guid   = 0;
+            for (int i = 0; i < 8; ++i)
+                if (mask & (1u << i)) guid |= static_cast<uint64_t>(ReadNumber<uint8_t>(reader)) << (8 * i);
+            PushGuidText(L, guid);
+            return 1;
+        }
+
+        int L_ReadVec3(lua_State* L)
+        {
+            NetReader& reader = ToReader(L);
+            const float x = ReadNumber<float>(reader), y = ReadNumber<float>(reader), z = ReadNumber<float>(reader);
+            lua_createtable(L, 0, 3);
+            lua_pushnumber(L, x);
+            lua_setfield(L, -2, "x");
+            lua_pushnumber(L, y);
+            lua_setfield(L, -2, "y");
+            lua_pushnumber(L, z);
+            lua_setfield(L, -2, "z");
+            return 1;
+        }
+
+        int L_ReadString(lua_State* L)
+        {
+            NetReader&   reader = ToReader(L);
+            const double max    = lua_isnoneornil(L, 2) ? 4096.0 : luaL_checknumber(L, 2);
+            const size_t limit  = max < 0.0 ? 0 : static_cast<size_t>(max);
+            const size_t left   = reader.failed ? 0 : reader.bytes.size() - reader.at;
+            const size_t span   = left < limit + 1 ? left : limit + 1;
+            const void*  zero   = span ? std::memchr(reader.bytes.data() + reader.at, 0, span) : nullptr;
+            if (!zero)
+            {
+                reader.failed = true;
+                reader.at     = reader.bytes.size();
+                lua_pushliteral(L, "");
+                return 1;
+            }
+            const size_t length = static_cast<size_t>(static_cast<const char*>(zero) - (reader.bytes.data() + reader.at));
+            lua_pushlstring(L, reader.bytes.data() + reader.at, length);
+            reader.at += length + 1;
+            return 1;
+        }
+
+        int L_ReadBytes(lua_State* L)
+        {
+            NetReader&       reader = ToReader(L);
+            const lua_Number count  = luaL_checknumber(L, 2);
+            const char*      at     = nullptr;
+            if (!(count >= 0.0) || !reader.Take(static_cast<size_t>(count), at))
+            {
+                reader.failed = true;
+                reader.at     = reader.bytes.size();
+                lua_pushliteral(L, "");
+                return 1;
+            }
+            lua_pushlstring(L, at, static_cast<size_t>(count));
+            return 1;
+        }
+
+        int L_ReadSkip(lua_State* L)
+        {
+            NetReader&       reader = ToReader(L);
+            const lua_Number count  = luaL_checknumber(L, 2);
+            const char*      at     = nullptr;
+            if (!(count >= 0.0) || !reader.Take(static_cast<size_t>(count), at)) reader.failed = true;
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        int L_ReadOk(lua_State* L)
+        {
+            lua_pushboolean(L, !ToReader(L).failed);
+            return 1;
+        }
+
+        int L_ReadAtEnd(lua_State* L)
+        {
+            const NetReader& reader = ToReader(L);
+            lua_pushboolean(L, !reader.failed && reader.at == reader.bytes.size());
+            return 1;
+        }
+
+        int L_ReadRemaining(lua_State* L)
+        {
+            const NetReader& reader = ToReader(L);
+            lua_pushnumber(L, static_cast<lua_Number>(reader.failed ? 0 : reader.bytes.size() - reader.at));
+            return 1;
+        }
+
+        int L_ReadPosition(lua_State* L)
+        {
+            lua_pushnumber(L, static_cast<lua_Number>(ToReader(L).at));
+            return 1;
+        }
+
+        int L_ReadSize(lua_State* L)
+        {
+            lua_pushnumber(L, static_cast<lua_Number>(ToReader(L).bytes.size()));
+            return 1;
+        }
+
+        int L_ReadData(lua_State* L)
+        {
+            const NetReader& reader = ToReader(L);
+            lua_pushlstring(L, reader.bytes.data(), reader.bytes.size());
+            return 1;
+        }
+
+        // --- the writer ----------------------------------------------------------------------
+
+        template <class T>
+        int L_WriteNumber(lua_State* L)
+        {
+            NetWriter&       writer = ToWriter(L);
+            const lua_Number number = luaL_checknumber(L, 2);
+            T                value{};
+            if constexpr (std::is_floating_point_v<T>)
+            {
+                value = static_cast<T>(number);
+            }
+            else
+            {
+                if (number != std::floor(number) ||
+                    number < static_cast<lua_Number>(std::numeric_limits<T>::min()) ||
+                    number > static_cast<lua_Number>(std::numeric_limits<T>::max()))
+                    return luaL_error(L, "wxl.net Writer: %s does not fit the field", lua_tostring(L, 2));
+                value = static_cast<T>(number);
+            }
+            writer.Put(&value, sizeof value);
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        int L_WriteBool(lua_State* L)
+        {
+            NetWriter&    writer = ToWriter(L);
+            const uint8_t value  = lua_toboolean(L, 2) ? 1 : 0;
+            writer.Put(&value, 1);
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        /// A guid as a script holds one: the "0x..." text, or a number.
+        uint64_t CheckGuid(lua_State* L, int index)
+        {
+            if (lua_type(L, index) == LUA_TNUMBER) return static_cast<uint64_t>(lua_tonumber(L, index));
+            const char* text = luaL_checkstring(L, index);
+            char*       end  = nullptr;
+            const unsigned long long value = std::strtoull(text, &end, 16);
+            if (!end || *end != '\0') luaL_argerror(L, index, "a guid: \"0x\" and up to sixteen hex digits");
+            return static_cast<uint64_t>(value);
+        }
+
+        int L_WriteGuid(lua_State* L)
+        {
+            NetWriter&     writer = ToWriter(L);
+            const uint64_t guid   = CheckGuid(L, 2);
+            writer.Put(&guid, sizeof guid);
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        int L_WritePackedGuid(lua_State* L)
+        {
+            NetWriter&     writer    = ToWriter(L);
+            const uint64_t guid      = CheckGuid(L, 2);
+            uint8_t        packed[9] = {};
+            size_t         n         = 1;
+            for (int i = 0; i < 8; ++i)
+            {
+                const uint8_t b = static_cast<uint8_t>(guid >> (8 * i));
+                if (!b) continue;
+                packed[0] |= static_cast<uint8_t>(1u << i);
+                packed[n++] = b;
+            }
+            writer.Put(packed, n);
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        int L_WriteVec3(lua_State* L)
+        {
+            NetWriter& writer = ToWriter(L);
+            luaL_checktype(L, 2, LUA_TTABLE);
+            for (const char* axis : {"x", "y", "z"})
+            {
+                lua_getfield(L, 2, axis);
+                const float value = static_cast<float>(luaL_checknumber(L, -1));
+                lua_pop(L, 1);
+                writer.Put(&value, sizeof value);
+            }
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        int L_WriteString(lua_State* L)
+        {
+            NetWriter&  writer = ToWriter(L);
+            size_t      size   = 0;
+            const char* text   = luaL_checklstring(L, 2, &size);
+            if (std::memchr(text, 0, size)) return luaL_argerror(L, 2, "a string without zero bytes; use Bytes for those");
+            std::string line(text, size);
+            line.push_back('\0');
+            writer.Put(line.data(), line.size());
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        int L_WriteBytes(lua_State* L)
+        {
+            NetWriter&  writer = ToWriter(L);
+            size_t      size   = 0;
+            const char* data   = luaL_checklstring(L, 2, &size);
+            writer.Put(data, size);
+            lua_settop(L, 1);
+            return 1;
+        }
+
+        int L_WriteOk(lua_State* L)
+        {
+            lua_pushboolean(L, !ToWriter(L).failed);
+            return 1;
+        }
+
+        int L_WriteSize(lua_State* L)
+        {
+            lua_pushnumber(L, static_cast<lua_Number>(ToWriter(L).bytes.size()));
+            return 1;
+        }
+
+        int L_WriteData(lua_State* L)
+        {
+            const NetWriter& writer = ToWriter(L);
+            lua_pushlstring(L, writer.bytes.data(), writer.bytes.size());
+            return 1;
+        }
+
+        /// The metatables of the reader and the writer, made once per state.
+        void EnsureNetMeta(lua_State* L)
+        {
+            if (luaL_newmetatable(L, kNetReader))
+            {
+                static const luaL_Reg methods[] = {
+                    {"U8", &L_ReadNumber<uint8_t>},     {"U16", &L_ReadNumber<uint16_t>},
+                    {"U32", &L_ReadNumber<uint32_t>},   {"U64", &L_ReadNumber<uint64_t>},
+                    {"I8", &L_ReadNumber<int8_t>},      {"I16", &L_ReadNumber<int16_t>},
+                    {"I32", &L_ReadNumber<int32_t>},    {"I64", &L_ReadNumber<int64_t>},
+                    {"F32", &L_ReadNumber<float>},      {"F64", &L_ReadNumber<double>},
+                    {"Bool", &L_ReadBool},              {"Guid", &L_ReadGuid},
+                    {"PackedGuid", &L_ReadPackedGuid},  {"Vec3", &L_ReadVec3},
+                    {"String", &L_ReadString},          {"Bytes", &L_ReadBytes},
+                    {"Skip", &L_ReadSkip},              {"Ok", &L_ReadOk},
+                    {"AtEnd", &L_ReadAtEnd},            {"Remaining", &L_ReadRemaining},
+                    {"Position", &L_ReadPosition},      {"Size", &L_ReadSize},
+                    {"Data", &L_ReadData},              {nullptr, nullptr},
+                };
+                lua_newtable(L);
+                luaL_register(L, nullptr, methods);
+                lua_setfield(L, -2, "__index");
+                lua_pushcfunction(L, &L_NetDestroy<NetReader>);
+                lua_setfield(L, -2, "__gc");
+                lua_pushboolean(L, 0);
+                lua_setfield(L, -2, "__metatable");
+            }
+            lua_pop(L, 1);
+            if (luaL_newmetatable(L, kNetWriter))
+            {
+                static const luaL_Reg methods[] = {
+                    {"U8", &L_WriteNumber<uint8_t>},    {"U16", &L_WriteNumber<uint16_t>},
+                    {"U32", &L_WriteNumber<uint32_t>},  {"U64", &L_WriteNumber<uint64_t>},
+                    {"I8", &L_WriteNumber<int8_t>},     {"I16", &L_WriteNumber<int16_t>},
+                    {"I32", &L_WriteNumber<int32_t>},   {"I64", &L_WriteNumber<int64_t>},
+                    {"F32", &L_WriteNumber<float>},     {"F64", &L_WriteNumber<double>},
+                    {"Bool", &L_WriteBool},             {"Guid", &L_WriteGuid},
+                    {"PackedGuid", &L_WritePackedGuid}, {"Vec3", &L_WriteVec3},
+                    {"String", &L_WriteString},         {"Bytes", &L_WriteBytes},
+                    {"Ok", &L_WriteOk},                 {"Size", &L_WriteSize},
+                    {"Data", &L_WriteData},             {nullptr, nullptr},
+                };
+                lua_newtable(L);
+                luaL_register(L, nullptr, methods);
+                lua_setfield(L, -2, "__index");
+                lua_pushcfunction(L, &L_NetDestroy<NetWriter>);
+                lua_setfield(L, -2, "__gc");
+                lua_pushboolean(L, 0);
+                lua_setfield(L, -2, "__metatable");
+            }
+            lua_pop(L, 1);
+        }
+
+        void PushNetReader(lua_State* L, const void* data, size_t size)
+        {
+            EnsureNetMeta(L);
+            void* memory = lua_newuserdata(L, sizeof(NetReader));
+            auto* reader = new (memory) NetReader();
+            if (data && size) reader->bytes.assign(static_cast<const char*>(data), size);
+            luaL_getmetatable(L, kNetReader);
+            lua_setmetatable(L, -2);
+        }
+
+        /// wxl.net.Reader(bytes): a reader over a string, as a handler is handed one.
+        int L_NetReader(lua_State* L)
+        {
+            size_t      size = 0;
+            const char* data = luaL_checklstring(L, 1, &size);
+            PushNetReader(L, data, size);
+            return 1;
+        }
+
+        /// wxl.net.Writer([limit]): an empty body, bounded by MaxSend or a smaller limit.
+        int L_NetWriter(lua_State* L)
+        {
+            EnsureNetMeta(L);
+            size_t limit = WXL_NET_MAX_SEND;
+            if (!lua_isnoneornil(L, 1))
+            {
+                const lua_Number asked = luaL_checknumber(L, 1);
+                if (asked >= 0.0 && asked < static_cast<lua_Number>(limit)) limit = static_cast<size_t>(asked);
+            }
+            void* memory   = lua_newuserdata(L, sizeof(NetWriter));
+            auto* writer   = new (memory) NetWriter();
+            writer->limit  = limit;
+            luaL_getmetatable(L, kNetWriter);
+            lua_setmetatable(L, -2);
+            return 1;
+        }
+
+        // --- the service ---------------------------------------------------------------------
+
+        void WXL_CALL NetDispatch(void* user, uint32_t opcode, const void* data, uint32_t size)
+        {
+            const auto found = std::find_if(g_netClaims.begin(), g_netClaims.end(),
+                                            [&](const std::unique_ptr<NetClaim>& c) { return c.get() == user; });
+            if (found == g_netClaims.end()) return;
+            NetClaim&  claim = **found;
+            ScriptMod& mod   = *claim.mod;
+            NetHear(mod);
+            if (claim.fn == LUA_NOREF || !mod.Runs()) return;
+            const std::string what   = "in its wxl.net handler of " + Hex(opcode);
+            const NetReader*  reader = nullptr;
+            int               held   = LUA_NOREF;
+            CallBack(mod, claim.fn, what.c_str(), [&](lua_State* L) {
+                PushNetReader(L, data, size);
+                reader = static_cast<const NetReader*>(lua_touserdata(L, -1));
+                // Held until the check below: the function may drop its reader.
+                lua_pushvalue(L, -1);
+                held = luaL_ref(L, LUA_REGISTRYINDEX);
+                lua_pushnumber(L, opcode);
+                return 2;
+            });
+            if (lua_State* L = mod.State())
+            {
+                NetClaim* still = NetClaimOf(opcode);
+                if (still && still->mod == &mod && reader && reader->failed && !still->warned)
+                {
+                    still->warned = true;
+                    wxl::Log(WXL_LOG_WARN, kTag,
+                             "mod " + mod.Id() + ": malformed " + Hex(opcode) + " from the server: its handler read past the end of " +
+                                 std::to_string(size) + " bytes");
+                }
+                luaL_unref(L, LUA_REGISTRYINDEX, held);
+            }
+        }
+
+        int L_NetState(lua_State* L)
+        {
+            const wxl_net_api* api = Net();
+            if (!api) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            switch (api->state())
+            {
+            case WXL_NET_CONNECTING: lua_pushliteral(L, "connecting"); break;
+            case WXL_NET_CONNECTED: lua_pushliteral(L, "connected"); break;
+            case WXL_NET_AUTHENTICATED: lua_pushliteral(L, "authenticated"); break;
+            default: lua_pushliteral(L, "offline"); break;
+            }
+            return 1;
+        }
+
+        int L_NetClaim(lua_State* L)
+        {
+            ScriptMod&     mod    = Self(L);
+            const uint32_t opcode = CheckOpcode(L, 1, "Claim", "opcode");
+            const auto     refuse = [&](const std::string& why) {
+                wxl::Log(WXL_LOG_WARN, kTag, "mod " + mod.Id() + ": wxl.net.Claim refused " + Hex(opcode) + ": " + why);
+                return PushResultFailure(L, WXL_E_INVALID);
+            };
+            if (opcode > WXL_NET_OPCODE_MAX) return refuse("an opcode is at most 0xFFFF, the server writes it in 16 bits");
+            if (NetClaim* held = NetClaimOf(opcode))
+            {
+                if (held->mod == &mod)
+                {
+                    lua_pushboolean(L, 1);
+                    return 1;
+                }
+                return refuse(Hex(opcode) + " is claimed by " + held->mod->Id());
+            }
+            const host::Manifest& manifest = mod.Manifest();
+            if (opcode <= WXL_NET_STOCK_LIMIT && !manifest.net.stock)
+                return refuse("it is one of the client's own numbers (up to 0x520); a mod's own start at 0x521, and a "
+                              "tool that must use the client's says \"net\": { \"stock\": true } in its mod.json");
+            if (const Runtime* runtime = Runtime::Instance())
+                if (const host::DeclaredOpcodes* declared = runtime->Opcodes().Find(opcode))
+                    if (declared->mod != mod.Id())
+                        return refuse(Hex(opcode) + " is declared by " + declared->mod + " in its mod.json");
+            if (!manifest.net.opcodes.empty() && !manifest.net.Declares(opcode))
+                return refuse("this mod's mod.json lists its numbers in net.opcodes, and " + Hex(opcode) +
+                              " is not among them");
+            const wxl_net_api* api = Net();
+            if (!api || !wxl::detail::Carries(api, &wxl_net_api::set_handler)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->claim_opcode(opcode);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            auto claim    = std::make_unique<NetClaim>();
+            claim->mod    = &mod;
+            claim->opcode = opcode;
+            // The runtime hands every message of the number here, so the mod hears its server
+            // even before it sets a function.
+            api->set_handler(opcode, &NetDispatch, claim.get());
+            g_netClaims.push_back(std::move(claim));
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        void NetDrop(size_t index)
+        {
+            const std::unique_ptr<NetClaim> claim = std::move(g_netClaims[index]);
+            g_netClaims.erase(g_netClaims.begin() + static_cast<std::ptrdiff_t>(index));
+            if (const wxl_net_api* api = Net()) api->release_opcode(claim->opcode);
+            if (lua_State* L = claim->mod->State()) luaL_unref(L, LUA_REGISTRYINDEX, claim->fn);
+        }
+
+        int L_NetRelease(lua_State* L)
+        {
+            ScriptMod&     mod    = Self(L);
+            const uint32_t opcode = CheckOpcode(L, 1, "Release", "opcode");
+            for (size_t i = 0; i < g_netClaims.size(); ++i)
+            {
+                if (g_netClaims[i]->opcode != opcode || g_netClaims[i]->mod != &mod) continue;
+                NetDrop(i);
+                lua_pushboolean(L, 1);
+                return 1;
+            }
+            return PushResultFailure(L, WXL_E_NOT_FOUND);
+        }
+
+        int L_NetSetHandler(lua_State* L)
+        {
+            ScriptMod&     mod    = Self(L);
+            const uint32_t opcode = CheckOpcode(L, 1, "SetHandler", "opcode");
+            if (!lua_isnoneornil(L, 2)) luaL_checktype(L, 2, LUA_TFUNCTION);
+            NetClaim* claim = NetClaimOf(opcode);
+            if (!claim || claim->mod != &mod)
+            {
+                wxl::Log(WXL_LOG_WARN, kTag, "mod " + mod.Id() + ": wxl.net.SetHandler refused " + Hex(opcode) +
+                                                 ": claim it first with wxl.net.Claim");
+                return PushResultFailure(L, WXL_E_INVALID);
+            }
+            luaL_unref(L, LUA_REGISTRYINDEX, claim->fn);
+            claim->fn = LUA_NOREF;
+            if (!lua_isnoneornil(L, 2))
+            {
+                lua_pushvalue(L, 2);
+                claim->fn = luaL_ref(L, LUA_REGISTRYINDEX);
+            }
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_NetSetCompressed(lua_State* L)
+        {
+            ScriptMod&     mod        = Self(L);
+            const uint32_t opcode     = CheckOpcode(L, 1, "SetCompressed", "opcode");
+            const uint32_t compressed = CheckOpcode(L, 2, "SetCompressed", "compressed");
+            const NetClaim* plain     = NetClaimOf(opcode);
+            const NetClaim* packed    = compressed ? NetClaimOf(compressed) : nullptr;
+            if (!plain || plain->mod != &mod || (compressed && (!packed || packed->mod != &mod)))
+            {
+                wxl::Log(WXL_LOG_WARN, kTag, "mod " + mod.Id() + ": wxl.net.SetCompressed refused " + Hex(opcode) +
+                                                 " and " + Hex(compressed) + ": claim both numbers first");
+                return PushResultFailure(L, WXL_E_INVALID);
+            }
+            const wxl_net_api* api = Net();
+            if (!api || !wxl::detail::Carries(api, &wxl_net_api::set_compressed)) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->set_compressed(opcode, compressed);
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_NetSend(lua_State* L)
+        {
+            ScriptMod&     mod    = Self(L);
+            const uint32_t opcode = CheckOpcode(L, 1, "Send", "opcode");
+            std::string    body;
+            if (const NetWriter* writer = static_cast<const NetWriter*>(luaL_testudata(L, 2, kNetWriter)))
+            {
+                if (writer->failed) return PushResultFailure(L, WXL_E_INVALID);
+                body = writer->bytes;
+            }
+            else if (!lua_isnoneornil(L, 2))
+            {
+                size_t      size = 0;
+                const char* data = luaL_checklstring(L, 2, &size);
+                body.assign(data, size);
+            }
+            const NetClaim* claim = NetClaimOf(opcode);
+            if (!claim || claim->mod != &mod) return PushResultFailure(L, WXL_E_INVALID);
+            // The send gate, for this Lua mod: the runtime keeps it for wxl.lua as a whole.
+            if (!NetHeard(mod)) return PushResultFailure(L, WXL_E_FAILED);
+            const wxl_net_api* api = Net();
+            if (!api) return PushResultFailure(L, WXL_E_UNSUPPORTED);
+            const wxl_result result = api->send(opcode, body.data(), static_cast<uint32_t>(body.size()));
+            if (result != WXL_OK) return PushResultFailure(L, result);
+            lua_pushboolean(L, 1);
+            return 1;
+        }
+
+        int L_NetHeard(lua_State* L)
+        {
+            lua_pushboolean(L, NetHeard(Self(L)) ? 1 : 0);
+            return 1;
+        }
+
+        void ReleaseNet(ScriptMod& mod)
+        {
+            for (size_t i = g_netClaims.size(); i-- > 0;)
+                if (g_netClaims[i]->mod == &mod) NetDrop(i);
+            g_netHeard.erase(std::remove_if(g_netHeard.begin(), g_netHeard.end(),
+                                            [&](const auto& entry) { return entry.first == &mod; }),
+                             g_netHeard.end());
+        }
+
     } // namespace
 
     lua_CFunction Find(std::string_view service, std::string_view name)
@@ -791,9 +4671,79 @@ namespace wxl::lua::shims
         if (service == "storage" && name == "Unredirect") return &L_Unredirect;
         if (service == "storage" && name == "Serve") return &L_Serve;
         if (service == "storage" && name == "Unserve") return &L_Unserve;
+        if (service == "storage" && name == "HashFile") return &L_HashFile;
+        if (service == "storage" && name == "HashFileAsync") return &L_HashFileAsync;
+        if (service == "storage" && name == "OverrideFile") return &L_OverrideFile;
+        if (service == "storage" && name == "RestoreFile") return &L_RestoreFile;
+        if (service == "storage" && name == "ReloadAsset") return &L_ReloadAsset;
+        if (service == "relay" && name == "Publish") return &L_Publish;
+        if (service == "relay" && name == "Unpublish") return &L_Unpublish;
+        if (service == "relay" && name == "Call") return &L_Call;
+        if (service == "relay" && name == "Answer") return &L_Answer;
+        if (service == "relay" && name == "Fail") return &L_Fail;
+        if (service == "relay" && name == "Cancel") return &L_Cancel;
         if (service == "footprint" && name == "Snapshot") return &L_Snapshot;
         if (service == "footprint" && name == "Report") return &L_Report;
         if (service == "footprint" && name == "WatchPressure") return &L_WatchPressure;
+        if (service == "camera" && name == "SetView") return &L_SetView;
+        if (service == "camera" && name == "ReleaseView") return &L_ReleaseView;
+        if (service == "camera" && name == "SetViewRolled") return &L_SetViewRolled;
+        if (service == "input" && name == "CaptureCursor") return &L_CaptureCursor;
+        if (service == "input" && name == "CaptureCursorAt") return &L_CaptureCursorAt;
+        if (service == "input" && name == "BlockMouseLook") return &L_BlockMouseLook;
+        if (service == "pose" && name == "Head") return &L_Head;
+        if (service == "pose" && name == "ReleaseHead") return &L_ReleaseHead;
+        if (service == "animation" && name == "Play") return &L_AnimationPlay;
+        if (service == "animation" && name == "Stop") return &L_AnimationStop;
+        if (service == "highlight" && name == "Set") return &L_HighlightSet;
+        if (service == "highlight" && name == "Clear") return &L_HighlightClear;
+        if (service == "highlight" && name == "ClearAll") return &L_HighlightClearAll;
+        if (service == "selectioncircle" && name == "Hide") return &L_CircleHide;
+        if (service == "selectioncircle" && name == "SetStyle") return &L_CircleSetStyle;
+        if (service == "selectioncircle" && name == "Reset") return &L_CircleReset;
+        if (service == "selectioncircle" && name == "HideObject") return &L_CircleHideObject;
+        if (service == "selectioncircle" && name == "SetObjectStyle") return &L_CircleSetObjectStyle;
+        if (service == "selectioncircle" && name == "ResetObject") return &L_CircleResetObject;
+        if (service == "selectioncircle" && name == "ResetAll") return &L_CircleResetAll;
+        if (service == "texture" && name == "Make") return &L_TextureMake;
+        if (service == "texture" && name == "Stats") return &L_TextureStats;
+        if (service == "cvar" && name == "Register") return &L_CVarRegister;
+        if (service == "terrain" && name == "Trace") return &L_TerrainTrace;
+        if (service == "terrain" && name == "Locate") return &L_TerrainLocate;
+        if (service == "terrain" && name == "Vertices") return &L_TerrainVertices;
+        if (service == "terrain" && name == "VerticesIn") return &L_TerrainVerticesIn;
+        if (service == "terrain" && name == "SetHeights") return &L_TerrainSetHeights;
+        if (service == "terrain" && name == "Reset") return &L_TerrainReset;
+        if (service == "terrain" && name == "ResetAll") return &L_TerrainResetAll;
+        if (service == "terrain" && name == "Stats") return &L_TerrainStats;
+        if (service == "cvar" && name == "Release") return &L_CVarRelease;
+        if (service == "draw" && name == "Draw") return &L_DrawDraw;
+        if (service == "draw" && name == "Add") return &L_DrawAdd;
+        if (service == "draw" && name == "Update") return &L_DrawUpdate;
+        if (service == "draw" && name == "SetStyle") return &L_DrawSetStyle;
+        if (service == "draw" && name == "Clear") return &L_DrawClear;
+        if (service == "draw" && name == "Stats") return &L_DrawStats;
+        if (service == "draw" && name == "Emit") return &L_DrawEmit;
+        if (service == "draw" && name == "AddEmitter") return &L_DrawAddEmitter;
+        if (service == "draw" && name == "UpdateEmitter") return &L_DrawUpdateEmitter;
+        if (service == "draw" && name == "SetEmitterStyle") return &L_DrawSetEmitterStyle;
+        if (service == "render" && name == "CreatePipeline") return &L_RenderCreatePipeline;
+        if (service == "render" && name == "Begin") return &L_RenderBegin;
+        if (service == "render" && name == "Draw") return &L_RenderDraw;
+        if (service == "render" && name == "DrawIndexed") return &L_RenderDrawIndexed;
+        if (service == "render" && name == "Fullscreen") return &L_RenderFullscreen;
+        if (service == "render" && name == "DrawBatch") return &L_RenderDrawBatch;
+        if (service == "render" && name == "ReplaceShader") return &L_RenderReplaceShader;
+        if (service == "render" && name == "RestoreShader") return &L_RenderRestoreShader;
+        if (service == "render" && name == "Dispatch") return &L_RenderDispatch;
+        if (service == "render" && name == "BonePalette") return &L_RenderBonePalette;
+        if (service == "net" && name == "State") return &L_NetState;
+        if (service == "net" && name == "Claim") return &L_NetClaim;
+        if (service == "net" && name == "Release") return &L_NetRelease;
+        if (service == "net" && name == "SetHandler") return &L_NetSetHandler;
+        if (service == "net" && name == "SetCompressed") return &L_NetSetCompressed;
+        if (service == "net" && name == "Send") return &L_NetSend;
+        if (service == "net" && name == "Heard") return &L_NetHeard;
         if (service == "profile" && name == "Begin") return &profile::L_Begin;
         if (service == "profile" && name == "End") return &profile::L_End;
         if (service == "profile" && name == "Text") return &profile::L_Text;
@@ -803,6 +4753,12 @@ namespace wxl::lua::shims
     void ReleaseHeld(ScriptMod& mod)
     {
         ReleaseFootprint(mod);
+        ReleaseTerrain(mod);
+        ReleaseViewAndPointer(mod);
+        ReleaseStorage(mod);
+        ReleaseRelay(mod);
+        ReleaseNet(mod);
+        RestoreShaders(mod);
         for (size_t i = g_folders.size(); i-- > 0;)
             if (std::find(g_folders[i].holders.begin(), g_folders[i].holders.end(), &mod) != g_folders[i].holders.end())
                 LetGo(i, mod);
@@ -814,6 +4770,15 @@ namespace wxl::lua::shims
             if (std::any_of(g_served[i].holders.begin(), g_served[i].holders.end(),
                             [&](const ServedName& holder) { return holder.mod == &mod; }))
                 LetGoServed(i, mod);
+    }
+
+    void AddExtras(lua_State* L, std::string_view service)
+    {
+        if (service != "net") return;
+        lua_pushcfunction(L, &L_NetReader);
+        lua_setfield(L, -2, "Reader");
+        lua_pushcfunction(L, &L_NetWriter);
+        lua_setfield(L, -2, "Writer");
     }
 
     void Start()

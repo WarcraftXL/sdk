@@ -1,0 +1,41 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.camera as data: one row per member of wxl_camera_api, in member order. The shapes and
+// their columns are described in wxl/services/rows.hpp.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including camera.def"
+#endif
+
+WXL_API_SERVICE(camera, WXL_CAMERA_SERVICE, WXL_CAMERA_SERVICE_VERSION, (0, 1, 24), open,
+                "Where the world camera is, and placing it instead of the client. Main thread only.")
+
+WXL_API(camera, position, Position, out<vec3>, (), generated, generated,
+        "Where the world camera is this frame, in world coordinates.")
+WXL_API(camera, forward, Forward, out<vec3>, (), generated, generated,
+        "The direction the world camera looks, of unit length.")
+WXL_API(camera, up, Up, out<vec3>, (), generated, generated,
+        "The direction the top of the screen is, of unit length.")
+WXL_API(camera, fov, Fov, out<f64>, (), generated, generated,
+        "The field of view the world camera draws with, in radians.")
+WXL_API(camera, pivot, Pivot, out<vec3>, (), generated, generated,
+        "The point the client's camera turns around: the followed object's position at the height the client looks from.")
+WXL_API(camera, cinematic, Cinematic, boolean, (), generated, generated,
+        "Whether a cinematic or a model camera of the client's has the view; a view set by a mod waits for it to end.")
+WXL_API(camera, set_view, SetView, result, (vec3 position, vec3 forward, f64 fov), shim, generated,
+        "Places the world camera from now on, until the mod releases it: a position, a direction, a field of view in radians or 0 to keep the client's.")
+WXL_API(camera, release_view, ReleaseView, result, (), shim, generated,
+        "Gives the world camera back to the client.")
+WXL_API_SINCE(camera, set_view_rolled, (0, 1, 29))
+WXL_API(camera, set_view_rolled, SetViewRolled, result, (vec3 position, vec3 forward, f64 fov, f64 roll), shim, generated,
+        "Places the world camera as SetView does, turned by a roll in radians around the direction it looks, positive to the camera's right; 0 is SetView's picture.")
+WXL_API(camera, roll, Roll, out<f64>, (), generated, generated,
+        "The roll the world camera draws with this frame, in radians from -pi to pi, positive to its right.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

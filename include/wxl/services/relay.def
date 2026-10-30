@@ -1,0 +1,37 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.relay as data: one row per member of wxl_relay_api, in member order. The shapes and their
+// columns are described in wxl/services/rows.hpp.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including relay.def"
+#endif
+
+WXL_API_SERVICE(relay, WXL_RELAY_SERVICE, WXL_RELAY_SERVICE_VERSION, (0, 1, 23), open,
+                "Services mods publish for each other: a call now, its answer later, on the main thread.")
+
+WXL_API(relay, publish, Publish, result, (str name, relay_endpoint endpoint), shim, by_hand,
+        "Publishes a service under a name: fn(request, method, ...) is called for each request, and "
+        "answers by returning values or later through Answer or Fail.")
+WXL_API(relay, unpublish, Unpublish, result, (str name), shim, by_hand,
+        "Takes the mod's service back; its unanswered requests fail with not_found.")
+WXL_API(relay, published, Published, boolean, (str name), generated, generated,
+        "Whether some mod publishes a service under the name.")
+WXL_API(relay, call, Call, out<u64>, (str name, str method, values args, relay_reply reply, ptr user), shim,
+        by_hand,
+        "Asks a service: fn(ok, ...) is called later with true and the answer, or false and the reason. "
+        "Answers the request's number.")
+WXL_API(relay, answer, Answer, result, (u64 request, values values), shim, by_hand,
+        "Answers a request the mod's service received, with values.")
+WXL_API(relay, fail, Fail, result, (u64 request, str reason), shim, by_hand,
+        "Fails a request the mod's service received, with a reason.")
+WXL_API(relay, cancel, Cancel, result, (u64 request), shim, by_hand,
+        "Takes back a request the mod made: it is never answered.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

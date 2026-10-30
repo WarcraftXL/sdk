@@ -21,7 +21,9 @@ world with a character, wait about two minutes without touching anything, and re
 | `wxl.test-throw/` | C++ | an exception thrown by a handler or a script function costs that call only; `TestThrow()` |
 | `wxl.test-throw-ready/` | C++ | an exception thrown by `OnReady` disables the mod, and none of its code runs again |
 | `wxl.test-manifest/` | C++ | puts back the `mod.json` `wxl.test-reload` broke, which that mod cannot do once it is unloaded; `TestManifestRepair()` |
-| `wxl.test-assets/` | C++ | serves the add-on `WxlProvided` and `Interface\WxlTest\lower.wxltest` through an asset provider; one transform rewrites the add-on's Lua, another upper-cases `.wxltest` files (phase 10) |
+| `wxl.test-points/` | C++ | attaches to `CM2Shared::FinishLoading` and the de-inlined `M2Init` on request and counts them, M2Init's by where they come from (inside FinishLoading or a sequence read later), reading each model through the engine headers (phase 12) |
+| `wxl.test-bones/` | C++ | watches the bones of character models on request, on the client's animate threads, counts the files taken and the frames handed over and reads a file's root bone through `BoneInfo` (phase 16) |
+| `wxl.test-assets/` | C++ | serves the add-on `WxlProvided` and `Interface\WxlTest\lower.wxltest` through an asset provider; one transform rewrites the add-on's Lua, another upper-cases `.wxltest` files (phase 10); plays a downloader through its `wxl.relay` service `wxl.test-assets.fetch`, and keeps the last name the client could not find (phase 13) |
 | `steps.txt` | text | the plan the probe shows with `/mark`: the few steps a person still plays |
 
 `wxl.selftest` also calls into four of the SDK's examples: `scout` (`ScoutCount()` and the others),
@@ -57,6 +59,193 @@ taken off again. While it hangs, `ModelBatchDrawn` counts the batches the device
 seconds, then the selftest stops listening (the event comes thousands of times a frame): a PASS on
 both clients, a FAIL when none came or the runtime does not raise it. With `model-swap` in
 `Mods/`, the murloc is drawn as a gnoll.
+Phase 12 checks the model loader's points (abi 0.1.22): the C++ mod `wxl.test-points` attaches to
+`CM2Shared::FinishLoading` and to `M2Init(uint8_t*,uint32_t,M2Data&)` -- inlined in the stock client
+into FinishLoading and into `CM2Shared::FinishLoadingLowPrioritySequence`, both of which its runtime
+then runs recompiled with M2Init a call of its own -- and four boss models are made, which the
+starting zones do not show. Both handlers must fire, read the model through the engine headers (its
+file name, version 264) and the models must still parse (`ModelParsed`). M2Init fires from both
+parents on both clients: once inside each FinishLoading (the count must equal FinishLoading's) and
+once for each sequence read later from its own file, which must equal the `ModelSequenceLoad`
+events of the same moments (a NOTE when no sequence was read later meanwhile). Without
+`wxl.test-points` in `Mods/` the phase is a FAIL.
+Phase 13 checks the bricks a mod fetching assets on demand is built from (abi 0.1.23): a texture
+nobody has raises `FileMissing` (a mod's own `wxl.storage` lookup does not); bytes the selftest
+serves at 0 under a path of its own (`Interface\WxlSelfTest\FrameXML.toc`) live beside the
+client's `Interface\FrameXML\FrameXML.toc`; `OverrideFile` puts them in place of the client's and
+`RestoreFile` takes them back; `HashFile` hashes served bytes (a known MD5) and the archive's file,
+`HashFileAsync` answers the same a moment later; `ReloadAsset` reads the target frame's texture
+again from the elite one an override puts in its place (up left of the screen's centre, the elite
+dragon for two seconds), answers `unsupported` for an icon (the interface keeps small square
+textures in its shared atlas, which is not read again) and makes the player's model again (it
+blinks); a map object is `unsupported`. Then
+`wxl.relay`: a Lua service answering at once and later, taken back (`not_found`); and, with
+`wxl.test-assets`, a texture its provider has not yet (`FileMissing`, pending), fetched by its
+service on a thread of its own and served under the path the selftest chose
+(`Interface\WxlSelfTest\Fetched.blp`, hashed as the downloader reported), shown by that path and,
+through an override, by the name it lacked (right of the centre: two bags for three seconds, a NOTE
+to look at), and a request cancelled once the C++ service has it (the service is told; a request cancelled
+before it is handed over is dropped without a word to anyone). Without `wxl.test-assets`, the
+downloader's checks are a SKIP.
+
+Phase 14 checks the camera and the pointer (abi 0.1.24): `wxl.camera` reads the world camera,
+then places it ten yards above the player's head at every `CameraUpdate` for two seconds (the
+view is seen while it lasts), while `wxl.input` holds the pointer at the centre; both are given
+back. `MouseMotion` is a NOTE (move the mouse during those two seconds to see it). Then
+`wxl.world.Trace` meets the ground under the player and nothing in the sky, `IsOutdoors` agrees
+with the client's `IsIndoors`, and `wxl.action.Face` turns the player half a radian and back.
+
+Phase 15 checks the game kept out of its mouse look and a head turned (abi 0.1.25): with
+`wxl.input.BlockMouseLook(true)`, the game's `MouselookStart()` leaves `IsMouselooking()` false;
+once the block is given back it works again. `wxl.pose.Head` turns the player's head left and up
+for a second (watch it), then `ReleaseHead` gives it back. `ImGuiFrame` raised by the runtime is a
+NOTE.
+
+Phase 16 checks models of the world (abi 0.1.21): `wxl.m2.GroundHeight` finds the ground under the
+player, `AttachmentWorld` the player's head above it; a murloc made with `CreateWorldModel` stands
+on the ground three yards in front of the player, facing it, for two seconds (watch it: it fades to
+half its alpha after one), then `Release` takes it away. The C++ mod `wxl.test-bones` watches the
+bones of the character models for a second: the files its filter took, the frames handed over, the
+matrices there and the root bone read by `BoneInfo` (parent -1). A cast that named a ground point
+since the start (a ground-targeted spell, a blink) is a NOTE with the point; cast one before the
+run to see it. Without `wxl.test-bones` in `Mods/` its checks are a FAIL.
+
+Phase 17 checks what a game without click targeting builds on (abi 0.1.26): the runtime raises
+`WorldClickRequest` (a click in the world is not made by the suite: click a creature with a mod
+that refuses it to see the game do nothing), `CanInteract` and a game object's `CanUse` answer for
+everything in view (their counts are in the line), and `CanAttack` agrees with the client's
+`UnitCanAttack` for the nearest unit, which is targeted for the question; the target the player had
+comes back after. Stand near a creature or an NPC for the last check, or it is a SKIP.
+
+Phase 18 checks a highlight (abi 0.1.27). On the stock client, `wxl.highlight.Set` outlines the
+player in red with a glow for two seconds (watch it: the outline and the glow around the character,
+hidden where a wall or a tree stands in front, nothing over the character itself), then
+`Drawn` must count the player's batches drawn again (0, a FAIL, in first person, where the player
+is not drawn) and `Clear` takes it off. The recompiled client does the same on its Vulkan renderer
+(`[gx] api = vulkan`), with the same look; on Direct3D 9 it draws no highlight: `Supported` must be
+false with a reason and `Set` must answer `unsupported`.
+
+Phase 19 checks the game's selection circles (abi 0.1.28), on both clients. The nearest unit is
+targeted (stand near a creature or an NPC, or it is a SKIP) and its circle must be counted drawn
+(the `ObjectSelectionCircle` CVar must be 1); `wxl.selectioncircle.Hide("target")` takes it away
+(watch: no circle under the target), then `SetStyle` draws it a little larger in blue for two
+seconds (watch it), and `ResetAll` gives the game's back. The target the player had comes back
+after.
+
+Phase 20 checks a rolled camera and a pointer held off the centre (abi 0.1.29), on both clients.
+For two seconds the client's own view is drawn rolled by 0.3 rad (watch it: the horizon leans, its
+right end up, the interface stays level) and `Roll` must read 0.3 back; meanwhile
+`CaptureCursorAt(0.5, 0.4)` holds the pointer a tenth of the screen above the centre (whatever
+stands there is the mouseover: its tooltip shows) and `CapturePoint` reads it back. Both are then
+given back, and the camera must draw level again (a NOTE on a vehicle or a transport, which may
+roll the camera themselves).
+
+Phase 21 checks textures made from an SVG and a PNG (abi 0.1.30), on both clients. `wxl.texture`
+draws the selftest's `assets/reticle.svg` 64 pixels wide (its height in proportion, 40), the
+`fill` group red and the `outline` group darker and twice as wide; a frame above the centre of the
+screen shows it for two seconds through `SetTexture` (which must find the file) and its texture
+coordinates. The same request must answer the same path, and so must the interface's own
+`WxlTexture`; a file nobody has answers nil and why. Then the reticle blue with its outline taken
+off (two seconds, another path), and `assets/disc.png` resampled to 48 x 48 and tinted
+see-through (a disc shading from red to white, two seconds). A group on a PNG and a missing file
+are refused with their reason, and `Stats` counts what was made.
+
+Phase 22 checks console variables (abi 0.1.31), on both clients. `wxl.cvar` registers a variable
+saved in Config.wtf with a range; the interface's `GetCVar` reads what the mod set, its `SetCVar`
+changes it (`OnCVarChanged` follows), a value outside the range is refused, `GetCVarDefault` reads
+the default and `Reset` brings it back; a read-only variable refuses `SetCVar` and not its mod; the
+interface's `WxlRegisterCVar` registers one of its own, which a mod cannot take, nor `farclip`.
+The phase writes a new token to a variable saved in Config.wtf (registered when the mod loads,
+before the file is read) and to one saved for the character: after a clean exit, the next launch
+must read both back (two NOTEs that read PASS from the second launch on; the character's needs the
+same character, and a server that keeps account data or the local cache).
+
+Phase 23 checks the interface's signatures (abi 0.1.32), on both clients. The selftest observes
+`InterfaceSignature` from the moment it loads: FrameXML.toc must have been judged when the world
+loaded, hashed with Bindings.xml, and the phase prints the client's verdict for it, for
+GlueXML.toc and for each add-on. With the game's own interface the verdict is `signed`; with a
+changed FrameXML (a game's own, in a patch archive) it is `modified`, and since the world is up a mod
+took it as signed: `wxl.glue-unlock`, whose log says so (a NOTE, not a failure).
+`InterfaceCleanupRequest` must have been asked once, at the login screens.
+
+Phase 24 checks drawing into the frame (abi 0.1.33). `wxl.gx.Api` names the device. On a device
+`wxl.render` does not drive (the stock client, the recompiled client on Direct3D 9), `Supported`
+must be false with a reason and no image is made. On the recompiled client with
+`[gx] api = vulkan`: an image half the frame's size is made and read, a full-screen pipeline of the
+selftest's own SPIR-V tints the world blue for two seconds at `after_world` (watch it: the world
+bluish, the interface not), inside a GPU zone ("selftest tint" on Tracy's Vulkan timeline when a
+viewer is connected); each of the four points (`after_opaque_world`, `after_liquids`,
+`after_world`, `after_ui`) must come during those two seconds, a model batch must be kept from
+`ModelBatchDrawn`, and the frame's colour is copied into no texture outside a point.
+
+Phase 25 checks compute and bone palettes (abi 0.1.34). On a device `wxl.render` does not drive,
+`BonePalette` must answer `unsupported` and no compute pipeline is made. On the recompiled client
+with `[gx] api = vulkan`: a compute pipeline of the selftest's SPIR-V fills a buffer each frame for
+two seconds, and a full-screen pass reads one row of it (watch it: the world orange), a dispatch
+inside a pass is refused; then a palette of 300 matrices is written each frame for two seconds and
+the pass reads the last row of the last matrix (the world green); a dispatch outside a point is
+refused.
+
+Phase 26 checks the ground (abi 0.1.35), on both clients. `TerrainChunkLoaded` must have been
+raised for the chunks around the player since the selftest loaded. Standing outdoors on the ground
+(the phase skips on a map without terrain, in a hole, or with no ground under the player), the
+height `wxl.terrain` answers under the player is where the player stands (a NOTE when the player
+stands on a building or a rock). The vertices within three yards of a point six yards north, as
+`VerticesIn` lists them (each once, whichever chunks they are on), are then lowered three yards
+for two seconds (watch it: a dip in the ground, lit on its slopes, the grass in it grown
+again): `wxl.terrain`'s height and trace and the client's own ray test (`wxl.world.Trace`, the
+camera's and the clicks' collision) must meet it, the original height must stay readable, and the
+edit's cost is printed as a NOTE. A reset gives the ground back, and nothing is left to reset.
+
+Phase 27 checks shapes in the world (abi 0.1.36), on both clients and on Direct3D 9 and Vulkan
+alike. In front of the player for six seconds, fading over the last: a filled circle, a ring, a
+beating cone, a rectangle, a concave polygon and a line laid on the ground, a tilted box, a sphere,
+a cylinder drawn on top of everything; a ring under the player follows them, and a grid on the
+terrain's cells under the player is drawn each frame through the immediate mode (watch it: every
+shape lies on the slopes, walls and units hide them, the cylinder shows through). A shape of no
+radius must be refused; `Stats` must count the shapes and their vertices (the CPU's cost is
+printed as a NOTE), the grid must be drawn every frame, and the kept shapes must be gone once their
+duration ran out.
+
+Phase 28 checks an animation played on the player (abi 0.1.37), on both clients. Standing still,
+the player swings once with EmoteWork (62, the mining swing): `Play` must answer true, `Playing`
+62 and `Current` an animation, and `OnUnitAnimationEnded` must say `finished` once the swing is over.
+Then the swing is looped at 1.5 times the speed for three seconds (walk a step: the legs walk and
+the swing comes back when you stop), `Stop` must end it once, and `OnUnitAnimationEnded` must say
+`stopped`, `looped`. An id past AnimationData's must be refused.
+
+Phase 29 checks textured ground shapes, soft lines and shadows (abi 0.1.38), on both clients and on
+Direct3D 9 and Vulkan alike. In front of the player for ten seconds, fading over the last: on the
+left a pale blue spell ring (`SPELLS\T_VFX_HERO_CIRCLE.BLP`, added as light), in the middle cracks
+multiplied into the ground with a soft border (`SPELLS\CrackedGround.blp`, modulate, feathered),
+on the right a charred patch laid in the world's frame and fading out from its middle
+(`TILESET\BURNINGSTEPPS\BurningSteppsCharcoal01.blp`); further on a 6 x 6 grid of soft gold lines
+over a light black shadow, its inside scored darker; on the left a white line on the ground fading
+in from its start, shadowed. Watch it: the pictures lie on the slopes and keep still as you move,
+the stain darkens the ground rather than covering it, the borders are soft, the shadows sit a pixel
+or two down and right of the lines. `Stats` must say the three textures loaded and drawn and the
+shadows drawn (the CPU's cost is printed as a NOTE); a blend that is none must be refused. From abi
+0.1.39 it adds a gold box half sunk in the ground beyond the grid, its faces a ring picture
+(`SPELLS\T_VFX_RING_FF.BLP`, added as light) scrolling sideways (`SetStyle` with a new `uv_offset`
+each frame), and a green line dipping under the ground on the left: their buried parts must show
+faintly through the ground (`occluded_alpha`), and `Stats` must count both as drawn through it; an
+occluded opacity past 1 must be refused. From abi 0.1.40 it throws clods of earth near the box
+(they bounce once and settle), a dust puff (soft, spreading, gone in half a second) and a stream of
+golden sparks following the player (stretched along their speed, added as light), and lays a crack
+glowing white on the left (`mask`, `texture_blur`) and six golden rays fanning up out of the ground on
+the right (beams: soft to their sides, a masked picture shimmering up them, fading at their tops and
+as you look along them); `Stats` must count particles alive and drawn, and an empty burst must be
+refused.
+
+Phase 30 checks opcodes of a mod's own (abi 0.1.41), on both clients, without a server module:
+the self test's mod.json declares 0xFF00-0xFF03, which no server answers. In the world the state
+must be `authenticated`, the limit 0x520, the largest body 10000 bytes, and there must be a
+connection. Declared numbers claim; one outside the declared range, one of the client's own
+(0x12E) and one past 0xFFFF must be refused. A handler and a compressed pairing are set; since the
+server never sent one of these numbers, `Heard` must be false and `Send` refused with `failed`
+(the send gate: nothing reaches the server, which would close the connection). A writer and a
+reader must go round, a read past the end fail the reader, `Deflate` and `Inflate` go round, and
+`Release` give a number back once. The connection must stay up through the phase.
 
 ## Building it
 

@@ -200,6 +200,15 @@ handler returns, or stops on an error, whatever it left open is closed with it, 
 ones. The module came with abi `0.1.12`: a mod that uses it asks for `"abi": "0.1.12"` in its
 `mod.json`, and one that asks for less is told so at its first use of `wxl.profile`.
 
+### The GPU's time
+
+On the Vulkan renderer, the runtime puts each frame on a GPU timeline named "Vulkan" beside the
+CPU's. A mod that draws into the frame through `wxl.render` (inside `OnRenderPoint`) can time its
+own passes there (abi `0.1.33`): `wxl::ProfileService::GpuZoneBegin("bloom")` before them and
+`GpuZoneEnd()` after, or `wxl.profile.GpuZoneBegin("bloom")` and `wxl.profile.GpuZoneEnd()` in Lua.
+The times come once the GPU has finished the frame, a frame or two later; a zone left open closes
+with the handler. On Direct3D 9, or outside a point, the calls do nothing.
+
 ## 5. What a zone costs
 
 Measured on the runtime's own test harness, under Wine, with the profiler started and no viewer

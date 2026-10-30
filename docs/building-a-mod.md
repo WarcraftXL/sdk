@@ -329,6 +329,7 @@ When two handlers disagree, decline wins.
 | `ObjectScript` | `OnUnitAuraApplied`, `OnUnitAuraRemoved`, `OnUnitAuraRefreshed` | an aura in a unit's aura slot: the slot, the spell, the caster (`wxl::Object` and guid), stacks and the count before, level, flags, `harmful`, the duration and what is left, in milliseconds |
 | | `OnUnitAuraChanged` | the coarse one, older than these: something about this unit's auras changed (an aura on, or off with `removed`); the three above say what |
 | | `OnUnitMountChanged` | a unit's mount display id before and after: on a mount, off it, another one |
+| | `OnUnitAnimationEnded` | an animation a mod played on a unit with `wxl.animation` ended, and why (`wxl_animation_end`) (abi `0.1.37`) |
 | `LootScript` | `OnLootOpened`, `OnLootSlot`, `OnLootSlotCleared`, `OnLootClosed` | the loot window: its source, its `wxl_loot_kind`, its money and item count, then one `OnLootSlot` per item; an item taken; the window closed |
 | | `OnLootMoney` | the player's share of looted money |
 | | `OnLootRollStart`, `OnLootRoll`, `OnLootRollWon`, `OnLootAllPassed` | a roll on a group's loot: started (with the `roll_id` the interface's `RollOnLoot` takes), someone's choice as `wxl_roll_type`, the winner, nobody |
@@ -472,7 +473,13 @@ unit.Assist();                              // targets what it targets, as /assi
 wxl::ActionService::ClearTarget();          // as Escape
 wxl::ActionService::StopCasting();
 wxl::ActionService::MoveTo(wxl_vec3{-8913.0f, 554.0f, 93.0f}); // click-to-move to a point
+wxl::ActionService::Face(1.57);             // turns the player to face west, as mouse look does
 ```
+
+`Face` (abi `0.1.24`) takes radians as the client counts them: 0 faces north (+x), and the angle
+grows towards the west (+y). The character turns at once and the server is told, as when the
+player steers with the right mouse button; it is refused (`WXL_E_FAILED`) while the client would
+not let the player turn: dead, stunned, on a flight path.
 
 Each answers a `wxl_result`: `WXL_OK` when the client took the action, `WXL_E_FAILED` when it
 refused it, `WXL_E_UNSUPPORTED` out of the world. An action runs on the thread that runs the game,
@@ -561,6 +568,9 @@ rows as the methods, by `wxl-object-members`.
 | `IsSwimming()` | `bool` | Whether it swims, as the client's IsSwimming reads it. Came with abi 0.1.18: WXL_E_UNSUPPORTED on an older runtime. |
 | `IsFlying()` | `bool` | Whether it flies, as the client's IsFlying reads it. Came with abi 0.1.18: WXL_E_UNSUPPORTED on an older runtime. |
 | `IsFalling()` | `bool` | Whether it is falling, as the client's IsFalling reads it. Came with abi 0.1.18: WXL_E_UNSUPPORTED on an older runtime. |
+| `IsOutdoors()` | `bool` | Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused. Came with abi 0.1.24: WXL_E_UNSUPPORTED on an older runtime. |
+| `CanAttack()` | `bool` | Whether the active player may attack it, by the client's own reckoning (faction, duel, PvP, sanctuary): what turns the cursor into a sword. Came with abi 0.1.26: WXL_E_UNSUPPORTED on an older runtime. |
+| `CanInteract()` | `bool` | Whether the active player can interact with it now: an NPC offering something (gossip, quests, trade, training, a flight), alive, out of combat, of a reaction that lets it; out of reach counts. Came with abi 0.1.26: WXL_E_UNSUPPORTED on an older runtime. |
 
 **`wxl::Player`**: Players
 
@@ -633,6 +643,7 @@ rows as the methods, by `wxl-object-members`.
 | `State()` | `uint32_t` | 0 active, 1 ready, 2 destroyed. |
 | `GoType()` | `uint32_t` | The game-object type, in the server's numbering (door 0, button 1, chest 3, ...). |
 | `ArtKit()` | `uint32_t` | The art kit it shows. |
+| `CanUse()` | `bool` | Whether the active player can use it now, as the client decides the cursor over it: its kind lets it be used, its quest is in the log, its lock opens; out of reach counts. Came with abi 0.1.26: WXL_E_UNSUPPORTED on an older runtime. |
 
 **`wxl::DynamicObject`**: Dynamic objects
 
@@ -733,7 +744,10 @@ same value, in the same type: health is an `int32_t` both ways, as the client ho
 Each service has a typed facade with its name and version sealed in: `wxl::ObjectService`,
 `wxl::ScriptService`, `wxl::StorageService`, `wxl::DataService`, `wxl::NetService`,
 `wxl::UiService`, `wxl::HookService`, `wxl::RawHookService`, `wxl::PatchService`, `wxl::PointService`,
-`wxl::ActionService`, `wxl::M2Service`, `wxl::M2FileService`, `wxl::GxService`
+`wxl::ActionService`, `wxl::M2Service`, `wxl::M2FileService`, `wxl::GxService`,
+`wxl::CameraService`, `wxl::InputService`, `wxl::WorldService`, `wxl::PoseService`, `wxl::TextureService`,
+`wxl::ImGuiService` (`include/wxl/services/imgui.hpp`, which compiles Dear ImGui in: not in
+`services.hpp`)
 (`include/wxl/services/*.hpp`, or all of them through `include/wxl/services.hpp`). A facade is stateless -- construct one
 wherever it is needed -- and resolves its table on first use. It tests false while the runtime
 does not publish the service, and every call through it then answers `WXL_E_UNSUPPORTED` or the
@@ -938,6 +952,325 @@ They come on the main thread, and only while someone listens. The bytes they sho
 transforms left; to change bytes, write a transform. `OnModelLoad` still lets a handler answer a
 model's bytes on the main thread, after the transforms of `m2` ran.
 
+### Assets on demand: missing names, hashes, paths of your own, overrides, reloads, services
+
+A mod that brings assets in while the game runs -- downloads them, builds them, gets them from
+another mod -- rests on six pieces of the platform. Here they are in the order such a mod uses them.
+
+**1. What the client did not find.** `AssetScript::OnFileMissing` comes whenever the client looks
+for a name and no layer has it (archives, disk, search folders, providers, served bytes):
+
+```cpp
+class Wants final : public wxl::AssetScript
+{
+public:
+    void OnFileMissing(std::string_view path, wxl_asset_kind kind, bool open, bool pending,
+                       bool loader) override
+    {
+        // Often a loader thread (loader): hand the name to your own thread, do not fetch here.
+        if (open && kind == WXL_ASSET_MODEL) queue_.Push(std::string(path));
+    }
+};
+```
+
+`kind` is what the file is for, by its extension; `open` says the client wanted to read it (false:
+it only asked whether it exists); `pending` says a provider of yours answered "not yet". The event
+is raised for the client's asks only, never for your own `StorageService` calls, and once per ask:
+the client probes optional files, so the same name may come again and many never matter.
+
+**2. "Not yet."** A provider whose `Lookup` answers `wxl::AssetState::Pending` lets the client go on
+without the file (it finds nothing, or the next layer's) and makes `OnFileMissing` carry `pending`.
+When the bytes arrive, the provider answers `Present` from then on.
+
+**3. A path of your own.** A file you bring in goes under the path you choose. Many paths are the
+same in this client and in later ones, with other contents: a new path lives beside the client's
+file, and the same path replaces it only when you say so (5, below). Serve it, or have your provider
+answer it:
+
+```cpp
+const wxl::StorageService storage;
+storage.Serve("Creature\\Murloc\\MurlocModern.m2", bytes.data(), size, 0); // beside the client's Murloc.m2
+```
+
+The client keeps its models by file name alone, without the folder: give a model of your own a file
+name of its own.
+
+**4. What a file holds.** `HashFile` answers the MD5 of a file as the client would read it, from the
+layer that has it, with its length -- the key a content network files it under:
+
+```cpp
+const auto hash = storage.HashFile("Creature\\Murloc\\Murloc.m2");
+if (hash && hash->Hex() != expected) { /* the client's copy differs: fetch ours */ }
+```
+
+`hash->layer` (`WXL_FILE_LAYER_ARCHIVE`, `_DISK`, `_FOLDER`, `_PROVIDER`, `_SERVED`) and
+`hash->source` (the archive, the disk path, or the mod that serves it) say where the bytes came
+from. The digest is computed by Windows' own MD5 (CNG, `BCrypt`) and kept by name and layer;
+`HashFile(name, true)` reads again. `HashFileAsync(name, [](wxl::Expected<wxl::FileHash> hash) {...})`
+hashes on the runtime's thread and calls you back on the main thread.
+
+**5. Replacing, explicitly, and showing it.** `OverrideFile(name, other)` puts `other` in place of
+`name` for every open and every existence check, on every thread, above every layer, until
+`RestoreFile(name)` or your mod goes. Then `ReloadAsset(name)` makes the client read what it holds
+again:
+
+```cpp
+storage.OverrideFile("Creature\\Murloc\\Murloc.m2", "Creature\\Murloc\\MurlocModern.m2");
+const auto done = storage.ReloadAsset("Creature\\Murloc\\Murloc.m2");
+// done->models: dropped from the model cache; done->objects: units made again with the new file
+```
+
+A texture (`.blp`) is read again in place; a model (`.m2`, `.mdx`, a `.skin`) is dropped from the
+client's model cache -- every cached model of that file name, since the cache knows models by file
+name -- and the units and players in view drawn with it are made again. Map tiles, buildings and
+sounds are read again when the client next loads them (`WXL_E_UNSUPPORTED` here), and so is a
+character's baked skin; `WXL_E_PENDING` means the texture is still loading (ask again in a
+moment). A small square interface texture (64 pixels or less: icons, most buttons) is kept in a
+block of the client's shared atlas, which is not read again in place: `WXL_E_UNSUPPORTED`. Main
+thread only.
+
+**6. Services between mods.** A fetching mod publishes a service; the mods that want assets call it
+and are answered later, on the main thread:
+
+```cpp
+// The fetcher.
+auto published = wxl::RelayService().Publish("my.fetcher.fetch",
+    [](const wxl::RelayRequest& request, std::string_view method, wxl::RelayValues args) {
+        // Keep the request (it is a value: copy it to your thread) and answer when ready:
+        // request.Answer({wxl::Value::String(localPath), wxl::Value::String(md5)});
+        // or request.Fail("no such file");
+    });
+
+// A consumer.
+wxl::RelayService().Call("my.fetcher.fetch", "get", {wxl::Value::String("Creature\\Murloc\\Murloc.m2")},
+    [](wxl_result result, wxl::RelayValues values) {
+        if (result == WXL_OK) wxl::Log(WXL_LOG_INFO, "consumer", "ready as {}", values.String(0));
+    });
+```
+
+`Answer` and `Fail` may be called from any thread; requests, answers and cancellations are handed
+over at the next update, never from inside the call that made them. Values are numbers, strings,
+booleans and nil, copied. The `RelayPublication` takes the service back when it goes. Either side
+may go with requests in flight: a service that goes fails what it had not answered
+(`WXL_E_NOT_FOUND`), a caller that goes has its requests cancelled (the service's `cancelled`
+function is told), and nothing is ever handed to a mod that went. All of this came with abi
+`0.1.23`.
+
+### Messages of your own: wxl.net
+
+A mod that talks to a module of the server gives each of its actions an opcode number of its own,
+as the game does, and the client carries the messages like any other: `wxl::NetOpcodes`
+(`wxl/services/net.hpp`, abi `0.1.41`) claims the numbers, hands the server's messages to your
+handlers through a bounds-checked `wxl::ByteReader`, and sends what a `wxl::ByteWriter` holds. The
+client's own numbers end at `0x520`; a mod's start at `0x521`. List yours in `mod.json`:
+
+```json
+"net": { "opcodes": [ "0x521-0x52A" ] }
+```
+
+```cpp
+#include "wxl/services/net.hpp"
+
+class Echo : public wxl::Mod
+{
+    wxl::NetOpcodes net_; // gives every number back when the mod goes
+
+    wxl_result OnLoad() override
+    {
+        net_.Claim(0x521);                                         // our ping
+        net_.Handle(0x522, [this](wxl::ByteReader& in) {           // the server's echo
+            const uint32_t         seq  = in.U32();
+            const std::string_view text = in.String();
+            if (!in.Ok()) return;                                  // shorter than expected
+            wxl::Log(WXL_LOG_INFO, "echo", "echo {}: {}", seq, text);
+        });
+        net_.Handle(0x529, [this](wxl::ByteReader& in) { OnSync(in); }, 0x52A); // 0x52A: compressed
+        return WXL_OK;
+    }
+
+    void Ping(uint32_t seq) { net_.Send(0x521, wxl::ByteWriter{}.U32(seq).String("hello")); }
+};
+```
+
+**Reading and writing.** `ByteReader` reads `U8` to `U64`, `I8` to `I64`, `F32`, `F64` (all
+little-endian, bit for bit), `Bool`, `PackedGuid` (as the server packs a guid), `Vec3`, `String`
+(ended by a zero byte, at most a length you give), `Bytes(n)` and `Skip(n)`. A read past the end
+answers 0 and leaves the reader failed: read the whole message, then check `Ok()` once. A handler
+that leaves its reader failed is logged once per number (`malformed 0x522 from the server`), one
+that throws is logged and the message dropped. `ByteWriter` writes the same kinds and refuses to
+grow past 10000 bytes (`WXL_NET_MAX_SEND`); a failed writer is not sent.
+
+**The send gate.** A world server closes the connection on a number it has no handler for, so
+`Send` answers `WXL_E_FAILED` until the server has sent this mod one of the numbers it claimed, on
+this connection: the server's module announces itself with its first message, and `Heard()` says
+whether it has. The gate closes when the connection goes, and stays closed on the next until the
+server speaks again. `Send` also answers `WXL_E_FAILED` while the session is not authenticated,
+`WXL_E_INVALID` for a number the mod has not claimed or a body over 10000 bytes, `WXL_E_BUSY` past
+64 messages of one number in a second (`WXL_NET_SEND_RATE`), and `WXL_E_UNSUPPORTED` off the main
+thread. Handlers run on the main thread.
+
+**Compressed messages.** A large message can come under a second number as a u32 size and a zlib
+stream, the way the game's `SMSG_COMPRESSED_UPDATE_OBJECT` does. `Handle(op, fn, compressed)`
+claims and pairs both: the runtime inflates the compressed one (at most 8 MB) and hands it to
+`fn` as an `op` message. `wxl::NetService{}.Deflate` and `.Inflate` are zlib for anything else.
+
+**Refusals.** A claim is refused (`WXL_E_INVALID`, with a line in the log saying why) for a number
+past 0xFFFF; one of the client's own without `"net": { "stock": true }` in `mod.json` (for tools);
+one another mod claimed or declares in its `mod.json` (the log names it); one outside the numbers
+the mod's own `mod.json` lists, when it lists some. Of two mods whose manifests declare the same
+number, the second is not loaded. `NetScript::OnMessageReceived` still sees every message first,
+claimed or not, and suppressing one there stops it before your handler.
+
+**On the wire.** The server writes a message as its size (2 bytes big-endian, or 3 with the high
+bit of the first set, past 0x7FFF bytes), the opcode as a u16 little-endian, then the body; the
+client sends its size (2 bytes big-endian), the opcode as a u32 little-endian, then the body. Only
+the size and the opcode are encrypted. Numbers above `0x51F` travel exactly as the game's own do:
+the runtime takes them before the client's dispatch, which has handlers for `0x51F` numbers only.
+
+### Textures from SVG and PNG
+
+The game's interface reads BLP and TGA files only. `wxl::TextureService` (abi `0.1.30`) makes a
+texture of an SVG or a PNG and hands back a path the client loads like any of its files, on every
+thread and on both clients: `Texture:SetTexture(path)` in an add-on, a model's texture, a path
+you give `wxl::SelectionCircleService`. An SVG is drawn at the size you ask, so it stays sharp at
+any size, and its groups can be recoloured, outlined more or less, or hidden.
+
+```cpp
+const wxl::TextureService textures;
+std::string               why;
+// The reticle of this mod's assets folder, 32 pixels wide (the height in proportion): its fill
+// red, its outline black at 0.8 and twice as wide as the SVG draws it.
+const auto reticle = textures.Make(wxl::TextureRequest(".\\assets\\reticle.svg")
+                                       .Size(32, 0)
+                                       .Color("fill", 0xFFFF4040u)
+                                       .Color("outline", 0xCC000000u)
+                                       .Width("outline", 2.0f),
+                                   &why);
+if (!reticle)
+    wxl::Log(WXL_LOG_WARN, "reticle", "none: {}", why);
+else
+    // reticle->path is "Interface\\WXL\\my-mod\\reticle_32x20_<hash>.blp"; show the picture with
+    // SetTexCoord(0, reticle->right, 0, reticle->bottom) on a region of 32 x 20 pixels.
+    wxl::Log(WXL_LOG_INFO, "reticle", "{} at {} x {}", reticle->path, reticle->width, reticle->height);
+```
+
+`".\\assets\\..."` is a file of the calling mod's folder, `"Mods\\<folder>\\..."` one of another
+mod's, any other name a file the client has (`"Interface\\AddOns\\<add-on>\\..."`, an archive's, a
+served one). A size of 0 is the source's own, or in proportion to the other edge; up to 2048. An
+SVG is fitted and centred; a PNG resampled with a filter that averages what it shrinks.
+
+The client's device makes only textures with power-of-two edges (8 to 2048), so the picture sits
+at the top-left corner of the smallest that holds it, the rest transparent: `texture_width`,
+`texture_height`, and `right`, `bottom`, the picture's far texture coordinates. Shown with those
+coordinates on a region of the picture's size in pixels, it is drawn pixel for pixel. The texture
+is an uncompressed BLP2 with every mip, straight (not premultiplied) alpha as the client's blend
+takes it, transparent pixels coloured from their neighbours so no dark fringe shows.
+
+A group restyles the shapes whose `id`, or whose nearest enclosing element's `id`, is its name
+(`<g id="outline">` reaches every shape inside): `Color` (`0xAARRGGBB`) paints every fill and
+stroke, its alpha in place of their opacities; `Width` multiplies each shape's stroke width (1 as
+drawn, 0 none), so shapes keep their proportions; `Hide` leaves them out. `Tint(0xAARRGGBB)`
+multiplies every pixel, SVG or PNG; a PNG has no groups.
+
+The path is named after the source file's bytes, the size, the groups and the tint: the same
+request answers the same path at once (`reused`), a change to any of them, an edited file
+included, a new one. Textures are kept up to a memory budget, the least used let go past it and
+drawn again when the client asks; `Stats()` says what is held. On a failure `Make` answers the
+result and, through its second argument, the reason. The game's interface has the same call,
+`WxlTexture(source, width, height, groups, tint)`; the Lua guide shows a reticle add-on that draws
+itself again when the window or the interface's scale changes.
+
+### Settings: console variables
+
+A mod's settings belong where the game keeps its own: `wxl::CVarService` (abi `0.1.31`) registers
+console variables that the console reads and sets (`/console myMod_scale 2`, `cvarlist`), that the
+game's interface reads and sets with `GetCVar`, `GetCVarBool`, `GetCVarDefault` and `SetCVar`, and
+that the client saves with its own. The same calls read and set the client's variables.
+
+```cpp
+using wxl::CVarService;
+// A size kept in Config.wtf, from 0.5 to 3; a switch per character.
+CVarService::Register("myMod_scale", "1", WXL_CVAR_SAVED, "Size of my mod's frame");
+CVarService::SetRange("myMod_scale", 0.5, 3.0);
+CVarService::Register("myMod_autoLoot", "0", WXL_CVAR_CHARACTER, "Loot everything at once");
+
+const double scale = CVarService::GetNumber("myMod_scale").ValueOr(1.0);
+CVarService::SetNumber("myMod_scale", 2.0);
+const bool farclip = CVarService::GetNumber("farclip").ValueOr(0.0) > 1000.0; // the client's own
+```
+
+Follow a variable with `WorldScript::OnCVarChanged(name, previous, value)`: it is raised for every
+change, whoever made it -- your mod, the console, an add-on's `SetCVar`, a reset -- and not for a
+set that leaves the value as it is.
+
+**Names.** Any name of up to 63 characters without a space, a quote, a comma or a semicolon,
+compared without case. The client, the interface and every mod share one namespace: start yours
+with a prefix of your mod (`myMod_`), which also groups them in Config.wtf. A name the client
+registered, or another mod holds, is refused; the reason is in the log under `cvar`.
+
+**Where it is kept.** Without a flag a variable lives for the session. `WXL_CVAR_SAVED` writes it to
+`WTF/Config.wtf` (the installation's, every account's), `WXL_CVAR_ACCOUNT` to the account's
+settings, `WXL_CVAR_CHARACTER` to the character's (both in `WTF/Account/...`, and on the server
+when it keeps account data). A value equal to the default is not written. The other flags:
+`WXL_CVAR_READ_ONLY` (the console and the interface cannot set it, your mod can),
+`WXL_CVAR_LATCHED` (with `SAVED`: a set waits for the next start; `Flags()` answers
+`WXL_CVAR_PENDING` meanwhile), `WXL_CVAR_PROTECTED` (the interface's `SetCVar` only from the game's
+secure code), `WXL_CVAR_HIDDEN` (the interface does not see it).
+
+**When the saved value arrives.** The client reads Config.wtf once, early, and keeps the lines of
+names nobody has registered yet: register whenever you like, the saved value is found and kept.
+A registration made before the file is read (in `OnLoad`, at `WXL_STAGE_EARLY`) waits and is made
+just before it, so it gets its value too; until then `Get` answers the default and `Set`
+`WXL_E_PENDING`. An account's values are read when the account enters the world, a character's
+when the character does: before that they hold their default.
+
+**Ownership.** A name is your mod's until `Release(name)`, or until the mod is disabled or unloads.
+The variable stays, with its value and flags, for the rest of the session, and a mod reloading
+registers it again. Registering it again yourself updates its flags and the default `Reset` uses
+(the client keeps the first default and help until it restarts).
+
+The game's interface has its own call for the same thing: `WxlRegisterCVar(name, default[, flags[,
+help]])`, flags a number or names apart by spaces (`"saved latched"`). 3.3.5's own
+`RegisterCVar(name[, default])` exists in the game's interface only, and its variables are never
+saved.
+
+### A changed interface: signatures
+
+The client loads its interface only when it is signed: the login screens' `GlueXML.toc`, the game's
+`FrameXML.toc` with `Bindings.xml`, and each add-on's `.toc` carry a `.sig` beside them, and a file
+changed in a patch archive no longer matches it. A changed GlueXML leaves the login screens empty, a
+changed FrameXML closes the client as the world loads, and a Blizzard add-on changed is refused as
+corrupt. `LuaScript::OnInterfaceSignature(file, extra, verdict, accepted)` (abi `0.1.32`) is raised
+for every check, before the client acts on it: the `.toc`, the file hashed with it (empty for
+GlueXML), and the client's verdict, `WXL_INTERFACE_SIGNATURE_MISSING` (no `.sig`), `_CORRUPT` (a
+`.sig` the key does not verify), `_MODIFIED` (the files differ from what it signed) or `_SIGNED`.
+Answering `accepted` has the file taken as signed: the client loads it as its own, and an add-on
+runs as secure code, untainted.
+
+```cpp
+void OnInterfaceSignature(std::string_view file, std::string_view, wxl_interface_signature verdict,
+                          wxl::Answer accepted) override
+{
+    // The game's own interface, changed by our patch archive; add-ons stay as the client judges them.
+    if (file == "Interface\\FrameXML\\FrameXML.toc" && verdict != WXL_INTERFACE_SIGNATURE_SIGNED)
+        accepted.Set();
+}
+```
+
+Accept only what you ship: an add-on taken as signed can call the functions the client keeps from
+add-ons (`CastSpellByName` in combat, `TargetUnit`...). An observer that answers nothing sees the
+verdict of every interface, which is how to tell why one did not load.
+
+When the login screens start, the client also moves loose interface folders aside on disk, so that
+only the archives' copies load: `Interface\GlueXML`, `Interface\FrameXML`, and each
+`Interface\AddOns\Blizzard*` folder holding its `.toc`, renamed to `<name>.old`. It raises
+`LuaScript::OnInterfaceCleanupRequest(refused)` first; answering `refused` leaves them where they
+are, and they load over the archives.
+
+Core ships the mod that does both for every file the client would refuse: `wxl.glue-unlock`, on
+both clients. Installed, a changed GlueXML, FrameXML or Blizzard add-on loads; removed, the client
+checks as it always has.
+
 ### Models: what characters wear, models of your own, model files
 
 Three things about models reach a mod, from the simplest to the most technical. This part of the
@@ -950,6 +1283,9 @@ mod and a mod that teaches the client a later expansion's model format.
 | hang a model of your own on a character, a creature, a mount | `wxl::M2Service`, `wxl::M2Model` | every runtime |
 | reshape a model file as the client loads it | `AssetScript::OnModelParsed` and the stages after it, `wxl::M2FileService` | every runtime |
 | draw a batch of a model again, with your own state | `RenderScript::OnModelBatchDrawn`, `wxl::GxService` | every runtime |
+| put a model anywhere in the world, as a spell effect | `wxl::M2Model::World`, `Place`, `PlayAnimation` | every runtime |
+| move the bones the client has just posed (cloth, chains) | `wxl::M2BoneWatch`, `wxl::M2Service::BoneInfo` | every runtime |
+| know where a ground spell lands | `ObjectScript::OnSpellCastStart`, `OnSpellCastGo`: `has_dest`, `dest` | every runtime |
 
 The three services are **raw**: they hand you the client's own models and memory, which no
 check stands between. A native mod names each one it uses in its manifest, as any service.
@@ -1072,6 +1408,72 @@ was drawn from.
 
 These came with abi `0.1.20`.
 
+**A model in the world.** `wxl::M2Model::World(path)` makes a model in the world's own scene, the
+one units and spell effects are in. It shows nowhere until you place it: `Place(placement)` puts it
+at a point of the world, turned and scaled, and moves it there again each time you call it -- every
+frame, for a missile. `wxl::M2Placement(position, yaw, pitch, roll, scale)` builds the placement:
+the turn is in radians, yaw first, as a unit's facing, and the scale 1 when you leave it out.
+
+```cpp
+void Cast(const wxl_vec3& target)
+{
+    // A ring of fire where the spell lands, on the ground under the point.
+    const float ground = wxl::M2Service::GroundHeight(target, 5.0f, 20.0f).ValueOr(target.z);
+    fire_ = wxl::M2Model::World("Spells\\FireNova_Area.m2");
+    fire_.Place(wxl::M2Placement(wxl_vec3{target.x, target.y, ground}));
+    fire_.PlayAnimation(158);        // its birth (AnimationData.dbc), then what the file chains
+}
+
+void Fade(float left)                // called each frame as it ends
+{
+    fire_.SetAlpha(left);
+    fire_.SetEmitting(false);        // its particles play out, no new ones start
+}
+```
+
+`PlayAnimation(id, speed)` plays an animation on the whole model from its start, once it has
+loaded if it has not yet; `AnimationLength(id)` says how long one play lasts once `Loaded()`.
+`SetTransform(placement)` is how a model sits on the point it hangs on, for one you `Attach`
+instead. `wxl::M2Service::AttachmentWorld(model, point)` says where an attachment point of any
+loaded model is in the world now (a hand, to launch from), and `GroundHeight(at, up, down)` finds
+the ground under a point, as the client finds it for its own spell effects. The model is yours as
+any `M2Model`; leaving the world (a logout, a teleport to another map) takes it out of the world
+with the client's own spell effects, so place it again after `OnWorldEnter`.
+
+**The bones, as the client posed them.** A mod that simulates a cape or a chain needs every
+model's bones right after the client posed them, before they are drawn. `wxl::M2BoneWatch(filter,
+watcher, user)` hands them over: the filter says once per model file whether its models interest
+you, the watcher gets each one of them every frame, its matrices yours to rewrite.
+
+```cpp
+wxl_bool WXL_CALL Capes(void*, wxl_str path, uint32_t, void*)
+{
+    return wxl::View(path).find("Cape") != std::string_view::npos ? WXL_TRUE : WXL_FALSE;
+}
+
+void WXL_CALL Sway(const wxl_m2_bones* bones, void* user)
+{
+    // 16 floats a bone, row vectors: the translation is 12, 13, 14.
+    for (uint32_t i = 1; i < bones->bone_count; ++i)
+        bones->matrices[i * 16 + 12] += 0.01f * std::sin(bones->time_ms * 0.002f + i);
+}
+
+wxl::M2BoneWatch sway_{&Capes, &Sway};
+```
+
+Both run on the client's animate threads, several at once: they must be thread-safe and must call
+nothing of the platform but `wxl::M2Service::BoneInfo(file, index)`, a bone's parent and pivot. A
+watcher that faults is dropped; sixteen run at most, across every mod. The matrices take a point
+of the file to the scene's camera-relative space; `model_matrix` and `view_to_world` take you to
+the world.
+
+**Where a spell lands.** `OnSpellCastStart` and `OnSpellCastGo` carry the cast's points:
+`has_dest` and `dest` for where a ground spell lands, `has_source` and `source` for where it
+starts, each in world coordinates unless `dest_transport` (or `source_transport`) names the ship
+or elevator it was measured on.
+
+These came with abi `0.1.21`, from Tyrallis as well.
+
 ### Changing the engine: points
 
 Events tell your mod what happened. A **point** lets it change what happens: it is a function of
@@ -1145,10 +1547,17 @@ What to know before writing your own:
 - **Threads.** The points of `thread main` run on the client's main thread, as events do. A point
   of `thread any` may run on several threads at once: its handler must hold no state (a lambda
   without captures, or a function), which the facade checks when it compiles.
-- **One runtime only.** A function the 2008 compiler inlined everywhere has no address in the stock
-  client, so it is a point of the recompiled client alone (`CM2Shared::FinishLoading`, the end of a
-  model's load). `Here()` tells whether this runtime has a point and `Absent()` why not; attaching
-  where it is absent attaches nothing and logs why.
+- **Inlined functions.** The 2008 compiler copied some functions into their callers, so the stock
+  client has no address for them. Some are points all the same, **de-inlined**: the runtime
+  recompiles the function they were copied into from the client's source, in which they are calls
+  again, and runs that body in place of the stock one while the point has handlers (below).
+  `include/wxl/deinlined.def` lists them, each with the functions it lives in. A point the runtime
+  cannot reach at all is listed with why: `Here()` tells whether this runtime has a point and
+  `Absent()` why not; attaching where it is absent attaches nothing and logs why.
+- **Overloads.** A function the client has several of under one name is named with its parameter
+  types, as the client's source spells them: `M2Init(uint8_t*,uint32_t,M2Data&)`, whose class is
+  `wxl::points::M2Init_uint8_t_uint32_t_M2Data`. A parameter taken by reference is handed to your
+  handler as its address, a `void*`, like a pointer.
 - **Signatures.** Each attach carries the point's layout hash from your headers. If a later SDK
   changes a point's signature, a mod built against the old one is refused with a line asking to
   rebuild it, instead of being called with the wrong arguments. The points of `stable` never change
@@ -1161,6 +1570,786 @@ For a point your mod only knows by name at run time, `wxl::PointService` lists t
 (`Points()`), finds one (`Find(name)`), and attaches a handler of the generic shape, which is
 handed the call: `call->args[i]` is the address of argument `i` and `call->result` the address of
 the answer.
+
+### Reading the engine: the engine headers
+
+A point hands your handler `void*`s: the client's own objects. The **engine headers** say what is
+in them. They are generated from the client's source for both clients and live in the SDK's
+`engine/` folder; link `wxl::engine` beside `wxl::sdk` and include the group you need:
+
+| Header | Types |
+|---|---|
+| `wxl/engine/math.hpp` | `C2Vector`, `C3Vector`, `C4Vector`, `C4Quaternion`, `CAaBox`, `CAaSphere`, `C44Matrix`, `CImVector`, `CiRange`, `C2iVector`, `C4Plane`, `CRect`, `CiRect` |
+| `wxl/engine/m2.hpp` | a model file once parsed (`M2Data` and its records: `M2Sequence`, `M2CompBone`, `M2Vertex`, `M2Texture`, `M2Material`, `M2Attachment`, `M2Particle`...), the skin (`M2SkinProfile`, `M2SkinSection`, `M2Batch`), `CM2Shared` (a model as every instance shares it), `CM2Model` (an instance), `CM2SceneRender` |
+| `wxl/engine/gx.hpp` | the graphics device `CGxDevice`, its `CGxCaps` and `CGxFormat`, `CGxBuf`, `CGxPool`, `CGxTex`, `CGxMatrixStack` |
+| `wxl/engine/texture.hpp` | `CTexture` |
+| `wxl/engine/object.hpp` | `WOWGUID`, `CMovement_C`, `CGObject_C`, `CGUnit_C`, `CGPlayer_C` and their descriptor blocks `CGObjectData`, `CGUnitData`, `CGPlayerData` |
+| `wxl/engine/engine.hpp` | all of them |
+
+Each is a struct of `wxl::engine` named as the client names it, its members where the client has
+them on the client your mod is built for: one layout for the stock client (x86), one for the
+recompiled client (x64), each held to its offsets by `static_assert`s. A member whose type the
+headers do not describe is bytes of its size, its type in a comment; a pointer to such a type is a
+`void*`. A model file's arrays (`M2Array<T>`) answer `Data()` and `[]` as each client holds them,
+which differ once the client has parsed the file.
+
+```cpp
+#include "wxl/engine/m2.hpp"
+
+finish_ = wxl::points::CM2Shared_FinishLoading::Before([](void*& self) {
+    const auto* shared = static_cast<const wxl::engine::CM2Shared*>(self);
+    wxl::Log(WXL_LOG_INFO, "mymod", "{} ({} bytes)", shared->m_fileName, shared->m_fileSize);
+});
+```
+
+**The layout check.** A client built from a later source may lay a type out otherwise, and a mod
+built against the old headers would read the wrong bytes. Every type carries its **layout hash**
+(`kLayoutHash`, XXH64 of its members' offsets, kinds and sizes, an embedded type by its own hash),
+and the runtime answers its own through `wxl::EngineService::Layout(name)` (abi `0.1.22`). Check
+the types your mod reads once, in `OnLoad`:
+
+```cpp
+wxl_result OnLoad() override
+{
+    if (!wxl::engine::RequireLayouts<wxl::engine::CM2Shared, wxl::engine::M2Data>()) return WXL_OK;
+    ...
+}
+```
+
+`RequireLayouts` (in `wxl/engine/check.hpp`) stops your mod with a line naming each type that
+differs and asking to rebuild against this runtime's SDK; `LayoutMismatch<...>()` answers that line
+without stopping it. The stock client never changes, so its hashes never do; the recompiled
+client's build fails when its own types drift from the headers, before a mod can see the drift.
+
+The engine headers are not under the SDK's license: they describe the client's own structures
+(`engine/NOTICE.md`).
+
+### Taking a function apart: extraction
+
+To change part of an engine function on the stock client -- one test, one call inside it -- you
+need the function as source. `core/tools/extract/extract.py` writes it out from the client's
+source as a starting template you compile for x86:
+
+```sh
+python core/tools/extract/extract.py CM2Shared::FinishLoading --client <client checkout> \
+    --binary <Wow.exe 12340> --namespace mine --out FinishLoading.cpp
+```
+
+It takes a qualified name, an overload with its types, or an x86 address (`0x0083CF00`), and
+writes a `.cpp` against the engine headers in which:
+
+- every function the original calls is called in Wow.exe at its own address, with its own
+  convention (namespace `stock`); a member function becomes `__fastcall (Class* self, void* edx,
+  ...)`, which is how a mod writes the client's `__thiscall`;
+- every global it reads is Wow.exe's own, by reference;
+- every function the 2008 compiler had copied into it is extracted too, as a function of its own;
+- memory comes from Storm, as in the client: its allocator is called like any other function;
+- what it uses that the engine headers lack is listed at the top of the file.
+
+`--binary` reads the stock Wow.exe to tell apart the instantiations of one template that the
+client's source tags with a list of addresses: each call takes the next of its candidates in the
+order Wow.exe's own function makes them.
+
+Change what you need, build it as part of your mod for `win-x86`, and put it in place of the stock
+function through a point:
+
+```cpp
+#include "FinishLoading.cpp"
+
+finish_ = wxl::points::CM2Shared_FinishLoading::Replace([](auto original, void* self) {
+    // the recompiled FinishLoading, changed, runs instead of Wow.exe's
+    return mine::CM2Shared_FinishLoading(static_cast<wxl::engine::CM2Shared*>(self), nullptr);
+});
+```
+
+A Replace that never calls `original` takes the call for good; it is your mod's from then on, and
+the log says so once. On the recompiled client the function already is source: change it in the
+client, or attach to the point there as usual.
+
+The runtime does the same for the points the stock client inlined. `M2Init(uint8_t*,uint32_t,
+M2Data&)`, which checks a model file's header and finds its arrays, is copied in Wow.exe into
+`CM2Shared::FinishLoading` and into `CM2Shared::FinishLoadingLowPrioritySequence`; the runtime
+carries both recompiled by this tool, in which M2Init is a call, and puts them in place of the
+stock ones while M2Init has handlers. So M2Init fires from the same two places on both clients:
+
+- **from FinishLoading**, once per model, when its file has just been read: the header is checked
+  and every array of the file is found (relocated). Your handler sees the file as it was read.
+- **from FinishLoadingLowPrioritySequence**, once for each sequence the model left for later (an
+  animation kept in a file of its own, read when it is first played): the same `base`, `size` and
+  header, but of a model already loaded, whose arrays were found the first time; this call checks
+  the header again and points that sequence's keys into the buffer read from its file. A handler
+  that only wants new models can tell the two apart with a Before and an After on
+  `CM2Shared::FinishLoading`: a call between them is the first.
+
+A mod that teaches the stock client another model version attaches a Replace there (the header it
+rewrites the first time already says 0x108 when the model's later sequences come):
+
+```cpp
+init_ = wxl::points::M2Init_uint8_t_uint32_t_M2Data::Replace(
+    [](auto original, void* base, uint32_t size, void* data) {
+        auto* header = static_cast<wxl::engine::M2Data*>(data);
+        if (header->m_version == 0x110) Downgrade(*header); // a file of a later client, made 0x108
+        return original(base, size, data);
+    });
+```
+
+The runtime's recompiled body is checked against Wow.exe's own code: run on the same model files,
+both answer the same and leave the same bytes (core's `stock` test).
+
+### The camera, the mouse and the world's geometry
+
+Three services (abi `0.1.24`) let a mod take the camera and steer it with the mouse: a camera
+that follows the character from over its shoulder, a free camera, a top-down one.
+
+**Placing the camera.** The client places its world camera once a frame, and
+`RenderScript::OnCameraUpdate` comes right after, before anything is drawn from it. A view set
+there with `wxl::CameraService::SetView` is the one the frame is drawn from: where the camera is,
+where it looks, and a field of view in radians (0 keeps the client's). It stays until
+`ReleaseView()`, so set it again each frame to move with the frame.
+
+```cpp
+class Overhead : public wxl::RenderScript
+{
+    void OnCameraUpdate(uint64_t, float) override
+    {
+        // The point the client's camera turns around: the character, at the height it looks from.
+        const wxl::Expected<wxl_vec3> pivot = wxl::CameraService::Pivot();
+        if (!pivot || wxl::CameraService::Cinematic()) return;
+        const wxl_vec3 eye{pivot->x - 6.0f, pivot->y, pivot->z + 8.0f};
+        const wxl_vec3 look{pivot->x - eye.x, pivot->y - eye.y, pivot->z - eye.z};
+        wxl::CameraService::SetView(eye, look, 0.0);
+    }
+};
+```
+
+`Position()`, `Forward()`, `Up()` and `Fov()` read where the camera is this frame, `Pivot()` the
+point the client's own camera turns around (higher on a tauren than on a gnome, higher on a
+mount), `Cinematic()` whether a cinematic has the view, which a view set by a mod does not
+override. Everything the client does from the camera follows the view you set: the world drawn,
+the sound heard, and what is under the pointer. The client keeps its own camera going underneath,
+so `ReleaseView()` puts it back as the player left it. When two mods set a view, the later is
+drawn; when it lets go, the earlier comes back. A mod's view goes when the mod is disabled or
+unloaded. Coordinates are the client's world coordinates, in yards: x north, y west, z up.
+
+**Steering with the mouse.** `wxl::InputService::CaptureCursor(true)` hides the pointer and holds it
+at the centre of the game's window. The game still sees it there: what is at the centre of the
+screen is the mouseover, a left click targets it and a right click talks to it or loots it, and
+nothing tells the game a button is held. The motion arrives as `WorldScript::OnMouseMotion(dx,
+dy)`, in the mouse's own counts (right and towards you are positive), whether the pointer is held
+or not; the wheel as `WorldScript::OnMouseWheel(delta)`, in notches (away from you is positive),
+which a handler keeps from the game by answering `handled`:
+
+```cpp
+class Steer : public wxl::WorldScript
+{
+    float yaw_ = 0.0f, pitch_ = 0.0f;
+
+    void OnMouseMotion(int32_t dx, int32_t dy) override
+    {
+        if (!wxl::InputService::CursorCaptured()) return;
+        yaw_ -= dx * 0.004f;   // right turns clockwise, as facings shrink
+        pitch_ -= dy * 0.004f; // towards you looks down
+    }
+
+    void OnMouseWheel(float delta, wxl::Answer handled) override
+    {
+        zoom_ += delta;
+        handled.Set(); // the game's own zoom never sees it
+    }
+
+    float zoom_ = 0.0f;
+};
+```
+
+`CursorCaptured()` says whether some mod holds the pointer, `PointerOverWorld()` whether it is over
+the world rather than a frame of the interface. The pointer is let go while the game's window is
+not in front, and held again when it comes back; a mod's hold goes when it is disabled or unloaded.
+With the character's facing (`wxl::ActionService::Face`) and the camera above, that is all a
+third-person camera needs.
+
+**Leaning the camera, and a reticle off the centre** (abi `0.1.29`).
+`wxl::CameraService::SetViewRolled(position, forward, fov, roll)` places the camera as `SetView`
+does, turned around the direction it looks by `roll` radians, positive to the camera's right: the
+top of the screen leans right, as an aircraft banking right, and the world turns the other way. A
+roll of 0 is `SetView`'s picture exactly. The roll goes where the client keeps its camera's up,
+which its view matrix is built from, so the world, the picking under the pointer, the name plates
+and the sound's listener all turn together; the interface is drawn with its own projection and
+stays level. `Roll()` reads the roll the camera draws with, from -pi to pi.
+
+`wxl::InputService::CaptureCursorAt(x, y)` holds the pointer at another point of the window than
+its centre: `x` from the left edge and `y` from the top, as fractions of the window from 0 to 1,
+`(0.5, 0.5)` being where `CaptureCursor(true)` holds it. The game picks and clicks at that point,
+so a reticle drawn there is the mouseover, and the object of a click and of `OnWorldClickRequest`.
+A mod already holding the pointer moves its hold; of several mods, the last to capture or move it
+has its point, and the one before gets its point back when it lets go. `CapturePoint()` answers
+where the pointer is held.
+
+```cpp
+void OnCameraUpdate(uint64_t, float delta) override
+{
+    // A light lean into the turn, eased in, and the pointer held a tenth of the screen above the
+    // centre, where the mod draws its reticle.
+    lean_ += (turnRate_ * 0.05f - lean_) * std::min(1.0f, delta * 4.0f);
+    wxl::CameraService::SetViewRolled(eye_, forward_, 0.0, lean_);
+    wxl::InputService::CaptureCursorAt(0.5, 0.4);
+}
+```
+
+The line through a point off the centre is not the camera's forward: to make it meet a point
+`aim`, turn the camera so that the ray through the reticle's point of the screen passes through
+`aim`. The client's projection takes `0.6 x Fov()` as its vertical angle and the window's width over
+its height as its aspect.
+
+**The world's geometry.** `wxl::WorldService::Trace(start, end[, flags])` answers the first point of
+the world between two points, the way the client's own camera and the spells' line of sight test
+it: the ground, buildings and the collision of placed objects, never a unit or a player. It answers
+nothing when the way is clear. `flags` is the client's hit-test mask: `WXL_TRACE_CAMERA` (the
+default: what the client's camera stops at), `WXL_TRACE_LINE_OF_SIGHT`, `WXL_TRACE_LIQUID`.
+
+```cpp
+if (const std::optional<wxl_vec3> wall = wxl::WorldService::Trace(head, eye))
+    eye = *wall;  // pull the camera in front of what is between it and the head
+```
+
+Whether the character stands indoors is `wxl::Unit::IsOutdoors()`, as the client's `IsOutdoors`
+answers it: false in a building or a cave the world marks indoors, where a mount is refused.
+
+The three services and `Face` run on the main thread, where your handlers of world events run;
+from another thread they are refused with `WXL_E_INVALID`.
+
+**Clicks in the world.** Before the game acts on a click in the world it raises
+`WorldScript::OnWorldClickRequest(button, hit, object, object_guid, point, targeting, refused)` (abi
+`0.1.26`): the button, what the click met (`WXL_WORLD_HIT_NONE`, `_GROUND`, `_OBJECT` for a model,
+`_WORLD_OBJECT` for a building or a transport, `_NAME_PLATE`), the object and its guid, the point,
+and whether a spell waits for its target. Answering `refused` keeps the game from acting on it: no
+target, no talk, no loot, no walk. `WorldClick` still follows a click that goes on. Taking the
+targeting away from the mouse is one handler; the ground is left to the game for a spell's circle:
+
+```cpp
+void OnWorldClickRequest(wxl_mouse_button, wxl_world_hit hit, wxl::Object, wxl_guid, wxl_vec3,
+                         bool targeting, wxl::Answer refused) override
+{
+    if (!targeting && (hit == WXL_WORLD_HIT_OBJECT || hit == WXL_WORLD_HIT_NAME_PLATE)) refused.Set();
+}
+```
+
+What the player can do with an object is the client's own answer: `wxl::Unit::CanAttack()`,
+`wxl::Unit::CanInteract()` (an NPC offering something, alive, out of combat, friendly enough) and
+`wxl::GameObject::CanUse()` (its quest in the log, its lock open), each true out of reach too; with
+`wxl::ActionService::Target`, `ClearTarget` and `Interact`, a mod chooses the target and the
+interaction itself.
+
+**Keeping the game out of its mouse look.** With the left button held the game turns its own
+camera, with the right one it turns the character, and either way it hides the pointer and
+forgets what is under it. A mod that steers the camera itself keeps the game out of that with
+`wxl::InputService::BlockMouseLook(true)` (abi `0.1.25`): a held button then turns nothing, hides
+nothing and starts no turn, and a click still does what a click does -- the left one selects, the
+right one talks, loots or attacks -- when it is let go within the game's click time (0.8 s), on
+what was under the pointer when it was pressed. A longer hold does nothing, as in the game, and
+the game's `MouselookStart` and its move with both buttons are kept out too. `BlockMouseLook(false)`
+gives it back; it holds while any mod blocks it, and goes with the mod.
+
+**Turning a head.** `wxl::PoseService::Head(unit, yaw, pitch, smoothing)` (abi `0.1.25`) turns a
+unit's head from where its body faces and holds it there, over whatever its animation does:
+radians, a positive yaw to the unit's left, a positive pitch up, `smoothing` the seconds to cover
+half the way (0 at once). The runtime holds the angles to what a neck allows (100 degrees of yaw,
+80 of pitch); keep your own narrower limits and turn the body (`Face`) past them.
+`ReleaseHead(unit)` gives the head back to the animation as smoothly. A head is the last mod's to
+turn it; a mod's heads go back when it goes, and a unit's when it leaves view.
+
+```cpp
+// The player looks where the camera aims, within 70 degrees either way.
+const float yaw = AngleBetween(playerFacing, cameraYaw);
+wxl::PoseService::Head(wxl::Player::Local(), std::clamp(yaw, -1.22f, 1.22f), pitch, 0.08);
+```
+
+**Highlighting an object.** `wxl::HighlightService::Set(target, color, outline, glow, glow_strength)`
+(abi `0.1.27`) outlines an object and lights it with a soft glow, drawn by the runtime after the
+world and before the interface: a sharp edge `outline` pixels wide (up to 16) and a glow fading
+over `glow` pixels (up to 64), `glow_strength` (0 to 1) bright, both in `color` (`0xRRGGBB`); 0 for
+either leaves it out. What is drawn is the object's model and what hangs on it (weapons, a rider,
+a mount), and only where it is seen: the runtime draws it again against the scene's depth, so a
+wall, a tree or another unit in front hides the highlight as it hides the object. Translucent parts
+are not outlined; parts the game cuts out by their texture's alpha (hair, a mane, leaves) are
+outlined as the game shows them. Widths are pixels of a picture 1080 lines high, drawn in
+proportion at any resolution. Called again, `Set` changes the style; `Clear(target)` and
+`ClearAll()` take the mod's highlights off, and they go when the mod goes or the object leaves
+view. Scale the widths by the object's distance so that a far silhouette is not swallowed.
+
+Not every runtime draws them: both clients do on the Vulkan renderer (`[gx] api = vulkan` in
+`WarcraftXL.ini`), and the stock client on Direct3D 9 too (shader model 3), with the same look;
+the recompiled client on Direct3D 9 does not. Ask first, and turn the feature off with the
+reason in the log:
+
+```cpp
+if (!wxl::HighlightService::Supported())
+{
+    wxl::Log(WXL_LOG_INFO, "my-mod", "no outline: {}", wxl::HighlightService::UnsupportedReason());
+    return;
+}
+wxl::HighlightService::Set(target, 0xE03030u, 2.0f, 10.0f, 0.5f); // red, a 2-pixel edge, a 10-pixel glow
+```
+
+`Drawn()` answers how many batches the last highlighted frame drew again: 0 when the object was
+not in view.
+
+**The game's selection circles.** `wxl::SelectionCircleService` (abi `0.1.28`) hides the circles
+the game draws on the ground, or draws them in a texture, colour or size of your own. There are
+three kinds, as masks: `WXL_SELECTIONCIRCLE_TARGET` (the circle under the player's target, a unit
+or a corpse, with the ring that closes on it when the player starts attacking it),
+`WXL_SELECTIONCIRCLE_PET_TARGET` (the ring that closes on the pet's new target) and
+`WXL_SELECTIONCIRCLE_MOVE_MARKER` (where click-to-move goes). A second mask picks the units by how
+they stand towards the player: `WXL_SELECTIONCIRCLE_REACTION(WXL_REACTION_HOSTILE)` and the like,
+and `WXL_SELECTIONCIRCLE_NO_REACTION` for a circle under no unit (a corpse, the move marker). 0 in
+either mask means all of it.
+
+```cpp
+using wxl::SelectionCircleService;
+
+// Your mod shows the target its own way: no circle under it.
+SelectionCircleService::Hide(WXL_SELECTIONCIRCLE_TARGET, 0);
+
+// Or keep the circles, but hostile targets in a texture of the mod, orange and a quarter larger.
+SelectionCircleService::SetStyle(WXL_SELECTIONCIRCLE_TARGET, WXL_SELECTIONCIRCLE_REACTION(WXL_REACTION_HOSTILE),
+                                 "Interface\\MyMod\\Circle.blp", 0xFFFF8000u, 1.25f);
+
+// One unit of its own: hidden, or styled, whatever its kind and reaction.
+SelectionCircleService::HideObject(boss);
+```
+
+A style's texture is a BLP the client finds (an archive, or a folder of your mod's search path),
+added onto the ground as the game adds its own: black is nothing, white is the colour at full, so
+draw a white ring on black with black edges. `""` keeps the game's texture, `0` the game's colour
+(`0xAARRGGBB`, the alpha scaling the brightness; the game's own fades, the closing rings and the
+marker's pulse, still play over it), and a scale of `0` the game's size (up to 8). An object's own
+look wins over its kind's; among mods the last set wins. `Reset(kinds, reactions)`,
+`ResetObject(target)` and `ResetAll()` give back what your mod changed, and it all goes with the
+mod. `Drawn()` and `Hidden()` count the circles the last world frame drew and left out.
+
+### The ground: `wxl.terrain`
+
+`wxl::TerrainService` (abi `0.1.35`) reads the ground of the map the player is on and reshapes it
+while the game runs. The ground is the client's own grid: chunks of 145 vertices, a vertex about
+every 4.17 yards (2.08 counting the inner ones). A chunk is named by its column and row on the map
+(`chunk_x`, `chunk_y`, 0 to 1023), a vertex by its index in the chunk (0 to 144);
+`wxl/terrain/grid.hpp` (namespace `wxl::terrain`) has the grid's arithmetic, callable without the
+runtime: indices, rows and columns, world positions, the height of a triangle.
+
+```cpp
+using wxl::TerrainService;
+// What is under the aimed point.
+if (auto hit = TerrainService::Trace(eye, farAway))
+{
+    // Dig: every vertex within three yards of the point, half a yard lower each time, whichever
+    // chunks they are on.
+    std::vector<wxl_terrain_height> edits;
+    for (const wxl_terrain_vertex& v : TerrainService::VerticesIn(hit->point.x, hit->point.y, 3.0f))
+        if (v.loaded) edits.push_back({v.chunk_x, v.chunk_y, v.index, v.z - 0.5f});
+    TerrainService::SetHeights(edits);
+}
+const float under = TerrainService::Height(x, y).value_or(0.0f);         // as edited
+const float before = TerrainService::Height(x, y, true).value_or(0.0f);  // the map's own
+```
+
+**What follows an edit.** `SetHeights` takes absolute world heights and, before it returns, the
+client sees them everywhere: the ground drawn (its normals made again across the neighbouring
+chunks' edges, its vertex buffers filled again, its bounds and culling, under Direct3D 9 and the
+Vulkan renderer alike, its grass grown again on the new ground), the player's walking and falling,
+the camera's collision, and the client's own ray tests (`wxl::WorldService::Trace`, clicks). A
+player standing still on ground that went down falls; one moving meets the new ground at the next
+step. Ground raised over the player's feet, under any part of them, puts them on top, standing or
+walking: a rise up to a step's at once (as the client's own step up), a higher one at 8 yards a
+second. One standing still lands through the client's own fall, so the server gets the messages of a
+landing (`MSG_MOVE_HEARTBEAT` falling, then `MSG_MOVE_FALL_LAND`, and `PlayerMoveStop`), never a
+teleport; one walking is carried by its next movement message. Nobody is lifted through a roof, the
+floor of a building or a rock above them. The edit is all or nothing: an entry off the grid, or a height that is not a number within
+`WXL_TERRAIN_HEIGHT_LIMIT`, refuses it whole with `WXL_E_INVALID` and a log line under `terrain`.
+Liquids keep their surface and map doodads (trees, rocks) stay where the map put them.
+
+**Regions.** `VerticesIn(x, y, radius)` lists every vertex within a radius (up to
+`WXL_TERRAIN_RADIUS_LIMIT`, 128 yards) of a point, each once whichever chunks the circle crosses:
+its chunk and index for `SetHeights`, its place, its height now (`z`) and before any edit
+(`original_z`), whether it is an inner vertex, and whether its chunk is loaded. A brush is that
+list, filtered and given heights: no chunk to split. `Vertices(chunk_x, chunk_y)` lists one chunk's
+145 instead, `Locate(x, y)` names the chunk, cell and nearest vertex of a point.
+
+**Edges.** A vertex on a chunk's edge is the same ground as its neighbour's (column 8 of one is
+column 0 of the next): set it through either chunk and both are set, so the ground never cracks.
+`VerticesIn` names it once, in the chunk whose cells it starts.
+`Reset` of a chunk takes your edits off its edge vertices in the neighbours too.
+
+**Owners and layers.** Your edits are your mod's, in layer 0 unless you name another
+(`SetHeights(edits, 1)`): keep a preview in one layer and what the player committed in another,
+and `ResetAll(1)` drops the preview alone. Where two mods (or two layers) set one vertex, the latest
+edit shows, and the one before comes back when it is reset. Everything your mod set comes off when
+it is disabled or unloads.
+
+**Streaming.** The client loads chunks as the player comes and frees them as the player goes. The
+runtime keeps your edits of a chunk that leaves and writes them back when it loads again, before
+`WorldScript::OnTerrainChunkLoaded(map, chunk_x, chunk_y, edited)`; `OnTerrainChunkUnloaded` says
+when one goes. A chunk not loaded can be edited: the edit waits for it. When the map unloads (a
+teleport to another map, a logout) every edit is dropped and `OnTerrainEditsCleared(map, chunks)` is
+raised; a teleport within the map keeps them. `Presence(x, y)` tells ground from a hole, a chunk
+not loaded, or no terrain at all (a map made of buildings alone, where edits answer
+`WXL_E_UNSUPPORTED`).
+
+**Cost.** An edit of a brush (a few to a few dozen vertices) costs the runtime a few microseconds
+plus the client's rebuild of the chunks it touched; `Stats()` answers what the last edit cost
+(`last_microseconds`) and the longest so far. A button held down that digs every 100 ms is well
+within a frame.
+
+**What is not there.** The resolution is the client's grid; holes, textures and the server's
+heights are not this service's: the server keeps its own ground, so a mod that reshapes it where a
+server checks movement must tell its server.
+
+**Drawing the grid.** To show the player the vertices a brush will move, draw a grid with
+`wxl::DrawService` (below): spacing 4.1666665 yards, its centre on a vertex, it lies on the
+terrain's own cells and follows the edits as they land, on every device.
+
+### Shapes in the world: `wxl.draw`
+
+`wxl::DrawService` (abi `0.1.36`) draws simple shapes in the 3D world, on the stock client and the
+recompiled one, under Direct3D 9 and the Vulkan renderer alike: the same vertices, the same
+programs, the same picture.
+
+```cpp
+#include "wxl/services/draw.hpp"
+
+// Each frame, a grid under the aim: immediate mode, drawn by the next frame of the world only.
+wxl::DrawService::Draw(wxl::DrawShape::Grid(aim, 10.0f, 10.0f, 1.0f), wxl::DrawStyle(0x60D0FF, 0.6f).Width(1.0f));
+
+// A telegraph kept three seconds, fading out, following a boss and turning with it.
+const wxl_handle cone = wxl::DrawService::Add(wxl::DrawShape::Sector(wxl_vec3{}, 15.0f, 0.0f, 1.2f),
+                                              wxl::DrawStyle(0xFF3020).Fill(0.3f).Fade(0.0f, 0.5f), 3.0f);
+wxl::DrawService::Attach(cone, boss, WXL_DRAW_ATTACH_TURN);
+```
+
+**Shapes.** `wxl::DrawShape` builds a `wxl_draw_shape` by kind: `Line(points, closed)` (with
+`.OnGround()` to lay it on the ground), `Circle`, `Ring`, `Sector` (a cone, or an arc of a ring with
+an inner radius), `Rectangle`, `Polygon` (concave is fine), `Grid`, `Box`, `Sphere`, `Cylinder`. A
+line's and a polygon's points are offsets from `center` and are read during the call only. Ground
+shapes lie on the ground, on the triangles the client walks on and on every `wxl.terrain` edit;
+where there is none they lie flat at `center.z`, and `.Flat()` keeps them there everywhere.
+
+**Look.** `wxl::DrawStyle(0xRRGGBB, line_alpha)` with `.Fill(opacity)`, `.Width(pixels at 1080
+lines)` (constant on screen, 0.5 to `WXL_DRAW_MAX_WIDTH`), `.OnTop()` (seen through walls; by
+default walls and units hide a shape), `.Pulse(seconds)`, `.Fade(in, out)`.
+
+**Soft lines and shadows** (abi `0.1.38`). `.Softness(pixels)` fades the lines' edges;
+`.LineAlpha(start, end)` takes a line's opacity from its first point to its last, and
+`DrawShape::PointAlphas(alphas)` sets it point by point; `.Shadow(rgb, opacity, x, y, soft)` draws a
+shadow under the lines (by default black at 0.6, 1.5 pixels right and down, 1 pixel soft): the
+shape's lines drawn once more, under every line.
+
+**Pictures on the ground** (abi `0.1.38`). A ground shape's inside takes a texture the client loads
+(`.Texture(path, right, bottom)`: a BLP path, or `wxl::TextureService::Make`'s path with its
+`right` and `bottom`), drawn once loaded; `.FillColor(rgb)` tints it apart from the lines.
+`.Uv(WXL_DRAW_UV_FIT | _TILE | _WORLD, size_x, size_y, rotation, offset_x, offset_y)` lays it: once
+over the shape's bounds, repeated in the shape's frame, or in the world's frame (sizes in yards,
+the top to the north, so shapes side by side join). `.Blend(WXL_DRAW_BLEND_ALPHA | _ADD |
+_MODULATE)`: over the ground, added as light, or multiplied into it (a stain, a scorch, a score mark).
+`.Feather(yards)` fades the inside towards its border, `.RadialFade(part)` from its centre out.
+
+```cpp
+// Cracks multiplied into the ground under a pickaxe hit, soft at their border, for 30 seconds.
+wxl::DrawService::Add(wxl::DrawShape::Circle(hit, 1.5f),
+                      wxl::DrawStyle(0xFFFFFF, 0.0f).Fill(0.9f).Texture("SPELLS\\CrackedGround.blp")
+                          .Blend(WXL_DRAW_BLEND_MODULATE).Feather(0.4f), 30.0f);
+```
+
+A C mod sets the fields of `wxl_draw_style` past `fade_out` (and `point_alphas` of
+`wxl_draw_shape`); every one left at 0 changes nothing, and a struct whose `struct_size` stops at
+`fade_out` (`WXL_DRAW_STYLE_SIZE_0136`) is still taken as the look it had.
+
+**Boxes, cylinders, and what is hidden** (abi `0.1.39`). A box's faces and a cylinder's side and
+ends take the same texture, `Uv`, `Blend`, `Feather` and `RadialFade`, each face in its own frame
+(the picture up each side, once around a cylinder; WORLD along each face's axes from the world's
+origin). `.Occluded(opacity)` (`occluded_alpha`) draws the part of a tested shape the scene hides at
+that part of its opacity, then the seen part as usual: two passes of the shape, for lines, ground
+shapes and volumes. Changing only a kept shape's style (`SetStyle`, its `uv_offset` each frame to
+scroll its picture) builds nothing again, and an immediate shape given as the frame before is not
+built again (`Stats().reused`). The style of abi 0.1.38 (`WXL_DRAW_STYLE_SIZE_0138`) is still taken.
+
+**Masks and blur** (abi `0.1.40`). `.Mask()` (`WXL_DRAW_STYLE_MASK`) takes only the texture's
+opacity, the colour being the style's; `.TextureBlur(steps)` blurs the picture, each step halving
+its detail. The style of abi 0.1.39 (`WXL_DRAW_STYLE_SIZE_0139`) is still taken.
+
+**Beams** (abi `0.1.40`). `wxl::DrawShape::Beam(ends, width_a, width_b)` (`WXL_DRAW_BEAM`, two points,
+`size.x` and `size.y` the widths, `point_alphas` the opacity at each end, 1 to 0 without) is a shaft
+of light turned around its axis to face the camera each frame, drawn with the inside's look
+(`Fill`, `FillColor`, `Blend`, `Feather` the part of its half width that fades to its sides,
+`Texture` and `Uv` along it, `Mask`, `Occluded`); it fades near the camera and when seen end-on.
+
+**Particles** (abi `0.1.40`). `wxl::DrawEmitter` says where particles come from and how they move
+(`Point`, `Disc`, `Box`, `Segment`; `.Burst(n)`, `.Rate(per_second, seconds)`, `.Cone(axis,
+half_angle)`, `.Speed`, `.Life`, `.Size`, `.Spin` as min and max, `.Gravity`, `.Drag`,
+`.Bounce(restitution, friction)`, `.Settle(friction)`, `.Attract(point, acceleration, radius)`,
+`.Seed`); `wxl::DrawParticles` how they look (`.Mode`, `.Stretched(seconds)`, `.Texture`, `.Frames(x,
+y, per_second)`, `.Mask`, `.TextureBlur`, `.Blend`, `.OnTop`, `.Occluded`, `.Softness(yards)`,
+`.Key(t, size, rgb, alpha)` up to four).
+
+```cpp
+// A dust puff where a pickaxe hits: soft, spreading, gone in half a second.
+wxl::DrawService::Emit(wxl::DrawEmitter::Disc(hit, 0.4f).Burst(10).Cone(wxl_vec3{0, 0, 1}, 1.2f).Speed(0.4f, 1.2f)
+                           .Life(0.4f, 0.6f).Size(0.5f, 0.9f).Drag(2.5f),
+                       wxl::DrawParticles().Softness(0.4f).Key(0.0f, 0.6f, 0x9A8A70, 0.45f).Key(1.0f, 2.6f, 0x8A7A60, 0.0f));
+```
+
+`Emit` throws one burst and forgets it; `AddEmitter` keeps one and answers its handle, for
+`UpdateEmitter`, `SetEmitterStyle`, `Burst`, `Place`, `Follow` and `Stop` (its particles live out
+their lives). The runtime moves them on the CPU each frame (gravity, drag, an attractor, one bounce
+or a rest on the terrain the client walks on) and draws an emitter's particles in one draw call:
+soft blots or pictures facing the camera, lying flat or stretched along their speed, sorted far to
+near when blended by their opacity. Budgets: `WXL_DRAW_MAX_PARTICLES` in all,
+`WXL_DRAW_MAX_MOD_PARTICLES` and `WXL_DRAW_MAX_EMITTERS` a mod; what is past them is counted in
+`Stats().particles_culled`.
+
+**Lifetimes.** `Draw` is for one frame; `Add(shape, style, duration)` keeps a shape and answers a
+handle (`WXL_HANDLE_NONE` when refused): `Update`, `Move`, `SetStyle`, `SetDuration`, `Attach`
+(offsets from the object's position, turned with it under `WXL_DRAW_ATTACH_TURN`; the shape goes
+when the object leaves view), `Detach`, `Remove`; `Clear()` takes every shape of your mod off, and
+they all go when the mod is disabled or unloads.
+
+**When.** After the world's opaque geometry and its liquids, before its translucent models, its
+particles and spell effects, and the interface. Shapes are tested against the scene's depth (or
+drawn on top) and write none, so the translucent world blends over them.
+
+**Budgets and refusals.** `WXL_DRAW_MAX_SHAPES` kept and `WXL_DRAW_MAX_IMMEDIATE` immediate shapes a
+mod, `WXL_DRAW_MAX_POINTS` points, `WXL_DRAW_MAX_EXTENT` yards from the centre,
+`WXL_DRAW_MAX_GRID_LINES` lines, `WXL_DRAW_MAX_SHAPE_VERTICES` vertices a shape: past these the call
+answers `WXL_E_INVALID` and the log says why under the tag `draw`, once per mod and call. All mods
+together draw `WXL_DRAW_MAX_FRAME_VERTICES` a frame; past it, shapes are left out (counted in
+`Stats().left_out`, logged once a second). `Stats()` also answers the CPU's cost of the last frame,
+and since abi `0.1.38` the insides drawn as surfaces (`textured`), the textures held and still
+loading, and the shadows drawn.
+
+### Animations on units: `wxl.animation`
+
+`wxl::AnimationService` (abi `0.1.37`) plays an animation of the game on a unit (the player, a
+creature, another player in view), once or looped, the way the game plays an emote: through the
+client's own `CGUnit_C::PlayBaseAnimation`. Nothing is sent to the server; it is seen on this client.
+
+```cpp
+#include "wxl/services/animation.hpp"
+
+const wxl::Player me = wxl::Player::Local();
+// One swing, as the client swings when it mines, a little faster.
+wxl::AnimationService::Play(me, 62, 0, 1.3);
+// Swinging until told otherwise, over the legs' run too.
+wxl::AnimationService::Play(me, 62, WXL_ANIMATION_LOOP | WXL_ANIMATION_OVERRIDE, 1.0);
+...
+wxl::AnimationService::Stop(me);
+```
+
+**How it plays.** The client chooses the bones: the whole body standing still, the upper body
+alone over the legs' run while the unit moves; the model's nearest animation when it has not the one
+asked for (AnimationData's fallback), unless `WXL_ANIMATION_EXACT`; the weapons sheathed or drawn as
+AnimationData says; a blend from the pose it leaves, unless `WXL_ANIMATION_NO_BLEND`. `speed` is 1
+for the animation's own (0 counts as 1), from 0.05 to 20.
+
+**Who wins.** The game first: moving, fighting, casting, an emote, sitting or dying replace your
+animation as they replace an emote. A one-shot so replaced has ended; a `WXL_ANIMATION_LOOP` comes
+back by itself as soon as the unit is idle again. `WXL_ANIMATION_OVERRIDE` plays a loop again every
+time the game replaced it, at once, death excepted; a one-shot ignores it and ends when replaced. A one-shot lasts one play
+of its length, then the unit is handed back to the game.
+
+**Ends.** `ObjectScript::OnUnitAnimationEnded(unit, anim_id, reason, looped)` says when each play
+ended and why (`wxl_animation_end`): `finished` (a one-shot played its length), `interrupted` (the
+game replaced a one-shot), `stopped` (`Stop`, or its mod went), `replaced` (another play on the
+unit), `gone` (the unit left view). Raised on the main thread at the unit's next frame, for every
+mod's plays. `Playing(unit)` answers the id a mod plays on a unit, `Current(unit)` what its model
+shows now, whoever chose it. A unit plays one mod animation at a time; your mod's end when it is
+disabled or unloads.
+
+**Refusals.** `WXL_E_INVALID` for an object that is no unit, an id past `WXL_ANIMATION_MAX_ID`, a flag
+outside `WXL_ANIMATION_FLAGS` or a speed out of range (logged once under `animation`);
+`WXL_E_FAILED` when the client did not play it (its model still loading, the unit dead); off the main
+thread `WXL_E_INVALID`.
+
+**Which animation.** Ids are `AnimationData.dbc`'s. For a tool swung at the ground or a wall:
+
+| Id | Name | What it is |
+|---|---|---|
+| 0 | Stand | the idle stance the game falls back to |
+| 16 | AttackUnarmed | a punch |
+| 17 | Attack1H | a swing of a one-handed weapon: a pickaxe held in one hand |
+| 18 | Attack2H | an overhead swing of a two-handed weapon |
+| 19 | Attack2HL | a large two-handed swing (polearms, staves) |
+| 32 | SpellCast | a short release of a spell, both hands |
+| 53 | SpellCastDirected | a cast thrown forward with one hand, at a point |
+| 54 | SpellCastOmni | a cast released all around |
+| 62 | EmoteWork | the work swing: what the client plays while you mine, weapons sheathed |
+| 136 | EmoteWorkNoSheathe | the same swing with the weapon kept in hand (models without it fall back to 62) |
+| 69 | EmoteDance | a dance |
+| 123 | UseStandingLoop | hands busy at waist height: herbs, skins, opening a chest |
+
+The client's own mining is a spell (Mining, 2575) whose cast shows SpellVisualKit 166: animation 62
+(EmoteWork) on the caster, played again at each end while the cast lasts, and a pickaxe model
+(`Spells\MiningPick_SpellObject.mdx`) in the right hand. A mod's pickaxe swing is 62 for that look,
+136 to keep an equipped tool in hand, 17 or 18 for a weapon-like strike.
+
+### Drawing into the frame: `wxl.render`
+
+On the runtime's Vulkan renderer (either client with `[gx] api = vulkan`), a mod draws
+into the game's frame with images, buffers and pipelines of its own (abi `0.1.33`):
+`wxl/services/render.hpp`. `wxl::GxService::Api()` says which device the client runs on
+(`WXL_GX_BACKEND_D3D9`, `WXL_GX_BACKEND_VULKAN`, ...), and `wxl::RenderService::Supported()`
+whether the render service drives it; on Direct3D 9 it answers false with its reason, and a mod
+draws there with `wxl::GxService::D3d9Device()` as before.
+
+**When.** `RenderScript::OnRenderPoint(point, frame, width, height, samples)` comes at four points of
+each frame while a mod listens: `WXL_RENDER_POINT_AFTER_OPAQUE_WORLD` (terrain, buildings, models and
+ground clutter drawn, no liquid, nothing blended), `..._AFTER_LIQUIDS`, `..._AFTER_WORLD` (the whole
+world and its full-screen effects, not the interface) and `..._AFTER_UI` (the frame as it will be
+shown, the mods' Dear ImGui windows aside). There a mod opens a pass, draws, and closes it; the
+frame's own drawing stops for it and goes on after, so what the mod draws lies over what the frame
+drew before the point and under what comes after. The points are raised on Direct3D 9 too, for a
+mod drawing with its device.
+
+**Programs.** A pipeline is SPIR-V you build from GLSL with the Vulkan SDK's compiler, against the
+include files of `include/wxl/render/`:
+
+    glslangValidator -V --target-env vulkan1.3 -I<sdk>/include tint.frag -o tint.frag.spv
+    glslangValidator -V --target-env vulkan1.3 -I<sdk>/include --vn kTintFrag tint.frag -o tint_frag.h
+
+(the second writes a header to compile into your mod). A program that includes them starts with
+`#version 460` and `#extension GL_GOOGLE_include_directive : require`. Every program sees the bindless table,
+`uImages[]` and `uSamplers[]` (`wxl/render/render.glsl`); `ImageSlot(image)`, `SceneColorSlot()`
+and `Sampler(flags)` give the indices to sample with, which you pass in the push constants (128
+bytes, your own). Three kinds: `RenderPipelineDesc::Graphics(vertex, fragment)` (no vertex input:
+your vertex program reads its vertices from buffers, by `BufferAddress`), `::Fullscreen(fragment)`
+(one triangle over the pass, `uv` at location 0) and `::Batch(fragment)` (behind a client model
+batch's own vertex program, below). The rest of the description says what the pipeline draws
+into: colour formats (up to four, `WXL_RENDER_FORMAT_BGRA8` for the frame itself), a depth format,
+samples (0 for the frame's own), blending per colour, the depth test, culling. `CreatePipeline`
+compiles it there and then; it answers 0, and logs why, for one the device refuses.
+
+```cpp
+#include "wxl/services/render.hpp"
+#include "tint_frag.h" // const uint32_t kTintFrag[]: glslangValidator --vn kTintFrag
+
+class Tint : public wxl::RenderScript
+{
+public:
+    Tint()
+    {
+        wxl::RenderPipelineDesc desc = wxl::RenderPipelineDesc::Fullscreen(kTintFrag, sizeof kTintFrag);
+        desc.Named("tint").Blend(0, WXL_RENDER_BLEND_ALPHA); // onto the frame's own colour
+        pipeline_ = wxl::RenderService::CreatePipeline(desc);
+    }
+    ~Tint() override { wxl::RenderService::DestroyPipeline(pipeline_); }
+
+    void OnRenderPoint(wxl_render_point point, uint64_t, uint32_t, uint32_t, uint32_t) override
+    {
+        if (point != WXL_RENDER_POINT_AFTER_WORLD || !pipeline_) return;
+        wxl::RenderPass pass;
+        pass.Color(WXL_RENDER_SCENE_COLOR);
+        if (wxl::RenderService::Begin(pass) != WXL_OK) return;
+        const float color[4] = {1.0f, 0.6f, 0.2f, 0.15f};
+        wxl::RenderService::Fullscreen(pipeline_, color, sizeof color);
+        wxl::RenderService::End();
+    }
+
+private:
+    wxl_handle pipeline_ = WXL_HANDLE_NONE;
+};
+```
+
+**Images and buffers.** `CreateImage(width, height, format, samples)` makes a render target that is
+also a texture; `CreateScreenImage(divisor, format, samples)` one the frame's size divided (1 the
+full size, 2 half), made again, cleared, when the window changes size. An image multisampled like
+the frame (samples 0) can share a pass with the frame's depth, `WXL_RENDER_SCENE_DEPTH`, to be
+tested against what the world drew; it is resolved when the pass ends, and what a program samples
+is the resolved image. `CreateBuffer(size)` and `WriteBuffer` hold what your programs read by
+address, or the 32-bit indices of `DrawIndexed`; a write reaches the GPU before the frame's first
+draw. `SceneColorSlot()` and `SceneDepthSlot()` copy the frame as drawn so far into textures, at most
+once per point. Give everything back with `DestroyImage`, `DestroyBuffer`, `DestroyPipeline`, or
+let the mod's unload do it; the runtime waits until the GPU is done with them.
+
+**The game's models again.** `ModelBatchDrawn` hands each model batch the game draws, with `batch`
+(the last parameter). `DrawBatch(batch, pipeline, constants, size)` draws it again with a
+`Batch` pipeline into the open pass: the same vertices, skinned and placed as the game drew them,
+with your fragment program. Its interface is in `wxl/render/batch.glsl`: the batch's varyings
+(`wxlTexcoord0`, `wxlColor0`, ...), its textures (`WxlStageSample(0, uv)`), its alpha test
+(`WxlAlphaRejected(alpha)`), and your constants, up to 4096 bytes, as rows of `vec4`
+(`WxlConstant(i)`). A batch is valid during the event; `KeepBatch(batch)` copies it until the end of
+the frame, to draw it at a later point -- a silhouette, an outline, a glow, drawn after the world
+from the batches seen during it. The example mod `wxl.outline` outlines the target that way, on nothing but
+this service.
+
+**The game's shaders.** `ReplaceShader(name, stage, spirv, size)` gives the game's shaders named
+`name` (or starting with it) your SPIR-V for a stage, 0 vertex or 1 pixel, written against the same
+interface as a batch program, the game's registers at `pc.vertexRegs` and `pc.pixelRegs`;
+`RestoreShader` or your mod's unload gives them their own back. On this renderer the game's models
+read their bones from a palette of up to 256 bones, not from the registers c31 and up: a program
+reaches bone `b`'s rows with `WxlBoneRow(b, row)` of `batch.glsl`, wherever the batch has them.
+
+**Compute** (abi `0.1.34`). `RenderPipelineDesc::Compute(spirv, size)` makes a compute pipeline
+(`#version 460`, a `layout(local_size_x = ...) in;` of your choice, push constants of 128 bytes,
+the same bindless table). `Dispatch(pipeline, x, y, z, push, size)` runs it inside
+`OnRenderPoint`, between passes: the frame's drawing stops for it as for a pass. It reads what the
+frame drew before it, reads and writes your buffers through `BufferAddress`, and what it writes is
+seen by every draw and dispatch after it; it writes no image (a pass after it draws one from the
+buffer).
+
+**Bones of your own** (abi `0.1.34`). `BonePalette(matrices, size, &address)` writes matrices into
+the open frame, three `vec4` rows each (48 bytes, `WXL_RENDER_PALETTE_MATRIX_BYTES`), as many as
+you like (16 MiB at once), and gives their GPU address, read until the frame ends: your vertex
+program reads matrix `m`'s rows at `WxlPaletteRow(address, m, row)` (`render.glsl`), with any bone
+index size your vertices carry. Write it each frame you draw with it, from `OnRenderPoint` or a
+handler of the frame.
+
+**Raw Vulkan.** `wxl/services/vk.hpp` (`wxl.vk`, a raw service: declare it in `mod.json`) hands the
+device itself to a mod that records its own commands: `Instance()`, `Device()`, `Queue()`,
+`GetInstanceProcAddr()`, and inside `OnRenderPoint` the frame's `CommandBuffer()`, no rendering
+open. Its rules, in `include/wxl/services/vk.h`: never submit or wait; leave the images in the
+layouts you found them in; call `wxl::GxService::InvalidateState()` when you are done, so that the
+renderer binds its own state again; destroy what you made once `FramesCompleted()` has passed the
+frame that last used it. `Image(handle)` and `Buffer(handle)` reach `wxl.render`'s resources.
+`[gx] validation = 1` in `WarcraftXL.ini` turns on the validation layer, whose findings go to the
+log.
+
+**Timing it.** `wxl::ProfileService::GpuZoneBegin("my pass")` and `GpuZoneEnd()` (abi `0.1.33`) around
+your passes put them on the profiler's GPU timeline, beside the frame's own zones.
+
+### Windows of your own: Dear ImGui
+
+The runtime carries [Dear ImGui](https://github.com/ocornut/imgui) and
+[ImPlot](https://github.com/epezent/implot) (abi `0.1.25`) and draws them over the game's frame,
+after its interface, with the game's own Direct3D 9 device, on both clients. A mod adds its
+windows from `RenderScript::OnImGuiFrame`, which comes once a frame while some mod listens:
+
+```cpp
+#include "wxl/services/imgui.hpp"   // and target_link_libraries(<mod> PRIVATE wxl::imgui)
+
+class Panel : public wxl::RenderScript
+{
+    void OnImGuiFrame(uint64_t, float) override
+    {
+        if (!shown_ || !wxl::ImGuiService::Bind()) return;
+        ImGui::Begin("My mod", &shown_);
+        ImGui::SliderFloat("Speed", &speed_, 0.0f, 10.0f);
+        ImGui::End();
+    }
+    bool  shown_ = true;
+    float speed_ = 1.0f;
+};
+```
+
+Your mod compiles its own copy of Dear ImGui and ImPlot from the SDK (`wxl::imgui`), and
+`Bind()` points that copy at the runtime's contexts and allocator, which is how every mod's
+windows end up in one frame. It answers false, and logs once why, on a runtime without
+`wxl.imgui` or with another version of Dear ImGui: build against that runtime's SDK. Call it
+first in each `OnImGuiFrame`. Nothing is drawn, and nothing is set up, while no mod listens to
+the event: listen to it only while your windows are open, or return at once.
+
+The game window's mouse and keys reach Dear ImGui first: what it wants -- the pointer over one of
+its windows, a text field being typed in -- the game and the other mods do not see. Show the
+pointer while your windows are open (`wxl::InputService::CaptureCursor(false)` if your mod holds
+it). Text and spacing are sized for the window: the monitor's DPI scale, or a quarter step per
+1080 lines of height, from 1 to 3. The windows' places are not saved. The device going away and
+coming back (a resize, Alt+Tab out of full screen) is handled by the runtime. An `ImGui::Begin`
+without its `End` is mended at the end of the frame rather than ending the game.
 
 ### Profiling memory
 

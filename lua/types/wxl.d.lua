@@ -14,6 +14,20 @@
 ---@field y number
 ---@field z number
 
+---A file's content hash, as wxl.storage.HashFile answers it.
+---@class wxl.FileHash
+---@field md5 string thirty-two lower-case hex digits
+---@field size integer bytes
+---@field layer "archive"|"disk"|"folder"|"provider"|"served" where the bytes came from
+---@field source string the archive, the file on the disk, or the mod that serves it
+
+---What wxl.storage.ReloadAsset did.
+---@class wxl.AssetReload
+---@field textures integer textures read again in place
+---@field models integer model files dropped from the model cache
+---@field objects integer units and players whose model was made again
+---@field busy integer textures still loading, left alone
+
 ---An element of an update field: a number, a guid's string for a guid or another
 ---64-bit value, a table of numbers for the bytes or the two halves of a dword.
 ---@alias wxl.FieldValue number|string|number[]
@@ -1276,6 +1290,62 @@
 ---arrives as its number.
 ---@alias wxl.AppearanceChange "worn"|"removed"|"freed"
 
+---A wxl_asset_kind value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.AssetKind "other"|"model"|"skin"|"animation"|"texture"|"terrain"|"map_object"|"sound"|"database"|"interface"|"shader"|"font"|"movie"
+
+---A wxl_world_hit value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.WorldHit "none"|"ground"|"object"|"world_object"|"name_plate"
+
+---A wxl_interface_signature value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.InterfaceSignature "missing"|"corrupt"|"modified"|"signed"
+
+---A wxl_gx_backend value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.GxBackend "none"|"d3d9"|"d3d9ex"|"opengl"|"vulkan"
+
+---A wxl_render_point value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.RenderPoint "after_opaque_world"|"after_liquids"|"after_world"|"after_ui"
+
+---A wxl_terrain_presence value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.TerrainPresence "none"|"ground"|"hole"|"not_loaded"
+
+---A wxl_draw_kind value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.DrawKind "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder"|"beam"
+
+---A wxl_draw_depth value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.DrawDepth "tested"|"on_top"
+
+---A wxl_animation_end value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.AnimationEnd "finished"|"interrupted"|"stopped"|"replaced"|"gone"
+
+---A wxl_draw_uv value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.DrawUv "fit"|"tile"|"world"
+
+---A wxl_draw_blend value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.DrawBlend "alpha"|"add"|"modulate"
+
+---A wxl_draw_spawn value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.DrawSpawn "point"|"disc"|"box"|"segment"
+
+---A wxl_draw_ground value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.DrawGround "none"|"bounce"|"settle"
+
+---A wxl_draw_billboard value, by name; a newer value than these headers know
+---arrives as its number.
+---@alias wxl.DrawBillboard "camera"|"ground"|"stretched"
+
 -- The script families. A function defined on one of these tables as On<Event> is
 -- subscribed when the entry file has run and called with the event's parameters;
 -- on an event that can be answered its return values are taken, as Override
@@ -1292,6 +1362,12 @@
 ---@field OnMouseoverChanged fun(self: WorldScript, previous: wxl.Object|nil, previous_guid: wxl.Guid, current: wxl.Object|nil, current_guid: wxl.Guid)
 ---@field OnCVarChanged fun(self: WorldScript, name: string, previous: string, value: string)
 ---@field OnMemoryPressure fun(self: WorldScript, largest_free: integer, free: integer, committed: integer, threshold: integer)
+---@field OnMouseMotion fun(self: WorldScript, dx: integer, dy: integer)
+---@field OnMouseWheel fun(self: WorldScript, delta: number, handled: boolean|nil): boolean|nil answers through handled
+---@field OnWorldClickRequest fun(self: WorldScript, button: wxl.MouseButton|integer, hit: wxl.WorldHit|integer, object: wxl.Object|nil, object_guid: wxl.Guid, point: wxl.Vec3, targeting: boolean, refused: boolean|nil): boolean|nil answers through refused
+---@field OnTerrainChunkLoaded fun(self: WorldScript, map_id: integer, chunk_x: integer, chunk_y: integer, edited: boolean)
+---@field OnTerrainChunkUnloaded fun(self: WorldScript, map_id: integer, chunk_x: integer, chunk_y: integer, edited: boolean)
+---@field OnTerrainEditsCleared fun(self: WorldScript, map_id: integer, chunks: integer)
 WorldScript = {}
 
 ---@class RenderScript
@@ -1302,7 +1378,10 @@ WorldScript = {}
 ---@field OnUiRenderEnd fun(self: RenderScript, index: integer, delta: number)
 ---@field OnSwapchainLost fun(self: RenderScript, width: integer, height: integer)
 ---@field OnSwapchainRestored fun(self: RenderScript, width: integer, height: integer)
----@field OnModelBatchDrawn fun(self: RenderScript, model: lightuserdata|nil, root_model: lightuserdata|nil, primitive_type: integer, base_vertex: integer, min_index: integer, vertex_count: integer, start_index: integer, primitive_count: integer, blend_mode: integer, viewport_x: integer, viewport_y: integer, viewport_width: integer, viewport_height: integer, viewport_min_z: number, viewport_max_z: number)
+---@field OnModelBatchDrawn fun(self: RenderScript, model: lightuserdata|nil, root_model: lightuserdata|nil, primitive_type: integer, base_vertex: integer, min_index: integer, vertex_count: integer, start_index: integer, primitive_count: integer, blend_mode: integer, viewport_x: integer, viewport_y: integer, viewport_width: integer, viewport_height: integer, viewport_min_z: number, viewport_max_z: number, batch: lightuserdata|nil)
+---@field OnCameraUpdate fun(self: RenderScript, index: integer, delta: number)
+---@field OnImGuiFrame fun(self: RenderScript, index: integer, delta: number)
+---@field OnRenderPoint fun(self: RenderScript, point: wxl.RenderPoint|integer, frame: integer, width: integer, height: integer, samples: integer)
 RenderScript = {}
 
 ---@class ObjectScript
@@ -1314,8 +1393,8 @@ RenderScript = {}
 ---@field OnEquipmentChanged fun(self: ObjectScript, unit: wxl.Object|nil, slot: integer, item_id: integer)
 ---@field OnUnitDeath fun(self: ObjectScript, unit: wxl.Object|nil)
 ---@field OnUnitAuraChanged fun(self: ObjectScript, unit: wxl.Object|nil, spell_id: integer, removed: boolean)
----@field OnSpellCastStart fun(self: ObjectScript, caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes)
----@field OnSpellCastGo fun(self: ObjectScript, caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes)
+---@field OnSpellCastStart fun(self: ObjectScript, caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes, has_source: boolean, source: wxl.Vec3, has_dest: boolean, dest: wxl.Vec3, source_transport: wxl.Guid, dest_transport: wxl.Guid)
+---@field OnSpellCastGo fun(self: ObjectScript, caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes, has_source: boolean, source: wxl.Vec3, has_dest: boolean, dest: wxl.Vec3, source_transport: wxl.Guid, dest_transport: wxl.Guid)
 ---@field OnSpellCastFailed fun(self: ObjectScript, caster: wxl.Object|nil, caster_guid: wxl.Guid, spell_id: integer, cast_count: integer, reason: integer, custom_error: integer, custom_arg: integer)
 ---@field OnSpellCastInterrupted fun(self: ObjectScript, caster: wxl.Object|nil, caster_guid: wxl.Guid, spell_id: integer, cast_count: integer, reason: integer, custom_error: integer, custom_arg: integer)
 ---@field OnSpellCastRequest fun(self: ObjectScript, caster: wxl.Object|nil, spell_id: integer, item: wxl.Object|nil, target_guid: wxl.Guid, confirmed: boolean, refused: boolean|nil): boolean|nil answers through refused
@@ -1334,6 +1413,7 @@ RenderScript = {}
 ---@field OnUnitAuraRefreshed fun(self: ObjectScript, unit: wxl.Object|nil, unit_guid: wxl.Guid, slot: integer, spell_id: integer, caster: wxl.Object|nil, caster_guid: wxl.Guid, stacks: integer, previous_stacks: integer, level: integer, flags: integer, harmful: boolean, duration: integer, remaining: integer)
 ---@field OnUnitMountChanged fun(self: ObjectScript, unit: wxl.Object|nil, unit_guid: wxl.Guid, previous_display_id: integer, display_id: integer)
 ---@field OnAppearanceChanged fun(self: ObjectScript, change: wxl.AppearanceChange|integer, wearer: lightuserdata|nil, model: lightuserdata|nil, race_id: integer, sex_id: integer, item_slot: integer, display_id: integer, npc: boolean)
+---@field OnUnitAnimationEnded fun(self: ObjectScript, unit: wxl.Object|nil, anim_id: integer, reason: wxl.AnimationEnd|integer, looped: boolean)
 ObjectScript = {}
 
 ---@class AssetScript
@@ -1355,6 +1435,7 @@ ObjectScript = {}
 ---@field OnModelParsed fun(self: AssetScript, path: string, file: lightuserdata|nil, header: lightuserdata|nil, size: integer)
 ---@field OnSkinProfileParsed fun(self: AssetScript, path: string, file: lightuserdata|nil, header: lightuserdata|nil, skin: lightuserdata|nil)
 ---@field OnModelSequenceLoad fun(self: AssetScript, path: string, file: lightuserdata|nil, sequence_index: integer, data: wxl.Bytes)
+---@field OnFileMissing fun(self: AssetScript, path: string, kind: wxl.AssetKind|integer, open: boolean, pending: boolean, loader: boolean)
 AssetScript = {}
 
 ---@class NetScript
@@ -1369,6 +1450,8 @@ NetScript = {}
 ---@field OnScriptVmClosing fun(self: LuaScript, context: wxl.ScriptContext|integer, native_state: lightuserdata|nil)
 ---@field OnUiEvent fun(self: LuaScript, index: integer, name: string, format: string, values: wxl.Bytes, value_count: integer)
 ---@field OnScriptError fun(self: LuaScript, context: wxl.ScriptContext|integer, message: string)
+---@field OnInterfaceSignature fun(self: LuaScript, file: string, extra: string, verdict: wxl.InterfaceSignature|integer, accepted: boolean|nil): boolean|nil answers through accepted
+---@field OnInterfaceCleanupRequest fun(self: LuaScript, refused: boolean|nil): boolean|nil answers through refused
 LuaScript = {}
 
 ---@class CombatScript
@@ -1504,8 +1587,8 @@ SocialScript = {}
 ---@overload fun(family: "LuaScript", method: "OnScriptVmClosing", handler: fun(context: wxl.ScriptContext|integer, native_state: lightuserdata|nil)): integer
 ---@overload fun(family: "ObjectScript", method: "OnUnitDeath", handler: fun(unit: wxl.Object|nil)): integer
 ---@overload fun(family: "ObjectScript", method: "OnUnitAuraChanged", handler: fun(unit: wxl.Object|nil, spell_id: integer, removed: boolean)): integer
----@overload fun(family: "ObjectScript", method: "OnSpellCastStart", handler: fun(caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes)): integer
----@overload fun(family: "ObjectScript", method: "OnSpellCastGo", handler: fun(caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes)): integer
+---@overload fun(family: "ObjectScript", method: "OnSpellCastStart", handler: fun(caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes, has_source: boolean, source: wxl.Vec3, has_dest: boolean, dest: wxl.Vec3, source_transport: wxl.Guid, dest_transport: wxl.Guid)): integer
+---@overload fun(family: "ObjectScript", method: "OnSpellCastGo", handler: fun(caster: wxl.Object|nil, caster_guid: wxl.Guid, target: wxl.Object|nil, target_guid: wxl.Guid, cast_item: wxl.Guid, spell_id: integer, cast_count: integer, cast_flags: integer, target_flags: integer, cast_time: integer, hit_count: integer, hits: wxl.Bytes, misses: wxl.Bytes, miss_reasons: wxl.Bytes, has_source: boolean, source: wxl.Vec3, has_dest: boolean, dest: wxl.Vec3, source_transport: wxl.Guid, dest_transport: wxl.Guid)): integer
 ---@overload fun(family: "ObjectScript", method: "OnSpellCastFailed", handler: fun(caster: wxl.Object|nil, caster_guid: wxl.Guid, spell_id: integer, cast_count: integer, reason: integer, custom_error: integer, custom_arg: integer)): integer
 ---@overload fun(family: "ObjectScript", method: "OnSpellCastInterrupted", handler: fun(caster: wxl.Object|nil, caster_guid: wxl.Guid, spell_id: integer, cast_count: integer, reason: integer, custom_error: integer, custom_arg: integer)): integer
 ---@overload fun(family: "ObjectScript", method: "OnSpellCastRequest", handler: fun(caster: wxl.Object|nil, spell_id: integer, item: wxl.Object|nil, target_guid: wxl.Guid, confirmed: boolean, refused: boolean|nil)): integer
@@ -1609,7 +1692,20 @@ SocialScript = {}
 ---@overload fun(family: "AssetScript", method: "OnSkinProfileParsed", handler: fun(path: string, file: lightuserdata|nil, header: lightuserdata|nil, skin: lightuserdata|nil)): integer
 ---@overload fun(family: "AssetScript", method: "OnModelSequenceLoad", handler: fun(path: string, file: lightuserdata|nil, sequence_index: integer, data: wxl.Bytes)): integer
 ---@overload fun(family: "ObjectScript", method: "OnAppearanceChanged", handler: fun(change: wxl.AppearanceChange|integer, wearer: lightuserdata|nil, model: lightuserdata|nil, race_id: integer, sex_id: integer, item_slot: integer, display_id: integer, npc: boolean)): integer
----@overload fun(family: "RenderScript", method: "OnModelBatchDrawn", handler: fun(model: lightuserdata|nil, root_model: lightuserdata|nil, primitive_type: integer, base_vertex: integer, min_index: integer, vertex_count: integer, start_index: integer, primitive_count: integer, blend_mode: integer, viewport_x: integer, viewport_y: integer, viewport_width: integer, viewport_height: integer, viewport_min_z: number, viewport_max_z: number)): integer
+---@overload fun(family: "RenderScript", method: "OnModelBatchDrawn", handler: fun(model: lightuserdata|nil, root_model: lightuserdata|nil, primitive_type: integer, base_vertex: integer, min_index: integer, vertex_count: integer, start_index: integer, primitive_count: integer, blend_mode: integer, viewport_x: integer, viewport_y: integer, viewport_width: integer, viewport_height: integer, viewport_min_z: number, viewport_max_z: number, batch: lightuserdata|nil)): integer
+---@overload fun(family: "AssetScript", method: "OnFileMissing", handler: fun(path: string, kind: wxl.AssetKind|integer, open: boolean, pending: boolean, loader: boolean)): integer
+---@overload fun(family: "WorldScript", method: "OnMouseMotion", handler: fun(dx: integer, dy: integer)): integer
+---@overload fun(family: "WorldScript", method: "OnMouseWheel", handler: fun(delta: number, handled: boolean|nil)): integer
+---@overload fun(family: "RenderScript", method: "OnCameraUpdate", handler: fun(index: integer, delta: number)): integer
+---@overload fun(family: "RenderScript", method: "OnImGuiFrame", handler: fun(index: integer, delta: number)): integer
+---@overload fun(family: "WorldScript", method: "OnWorldClickRequest", handler: fun(button: wxl.MouseButton|integer, hit: wxl.WorldHit|integer, object: wxl.Object|nil, object_guid: wxl.Guid, point: wxl.Vec3, targeting: boolean, refused: boolean|nil)): integer
+---@overload fun(family: "LuaScript", method: "OnInterfaceSignature", handler: fun(file: string, extra: string, verdict: wxl.InterfaceSignature|integer, accepted: boolean|nil)): integer
+---@overload fun(family: "LuaScript", method: "OnInterfaceCleanupRequest", handler: fun(refused: boolean|nil)): integer
+---@overload fun(family: "RenderScript", method: "OnRenderPoint", handler: fun(point: wxl.RenderPoint|integer, frame: integer, width: integer, height: integer, samples: integer)): integer
+---@overload fun(family: "WorldScript", method: "OnTerrainChunkLoaded", handler: fun(map_id: integer, chunk_x: integer, chunk_y: integer, edited: boolean)): integer
+---@overload fun(family: "WorldScript", method: "OnTerrainChunkUnloaded", handler: fun(map_id: integer, chunk_x: integer, chunk_y: integer, edited: boolean)): integer
+---@overload fun(family: "WorldScript", method: "OnTerrainEditsCleared", handler: fun(map_id: integer, chunks: integer)): integer
+---@overload fun(family: "ObjectScript", method: "OnUnitAnimationEnded", handler: fun(unit: wxl.Object|nil, anim_id: integer, reason: wxl.AnimationEnd|integer, looped: boolean)): integer
 ---@param family wxl.Family
 ---@param method string
 ---@param handler function
@@ -1630,6 +1726,10 @@ function Observe(family, method, handler) end
 ---@overload fun(family: "GroupScript", method: "OnGroupInvite", handler: fun(inviter: string, can_accept: boolean, accept: boolean|nil, decline: boolean|nil): boolean|nil, boolean|nil): integer
 ---@overload fun(family: "SocialScript", method: "OnDuelRequested", handler: fun(challenger: wxl.Object|nil, challenger_guid: wxl.Guid, arbiter_guid: wxl.Guid, accept: boolean|nil, decline: boolean|nil): boolean|nil, boolean|nil): integer
 ---@overload fun(family: "SocialScript", method: "OnResurrectRequest", handler: fun(offerer: wxl.Object|nil, offerer_guid: wxl.Guid, name: string, sickness: boolean, accept: boolean|nil, decline: boolean|nil): boolean|nil, boolean|nil): integer
+---@overload fun(family: "WorldScript", method: "OnMouseWheel", handler: fun(delta: number, handled: boolean|nil): boolean|nil): integer
+---@overload fun(family: "WorldScript", method: "OnWorldClickRequest", handler: fun(button: wxl.MouseButton|integer, hit: wxl.WorldHit|integer, object: wxl.Object|nil, object_guid: wxl.Guid, point: wxl.Vec3, targeting: boolean, refused: boolean|nil): boolean|nil): integer
+---@overload fun(family: "LuaScript", method: "OnInterfaceSignature", handler: fun(file: string, extra: string, verdict: wxl.InterfaceSignature|integer, accepted: boolean|nil): boolean|nil): integer
+---@overload fun(family: "LuaScript", method: "OnInterfaceCleanupRequest", handler: fun(refused: boolean|nil): boolean|nil): integer
 ---@param family wxl.Family
 ---@param method string
 ---@param handler function
@@ -2373,6 +2473,30 @@ function Object:SellPrice() end
 ---@return wxl.Object|nil value, string|nil reason
 function Object:SlotItem(index) end
 
+---Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused.
+---For Unit, Player (unit_is_outdoors).
+---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
+---@return boolean|nil value, string|nil reason
+function Object:IsOutdoors() end
+
+---Whether the active player may attack it, by the client's own reckoning (faction, duel, PvP, sanctuary): what turns the cursor into a sword.
+---For Unit, Player (unit_can_attack).
+---Came with abi 0.1.26: a mod whose mod.json asks for an older abi cannot use it.
+---@return boolean|nil value, string|nil reason
+function Object:CanAttack() end
+
+---Whether the active player can interact with it now: an NPC offering something (gossip, quests, trade, training, a flight), alive, out of combat, of a reaction that lets it; out of reach counts.
+---For Unit, Player (unit_can_interact).
+---Came with abi 0.1.26: a mod whose mod.json asks for an older abi cannot use it.
+---@return boolean|nil value, string|nil reason
+function Object:CanInteract() end
+
+---Whether the active player can use it now, as the client decides the cursor over it: its kind lets it be used, its quest is in the log, its lock opens; out of reach counts.
+---For GameObject (gameobject_can_use).
+---Came with abi 0.1.26: a mod whose mod.json asks for an older abi cannot use it.
+---@return boolean|nil value, string|nil reason
+function Object:CanUse() end
+
 ---Every aura on a unit, in slot order, as Aura(slot) answers each. Came with abi 0.1.18.
 ---@return wxl.Aura[]|nil auras, string|nil reason
 function Object:Auras() end
@@ -2554,6 +2678,145 @@ function Model:ReplaceTexture(type, path) end
 ---@return string|nil reason
 function Model:AttachToBone(parent, attachment, key_bone, offset) end
 
+---Puts the model in the world at {position = {x, y, z}, yaw, pitch, roll, scale} (radians; scale 1 when left out), or moves it there; leaving the world takes it out.
+---@param placement {position: wxl.Vec3, yaw?: number, pitch?: number, roll?: number, scale?: number}
+---@return true|nil ok
+---@return string|nil reason
+function Model:Place(placement) end
+
+---How the model sits on the point it hangs on: an offset from the point in its own frame, a turn and a scale.
+---@param placement {position: wxl.Vec3, yaw?: number, pitch?: number, roll?: number, scale?: number}
+---@return true|nil ok
+---@return string|nil reason
+function Model:SetTransform(placement) end
+
+---Plays an animation (AnimationData id) on the whole model from its start at a speed, 1 normal; kept until it has loaded.
+---@param anim_id integer
+---@param speed number
+---@return true|nil ok
+---@return string|nil reason
+function Model:PlayAnimation(anim_id, speed) end
+
+---The model's own alpha, 0 to 1: a fade.
+---@param alpha number
+function Model:SetAlpha(alpha) end
+
+---Whether the model's particles and ribbons make anything new; those already made play out.
+---@param emitting boolean
+function Model:SetEmitting(emitting) end
+
+---A Image of wxl.render.
+---@class wxl.Image
+local Image = {}
+
+---Gives the image back; one the mod lets go of is given back for it.
+function Image:DestroyImage() end
+
+---The image's index in the bindless table, what a program samples it by.
+---@return integer|nil
+---@return string|nil reason
+function Image:ImageSlot() end
+
+---The image's width in pixels now.
+---@return integer|nil
+---@return string|nil reason
+function Image:ImageWidth() end
+
+---The image's height in pixels now.
+---@return integer|nil
+---@return string|nil reason
+function Image:ImageHeight() end
+
+---A Buffer of wxl.render.
+---@class wxl.Buffer
+local Buffer = {}
+
+---Gives the buffer back; one the mod lets go of is given back for it.
+function Buffer:DestroyBuffer() end
+
+---Copies a string of bytes into the buffer at an offset, before the frame's first draw.
+---@param offset integer
+---@param data string the bytes, as a string
+---@return true|nil ok
+---@return string|nil reason
+function Buffer:WriteBuffer(offset, data) end
+
+---The buffer's address on the GPU, for a program's buffer reference.
+---@return integer|nil
+---@return string|nil reason
+function Buffer:BufferAddress() end
+
+---A Pipeline of wxl.render.
+---@class wxl.Pipeline
+local Pipeline = {}
+
+---Gives the pipeline back; one the mod lets go of is given back for it.
+function Pipeline:DestroyPipeline() end
+
+---Whether the pipeline draws now.
+---@return boolean|nil
+---@return string|nil reason
+function Pipeline:PipelineReady() end
+
+---A Shape of wxl.draw.
+---@class wxl.Shape
+local Shape = {}
+
+---The kept shape's center (a line's or a polygon's points are offsets from it) and facing in radians.
+---@param center wxl.Vec3
+---@param facing number
+---@return true|nil ok
+---@return string|nil reason
+function Shape:Move(center, facing) end
+
+---The kept shape goes in seconds from now, after its fade-out; 0: when removed.
+---@param seconds number
+---@return true|nil ok
+---@return string|nil reason
+function Shape:SetDuration(seconds) end
+
+---The kept shape follows a world object: its center and points become offsets from the object's position, turned with its facing when flags is 1 (ATTACH_TURN; 0 or nil: not turned). It goes when the object leaves view.
+---@param target wxl.Object
+---@param flags? integer 0 when left out
+---@return true|nil ok
+---@return string|nil reason
+function Shape:Attach(target, flags) end
+
+---The kept shape stays where it is now, in world coordinates.
+---@return true|nil ok
+---@return string|nil reason
+function Shape:Detach() end
+
+---The kept shape goes now; a Lua mod's go when it unloads.
+function Shape:Remove() end
+
+---A Emitter of wxl.draw.
+---@class wxl.Emitter
+local Emitter = {}
+
+---Throws count more particles now.
+---@param count integer
+---@return true|nil ok
+---@return string|nil reason
+function Emitter:Burst(count) end
+
+---Where it throws from, and its facing in radians; it stops following an object.
+---@param center wxl.Vec3
+---@param facing number
+---@return true|nil ok
+---@return string|nil reason
+function Emitter:Place(center, facing) end
+
+---It throws from a world object from now on: its center an offset from the object's position, turned with its facing when flags is 1 (ATTACH_TURN). It stops when the object leaves view.
+---@param target wxl.Object
+---@param flags? integer 0 when left out
+---@return true|nil ok
+---@return string|nil reason
+function Emitter:Follow(target, flags) end
+
+---It stops and goes; its particles live out their lives. A Lua mod's go when it unloads.
+function Emitter:Stop() end
+
 ---wxl.script. The client's own script: functions and events added to it, text run in it.
 ---@class wxl.script
 local script = {}
@@ -2696,6 +2959,57 @@ function storage.Serve(path, data, priority) end
 ---@return true|nil ok
 ---@return string|nil reason
 function storage.Unserve(path) end
+
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---The content hash of a file as the client would read it, from whichever layer holds it: an
+---archive, the disk, a folder of the search path, a provider, served bytes. The bytes are hashed
+---before any transform, by the system's MD5, and the answer is kept: `fresh` reads it again.
+---Reading a large file takes time on the main thread; HashFileAsync does not.
+---@param path string
+---@param fresh? boolean
+---@return wxl.FileHash|nil hash
+---@return string|nil reason
+function storage.HashFile(path, fresh) end
+
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---HashFile on a thread of the runtime's: `fn(hash)` is called later, on the main thread, with the
+---table HashFile answers, or nil and the reason. Answers the request's number. A request of a
+---mod that is disabled, reloads or unloads is dropped.
+---@param path string
+---@param fn fun(hash: wxl.FileHash|nil, reason: string|nil)
+---@param fresh? boolean
+---@return integer|nil request
+---@return string|nil reason
+function storage.HashFileAsync(path, fn, fresh) end
+
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---Replaces a file of the client with another name, for this mod: every open of `path`, and every
+---check that it exists, gets `with` instead, on every thread, above every layer. The way to
+---put a file of the mod's own in place of the client's file. It stays until RestoreFile,
+---or until the mod is disabled, reloads or unloads; when two mods override one name, the later
+---wins. What the client already loaded stays: ReloadAsset makes it read the file again.
+---@param path string
+---@param with string
+---@return true|nil ok
+---@return string|nil reason
+function storage.OverrideFile(path, with) end
+
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---Takes this mod's override of a name back; nil, "not_found" for one it did not override.
+---@param path string
+---@return true|nil ok
+---@return string|nil reason
+function storage.RestoreFile(path) end
+
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---Makes the client read again a model or a texture it holds, so a file that changed shows: a
+---texture is read again in place, a model is dropped from the model cache and the units drawn
+---with it made again. Other kinds answer nil, "unsupported"; nil, "pending" when what the
+---client holds is still loading.
+---@param path string
+---@return wxl.AssetReload|nil done
+---@return string|nil reason
+function storage.ReloadAsset(path) end
 
 ---wxl.data. The client's databases, served from a mod's own files before the client reads them.
 ---@class wxl.data
@@ -2871,6 +3185,17 @@ function profile.Message(text) end
 ---@param name string
 function profile.FrameMark(name) end
 
+---Came with abi 0.1.33: a mod whose mod.json asks for an older abi cannot use it.
+---Opens a zone of the GPU's time named name around the commands the mod records inside RenderPoint, on the Vulkan renderer.
+---@param name string
+---@return true|nil ok
+---@return string|nil reason
+function profile.GpuZoneBegin(name) end
+
+---Came with abi 0.1.33: a mod whose mod.json asks for an older abi cannot use it.
+---Closes the innermost GPU zone the mod opened.
+function profile.GpuZoneEnd() end
+
 ---wxl.action. What the player can do, through the client's own functions: target, interact, cast, use, follow, move. Main thread only.
 ---Came with abi 0.1.18: a mod whose mod.json asks for an older abi cannot use it.
 ---@class wxl.action
@@ -2930,6 +3255,13 @@ function action.Assist(unit) end
 ---@return string|nil reason
 function action.MoveTo(point) end
 
+---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
+---Turns the player to a facing in radians (0 north, growing towards the west), as steering with the mouse does, and tells the server.
+---@param facing number
+---@return true|nil ok
+---@return string|nil reason
+function action.Face(facing) end
+
 ---wxl.point. Functions of the engine a mod runs code before, instead of or after.
 ---Came with abi 0.1.16: a mod whose mod.json asks for an older abi cannot use it.
 ---@class wxl.point
@@ -2977,6 +3309,1199 @@ function m2.CreateModel(scene_model, path) end
 ---@return wxl.Vec3|nil
 ---@return string|nil reason
 function m2.AttachmentPoint(model, attachment) end
+
+---Came with abi 0.1.21: a mod whose mod.json asks for an older abi cannot use it.
+---Makes a model of a file in the world's scene, for this mod: it shows once placed with Place or hung on a unit's model.
+---@param path string
+---@return wxl.Model|nil
+---@return string|nil reason
+function m2.CreateWorldModel(path) end
+
+---Came with abi 0.1.21: a mod whose mod.json asks for an older abi cannot use it.
+---Whether a model's file has loaded: one of the mod's, or the client's.
+---@param model lightuserdata|wxl.Model an address an event or a call handed you
+---@return boolean|nil
+---@return string|nil reason
+function m2.ModelLoaded(model) end
+
+---Came with abi 0.1.21: a mod whose mod.json asks for an older abi cannot use it.
+---How long one play of an animation of a loaded model lasts, in milliseconds; 0 when it has none.
+---@param model lightuserdata|wxl.Model an address an event or a call handed you
+---@param anim_id integer
+---@return integer|nil
+---@return string|nil reason
+function m2.AnimationLength(model, anim_id) end
+
+---Came with abi 0.1.21: a mod whose mod.json asks for an older abi cannot use it.
+---Where an attachment point of a loaded model is in the world now, as {x, y, z}.
+---@param model lightuserdata|wxl.Model an address an event or a call handed you
+---@param attachment integer
+---@return wxl.Vec3|nil
+---@return string|nil reason
+function m2.AttachmentWorld(model, attachment) end
+
+---Came with abi 0.1.21: a mod whose mod.json asks for an older abi cannot use it.
+---The height of the ground under a point: the first surface a ray meets from `up` yards above it to `down` yards below.
+---@param at wxl.Vec3
+---@param up number
+---@param down number
+---@return number|nil
+---@return string|nil reason
+function m2.GroundHeight(at, up, down) end
+
+---wxl.gx. Which device the client draws with, and its Direct3D 9 device for a mod that draws with it.
+---Came with abi 0.1.20: a mod whose mod.json asks for an older abi cannot use it.
+---Raw: present only when the mod's mod.json declares it, in "requires" or "optional".
+---@class wxl.gx
+local gx = {}
+
+---Came with abi 0.1.33: a mod whose mod.json asks for an older abi cannot use it.
+---The API the client's device runs on: none, d3d9, d3d9ex, opengl or vulkan.
+---@return wxl.GxBackend|integer|nil
+---@return string|nil reason
+function gx.Api() end
+
+---wxl.engine. The client's own structures as this runtime lays them out.
+---Came with abi 0.1.22: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.engine
+local engine = {}
+
+---The layout hash of an engine type (sdk/engine) on this runtime, by the fork's name of it.
+---@param name string
+---@return integer|nil
+---@return string|nil reason
+function engine.Layout(name) end
+
+---wxl.relay. Services mods publish for each other: a call now, its answer later, on the main thread.
+---Came with abi 0.1.23: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.relay
+local relay = {}
+
+---Publishes a service under a name, for this mod. `fn(request, method, ...)` runs on the main
+---thread for each call: what it returns is the answer; when it returns nothing, it answers later
+---with Answer or Fail. `cancelled(request)`, when given, is told of a request whose caller
+---took it back or went. It stays until Unpublish, or until the mod is disabled, reloads or
+---unloads; its unanswered requests then fail with "not_found".
+---@param name string
+---@param fn fun(request: integer, method: string, ...): ...
+---@param cancelled? fun(request: integer)
+---@return true|nil ok
+---@return string|nil reason
+function relay.Publish(name, fn, cancelled) end
+
+---Takes this mod's service back; nil, "not_found" for one it does not publish.
+---@param name string
+---@return true|nil ok
+---@return string|nil reason
+function relay.Unpublish(name) end
+
+---Whether some mod publishes a service under the name.
+---@param name string
+---@return boolean|nil
+---@return string|nil reason
+function relay.Published(name) end
+
+---Asks a service: `fn(true, ...)` is called later, on the main thread, with the answer, or
+---`fn(false, reason)` ("not_found" when nobody publishes it or it went, else the reason the
+---service gave). `args` is a list of numbers, strings and booleans, or nil. Answers the
+---request's number. Dropped, never answered, if this mod is disabled, reloads or unloads.
+---@param name string
+---@param method string
+---@param args? any[]
+---@param fn fun(ok: boolean, ...)
+---@return integer|nil request
+---@return string|nil reason
+function relay.Call(name, method, args, fn) end
+
+---Answers a request this mod's service received, with values: numbers, strings, booleans, nil.
+---@param request integer
+---@param ... any
+---@return true|nil ok
+---@return string|nil reason
+function relay.Answer(request, ...) end
+
+---Fails a request this mod's service received: its caller gets false and `reason`.
+---@param request integer
+---@param reason string
+---@return true|nil ok
+---@return string|nil reason
+function relay.Fail(request, reason) end
+
+---Takes back a request this mod made: its fn is never called, and the service is told.
+---@param request integer
+---@return true|nil ok
+---@return string|nil reason
+function relay.Cancel(request) end
+
+---wxl.camera. Where the world camera is, and placing it instead of the client. Main thread only.
+---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.camera
+local camera = {}
+
+---Where the world camera is this frame, in world coordinates.
+---@return wxl.Vec3|nil
+---@return string|nil reason
+function camera.Position() end
+
+---The direction the world camera looks, of unit length.
+---@return wxl.Vec3|nil
+---@return string|nil reason
+function camera.Forward() end
+
+---The direction the top of the screen is, of unit length.
+---@return wxl.Vec3|nil
+---@return string|nil reason
+function camera.Up() end
+
+---The field of view the world camera draws with, in radians.
+---@return number|nil
+---@return string|nil reason
+function camera.Fov() end
+
+---The point the client's camera turns around: the followed object's position at the height the client looks from.
+---@return wxl.Vec3|nil
+---@return string|nil reason
+function camera.Pivot() end
+
+---Whether a cinematic or a model camera of the client's has the view; a view set by a mod waits for it to end.
+---@return boolean|nil
+---@return string|nil reason
+function camera.Cinematic() end
+
+---Places the world camera from now on, for this mod: where it is, the direction it looks, and
+---the field of view in radians, 0 to keep the client's. Set again each frame from OnCameraUpdate
+---to move it with the frame. It stays until ReleaseView, or until the mod is disabled, reloads
+---or unloads; when two mods set one, the later is applied and the earlier comes back after it.
+---@param position wxl.Vec3
+---@param forward wxl.Vec3
+---@param fov number
+---@return true|nil ok
+---@return string|nil reason
+function camera.SetView(position, forward, fov) end
+
+---Gives the world camera this mod placed back to the client; nil, "not_found" when it holds none.
+---@return true|nil ok
+---@return string|nil reason
+function camera.ReleaseView() end
+
+---Came with abi 0.1.29: a mod whose mod.json asks for an older abi cannot use it.
+---Places the world camera as SetView does, turned around the direction it looks by `roll`
+---radians, positive to the camera's right (the top of the screen leans right); 0 is SetView's
+---picture. The game's picking under the pointer turns with it; the interface does not.
+---@param position wxl.Vec3
+---@param forward wxl.Vec3
+---@param fov number
+---@param roll number
+---@return true|nil ok
+---@return string|nil reason
+function camera.SetViewRolled(position, forward, fov, roll) end
+
+---Came with abi 0.1.29: a mod whose mod.json asks for an older abi cannot use it.
+---The roll the world camera draws with this frame, in radians from -pi to pi, positive to its right.
+---@return number|nil
+---@return string|nil reason
+function camera.Roll() end
+
+---wxl.input. The pointer, for a mod that steers with the mouse: captured at the centre of the window, or free. Main thread only.
+---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.input
+local input = {}
+
+---Hides the pointer and holds it at the centre of the window (true), where the game still picks
+---and clicks, or lets this mod's hold go (false). Held while any mod holds it, and let go when
+---the mod is disabled, reloads or unloads. The motion arrives as OnMouseMotion.
+---@param captured boolean
+---@return true|nil ok
+---@return string|nil reason
+function input.CaptureCursor(captured) end
+
+---Whether some mod holds the pointer.
+---@return boolean|nil
+---@return string|nil reason
+function input.CursorCaptured() end
+
+---Whether the pointer is over the world rather than a frame of the interface.
+---@return boolean|nil
+---@return string|nil reason
+function input.PointerOverWorld() end
+
+---Came with abi 0.1.25: a mod whose mod.json asks for an older abi cannot use it.
+---Keeps the game out of its own mouse look (true): a held mouse button turns nothing and hides
+---nothing, a click still selects or acts; false gives this mod's block back. Kept while any mod
+---blocks it, and given back when the mod is disabled, reloads or unloads.
+---@param blocked boolean
+---@return true|nil ok
+---@return string|nil reason
+function input.BlockMouseLook(blocked) end
+
+---Came with abi 0.1.25: a mod whose mod.json asks for an older abi cannot use it.
+---Whether some mod keeps the game out of its mouse look.
+---@return boolean|nil
+---@return string|nil reason
+function input.MouseLookBlocked() end
+
+---Came with abi 0.1.29: a mod whose mod.json asks for an older abi cannot use it.
+---Hides the pointer and holds it at a point of the window, where the game picks and clicks:
+---x from 0 (left edge) to 1 (right edge), y from 0 (top edge) to 1 (bottom edge), (0.5, 0.5)
+---the centre. A mod holding it already moves its hold there; of several mods, the last to
+---capture or move it has its point. Let go as CaptureCursor(false) does.
+---@param x number
+---@param y number
+---@return true|nil ok
+---@return string|nil reason
+function input.CaptureCursorAt(x, y) end
+
+---Came with abi 0.1.29: a mod whose mod.json asks for an older abi cannot use it.
+---Where the captured pointer is held: x from the left, y from the top, 0 to 1, z 0; not_found when no mod holds it.
+---@return wxl.Vec3|nil
+---@return string|nil reason
+function input.CapturePoint() end
+
+---wxl.world. Questions about the world's geometry. Main thread only.
+---Came with abi 0.1.24: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.world
+local world = {}
+
+---The first point of the world's geometry (ground, buildings, doodads) between two points, or nil when the way is clear; flags is the client's hit-test mask, the camera's when left out.
+---@param start wxl.Vec3
+---@param finish wxl.Vec3
+---@param flags? integer 0 when left out
+---@return wxl.Vec3|nil
+---@return string|nil reason
+function world.Trace(start, finish, flags) end
+
+---wxl.pose. A unit's head turned by a mod, over its animation. Main thread only.
+---Came with abi 0.1.25: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.pose
+local pose = {}
+
+---Turns a unit's head from where its body faces, in radians (yaw positive to its left, pitch
+---positive up), reached over `smoothing` seconds for half the way, and holds it until
+---ReleaseHead, or until the mod is disabled, reloads or unloads.
+---@param unit wxl.Object
+---@param yaw number
+---@param pitch number
+---@param smoothing number
+---@return true|nil ok
+---@return string|nil reason
+function pose.Head(unit, yaw, pitch, smoothing) end
+
+---Gives a unit's head this mod turned back to its animation; nil, "not_found" for one it does not hold.
+---@param unit wxl.Object
+---@return true|nil ok
+---@return string|nil reason
+function pose.ReleaseHead(unit) end
+
+---wxl.highlight. A world object outlined and lit by a glow, where it is seen, never through a wall. Main thread only.
+---Came with abi 0.1.27: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.highlight
+local highlight = {}
+
+---Whether this runtime draws highlights on the device it runs now.
+---@return boolean|nil
+---@return string|nil reason
+function highlight.Supported() end
+
+---Why highlights are not drawn, in a sentence for a log; empty when they are.
+---@return string|nil
+---@return string|nil reason
+function highlight.UnsupportedReason() end
+
+---Highlights an object until cleared, where it is seen and never through a wall: a sharp outline
+---`outline` pixels wide (up to 16) and a glow fading over `glow` pixels (up to 64), `glow_strength`
+---(0 to 1) bright, both in `color` (0xRRGGBB); 0 for none. Pixels of a 1080-line picture, drawn in
+---proportion at any height. Called again, it changes the style.
+---Kept until Clear, ClearAll, the object leaving view, or the mod disabled, reloaded or unloaded;
+---nil, "unsupported" where this runtime does not draw highlights (see UnsupportedReason).
+---@param target wxl.Object
+---@param color integer
+---@param outline number
+---@param glow number
+---@param glow_strength number
+---@return true|nil ok
+---@return string|nil reason
+function highlight.Set(target, color, outline, glow, glow_strength) end
+
+---Takes this mod's highlight off an object; nil, "not_found" for one it does not hold.
+---@param target wxl.Object
+---@return true|nil ok
+---@return string|nil reason
+function highlight.Clear(target) end
+
+---Takes off every highlight of this mod.
+function highlight.ClearAll() end
+
+---How many batches of highlighted objects the last frame with highlights drew again.
+---@return integer|nil
+---@return string|nil reason
+function highlight.Drawn() end
+
+---wxl.selectioncircle. The circles the game draws on the ground under its target, its pet's target and the move marker, hidden or drawn in another texture, colour or size. Main thread only.
+---Came with abi 0.1.28: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.selectioncircle
+local selectioncircle = {}
+
+---Hides the game's circles of these kinds drawn for units of these reactions.
+---`kinds`: nil or "all", "target", "pet_target", "move_marker", a list of them, or a mask (1, 2, 4).
+---`reactions`, of the unit the circle is drawn for: nil for all, "hated" to "exalted", "none" (no
+---unit, or no reaction read), a list of them, or a mask (bit 0 hated ... bit 7 exalted, bit 8 none).
+---Kept until reset, or until the mod is disabled, reloads or unloads; an object's own look before
+---its kind's, the last set winning among mods.
+---@param kinds? string|string[]|integer
+---@param reactions? string|string[]|integer
+---@return true|nil ok
+---@return string|nil reason
+function selectioncircle.Hide(kinds, reactions) end
+
+---Draws the game's circles of these kinds, for units of these reactions, in another look.
+---`kinds`: nil or "all", "target", "pet_target", "move_marker", a list of them, or a mask (1, 2, 4).
+---`reactions`, of the unit the circle is drawn for: nil for all, "hated" to "exalted", "none" (no
+---unit, or no reaction read), a list of them, or a mask (bit 0 hated ... bit 7 exalted, bit 8 none).
+---`style`: a table {texture = path of a BLP added onto the ground like the game's (black is nothing),
+---color = 0xAARRGGBB, scale = size against the game's (up to 8)}; each left out keeps the game's.
+---Kept until reset, or until the mod is disabled, reloads or unloads; an object's own look before
+---its kind's, the last set winning among mods.
+---@param kinds? string|string[]|integer
+---@param reactions? string|string[]|integer
+---@param style {texture: string?, color: integer?, scale: number?}
+---@return true|nil ok
+---@return string|nil reason
+function selectioncircle.SetStyle(kinds, reactions, style) end
+
+---Gives the circles of these kinds and reactions back the game's look, as far as this mod changed it.
+---`kinds`: nil or "all", "target", "pet_target", "move_marker", a list of them, or a mask (1, 2, 4).
+---`reactions`, of the unit the circle is drawn for: nil for all, "hated" to "exalted", "none" (no
+---unit, or no reaction read), a list of them, or a mask (bit 0 hated ... bit 7 exalted, bit 8 none).
+---@param kinds? string|string[]|integer
+---@param reactions? string|string[]|integer
+---@return true|nil ok
+---@return string|nil reason
+function selectioncircle.Reset(kinds, reactions) end
+
+---Hides every circle the game draws for an object: as the target, as the pet's target, or the
+---move marker of the unit moving.
+---Kept until reset, or until the mod is disabled, reloads or unloads; an object's own look before
+---its kind's, the last set winning among mods.
+---@param target wxl.Object
+---@return true|nil ok
+---@return string|nil reason
+function selectioncircle.HideObject(target) end
+
+---Draws every circle the game draws for an object in another look.
+---`style`: a table {texture = path of a BLP added onto the ground like the game's (black is nothing),
+---color = 0xAARRGGBB, scale = size against the game's (up to 8)}; each left out keeps the game's.
+---Kept until reset, or until the mod is disabled, reloads or unloads; an object's own look before
+---its kind's, the last set winning among mods.
+---@param target wxl.Object
+---@param style {texture: string?, color: integer?, scale: number?}
+---@return true|nil ok
+---@return string|nil reason
+function selectioncircle.SetObjectStyle(target, style) end
+
+---Gives an object's circles back the look of their kind; nil, "not_found" for one this mod did
+---not change.
+---@param target wxl.Object
+---@return true|nil ok
+---@return string|nil reason
+function selectioncircle.ResetObject(target) end
+
+---Gives back everything this mod changed on the game's circles.
+function selectioncircle.ResetAll() end
+
+---How many circles the last world frame drew.
+---@return integer|nil
+---@return string|nil reason
+function selectioncircle.Drawn() end
+
+---How many circles the last world frame left out because a mod hid them.
+---@return integer|nil
+---@return string|nil reason
+function selectioncircle.Hidden() end
+
+---wxl.texture. Textures made from an SVG (drawn at the size asked, its groups recoloured, outlined or hidden) or a PNG, under a path the client loads like its own files.
+---Came with abi 0.1.30: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.texture
+local texture = {}
+
+---Makes a texture of an SVG or a PNG, which the client loads by the path answered, like its
+---own files (Texture:SetTexture in an add-on, a model's texture). An SVG is drawn at `width` x
+---`height` pixels, sharp, its proportions kept; a PNG is resampled to that size (nil: the
+---source's own). The texture's edges are powers of two, the picture at its top-left corner: show
+---it with SetTexCoord(0, right, 0, bottom) on a region of the picture's size. The same source,
+---size, groups and tint answer the same path, made once; a change to the file makes a new one.
+---`source`: ".\\assets\\x.svg" in this mod's folder, "Mods\\<folder>\\..." in another mod's,
+---or a name the client has ("Interface\\AddOns\\<add-on>\\x.svg").
+---`groups` (SVG): by the id of a shape or of its nearest group with one, a colour ("rrggbbaa",
+---"rrggbb" or 0xAARRGGBB: every paint, its alpha their opacity), false to hide it, or a table
+---{color, width = the strokes' width times the SVG's own (2: twice, 0: none), visible}.
+---`tint`: a colour every pixel is multiplied by.
+---@param source string
+---@param width? integer
+---@param height? integer
+---@param groups? table<string, string|integer|boolean|{color: string|integer?, width: number?, visible: boolean?}>
+---@param tint? string|integer
+---@return string|nil path
+---@return number|string right the picture's right texture coordinate, or why there is none
+---@return number bottom
+---@return integer texture_width
+---@return integer texture_height
+function texture.Make(source, width, height, groups, tint) end
+
+---What the service holds: textures (names known), resident (in memory), texture_limit, bytes,
+---byte_limit, made, reused, released.
+---@return {textures: integer, resident: integer, texture_limit: integer, bytes: integer, byte_limit: integer, made: integer, reused: integer, released: integer}|nil stats
+---@return string|nil reason
+function texture.Stats() end
+
+---wxl.cvar. Console variables: settings a mod registers where the game keeps its own, read and set by the console and the interface's GetCVar and SetCVar, saved with the client's. Main thread only.
+---Came with abi 0.1.31: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.cvar
+local cvar = {}
+
+---Registers a console variable for this mod: the console, the interface's GetCVar and SetCVar
+---and every mod read and set it, and the client saves it with its own. It keeps a value the
+---client saved for it; a new one starts at `default`. Registering it again updates its flags
+---and the default Reset uses. Held by this mod until Release, or until the mod is disabled,
+---reloads or unloads (the variable stays); another mod's name, or the client's own, is refused.
+---`flags`: nil (a variable of the session), or "saved" (Config.wtf), "account", "character",
+---"read_only" (the console and the interface cannot set it), "latched" (a set waits for the next
+---start, with "saved"), "protected" (SetCVar only from secure code), "hidden" (the interface
+---does not see it), a list of them, or a mask (1, 2, 4, 8, 16, 32, 64).
+---@param name string any name without spaces or quotes, up to 63 characters; start it with your mod's prefix
+---@param default string|number|boolean
+---@param flags? string|string[]|integer
+---@param help? string a line for the console's help
+---@return true|nil ok
+---@return string|nil reason
+function cvar.Register(name, default, flags, help) end
+
+---Gives up a variable this mod registered: it stays, with its value, until the client ends, and
+---any mod may register it again; nil, "not_found" for one this mod does not hold.
+---@param name string
+---@return true|nil ok
+---@return string|nil reason
+function cvar.Release(name) end
+
+---The numbers a variable of this mod accepts, min to max included; any other set is refused from everywhere. 0, 0 lifts it.
+---@param name string
+---@param min number
+---@param max number
+---@return true|nil ok
+---@return string|nil reason
+function cvar.SetRange(name, min, max) end
+
+---Whether a variable of this name is registered, by the client, the interface or a mod.
+---@param name string
+---@return boolean|nil
+---@return string|nil reason
+function cvar.Exists(name) end
+
+---A variable's value as text.
+---@param name string
+---@return string|nil
+---@return string|nil reason
+function cvar.Get(name) end
+
+---A variable's value as a number; nil, "invalid" when it is not one.
+---@param name string
+---@return number|nil
+---@return string|nil reason
+function cvar.GetNumber(name) end
+
+---A variable's value as a switch, read as GetCVarBool reads it.
+---@param name string
+---@return boolean|nil
+---@return string|nil reason
+function cvar.GetBool(name) end
+
+---The value a variable was registered with.
+---@param name string
+---@return string|nil
+---@return string|nil reason
+function cvar.GetDefault(name) end
+
+---Gives a variable a value, as the console would; CVarChanged follows.
+---@param name string
+---@param value string
+---@return true|nil ok
+---@return string|nil reason
+function cvar.Set(name, value) end
+
+---Gives a variable a number.
+---@param name string
+---@param value number
+---@return true|nil ok
+---@return string|nil reason
+function cvar.SetNumber(name, value) end
+
+---Gives a variable a switch, written "1" or "0".
+---@param name string
+---@param value boolean
+---@return true|nil ok
+---@return string|nil reason
+function cvar.SetBool(name, value) end
+
+---Gives a variable its default back.
+---@param name string
+---@return true|nil ok
+---@return string|nil reason
+function cvar.Reset(name) end
+
+---What a variable is: a mask of the flags (saved 1, account 2, character 4, read_only 8, latched 16, protected 32, hidden 64, client 256, interface 512, mod 1024, pending 2048).
+---@param name string
+---@return integer|nil
+---@return string|nil reason
+function cvar.Flags(name) end
+
+---wxl.render. Drawing into the client's frame on the Vulkan renderer: images, buffers and pipelines of the mod's own, its passes at the points of the frame, the client's model batches drawn again. Main thread only.
+---Came with abi 0.1.33: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.render
+local render = {}
+
+---Whether the client draws through a device this service drives: the Vulkan renderer.
+---@return boolean|nil
+---@return string|nil reason
+function render.Supported() end
+
+---Why it does not, in a sentence for a log; empty when it does.
+---@return string|nil
+---@return string|nil reason
+function render.UnsupportedReason() end
+
+---An image of a size, a format (1 rgba8, 2 bgra8 the frame's, 3 r8, 4 rg8, 5 r16f, 6 rg16f, 7 rgba16f, 8 r32f, 9 rgba32f, 10 depth32f) and samples per pixel (0: the frame's own, 1 for one), a render target and a texture.
+---@param width integer
+---@param height integer
+---@param format integer
+---@param samples integer
+---@return wxl.Image|nil
+---@return string|nil reason
+function render.CreateImage(width, height, format, samples) end
+
+---An image of the frame's size divided by divisor (1 the full size), format and samples as CreateImage's, made again when the frame's size changes.
+---@param divisor integer
+---@param format integer
+---@param samples integer
+---@return wxl.Image|nil
+---@return string|nil reason
+function render.CreateScreenImage(divisor, format, samples) end
+
+---A buffer of size bytes, read by a program through its address, or as a draw's 32-bit indices.
+---@param size integer
+---@return wxl.Buffer|nil
+---@return string|nil reason
+function render.CreateBuffer(size) end
+
+---The index in the bindless table of a sampler: SAMPLER_LINEAR, SAMPLER_WRAP and SAMPLER_MIPS added together, 0 for nearest and clamped.
+---@param flags integer
+---@return integer|nil
+---@return string|nil reason
+function render.Sampler(flags) end
+
+---A pipeline of the mod's SPIR-V and the state it draws with, compiled now; nil and why when the
+---device refuses it. `vertex`/`fragment`: SPIR-V bytes, or the path of a .spv file of the mod's
+---folder. `kind`: "graphics" (vertex and fragment, vertices read from buffers), "fullscreen"
+---(fragment over the pass, `uv` at location 0), "batch" (fragment behind a client batch),
+---"compute" (`compute` alone, run by Dispatch; abi 0.1.34).
+---`colors`: formats ("rgba8", "bgra8" the frame's, "r8", "rg8", "r16f", "rg16f",
+---"rgba16f", "r32f", "rgba32f"), the frame's by default. `depth`: "depth32f" or nil.
+---`samples`: 0 the frame's, 1, 2, 4, 8. `blend`: "none", "alpha", "add", "premultiplied",
+---"multiply", one or one per colour. `depth_test`: "off", "less", "less_equal", "equal",
+---"greater", "greater_equal", "always". `cull`: "none", "back", "front", "batch".
+---`topology`: "triangles", "triangle_strip", "lines", "points".
+---@param desc {kind: string?, name: string?, vertex: string?, fragment: string?, compute: string?, colors: string|string[]?, depth: string?, samples: integer?, blend: string|string[]?, depth_test: string?, depth_write: boolean?, cull: string?, topology: string?}
+---@return wxl.Pipeline|nil pipeline
+---@return string|nil reason
+function render.CreatePipeline(desc) end
+
+---Opens a pass inside OnRenderPoint: what the draws until End go into. `colors`: Images,
+---"scene_color" (the frame's colour), or {image, clear = {r, g, b, a}}; `depth`: an Image,
+---"scene_depth" (the frame's depth), or {image, clear = z}. Every attachment has one size.
+---@param pass {colors: (wxl.Image|string|table)[]?, depth: wxl.Image|string|table|nil}
+---@return true|nil ok
+---@return string|nil reason
+function render.Begin(pass) end
+
+---Closes the pass; the frame goes on.
+function render.End() end
+
+---Draws `vertex_count` vertices `instance_count` times (1 when nil) with a graphics pipeline.
+---`push`: a table of numbers (each a 32-bit float) or a string of bytes, up to 128 bytes; nil for none.
+---@param pipeline wxl.Pipeline
+---@param vertex_count integer
+---@param instance_count? integer
+---@param push? number[]|string
+---@return true|nil ok
+---@return string|nil reason
+function render.Draw(pipeline, vertex_count, instance_count, push) end
+
+---Draws `index_count` 32-bit indices of a buffer from `first_index`, `instance_count` times.
+---`push`: a table of numbers (each a 32-bit float) or a string of bytes, up to 128 bytes; nil for none.
+---@param pipeline wxl.Pipeline
+---@param indices wxl.Buffer
+---@param first_index integer
+---@param index_count integer
+---@param instance_count? integer
+---@param push? number[]|string
+---@return true|nil ok
+---@return string|nil reason
+function render.DrawIndexed(pipeline, indices, first_index, index_count, instance_count, push) end
+
+---Draws a fullscreen pipeline over the pass.
+---`push`: a table of numbers (each a 32-bit float) or a string of bytes, up to 128 bytes; nil for none.
+---@param pipeline wxl.Pipeline
+---@param push? number[]|string
+---@return true|nil ok
+---@return string|nil reason
+function render.Fullscreen(pipeline, push) end
+
+---Draws a client batch (OnModelBatchDrawn's `batch`, or one KeepBatch answered) again with a batch
+---pipeline, into the open pass. `constants`: as Draw's push, up to 4096 bytes, read at pc.pixelRegs.
+---@param batch lightuserdata
+---@param pipeline wxl.Pipeline
+---@param constants? number[]|string
+---@return true|nil ok
+---@return string|nil reason
+function render.DrawBatch(batch, pipeline, constants) end
+
+---A copy of ModelBatchDrawn's batch, to draw later in the same frame; nil when none can be kept.
+---@param batch lightuserdata|wxl.Model an address an event or a call handed you
+---@return lightuserdata|nil address
+---@return string|nil reason
+function render.KeepBatch(batch) end
+
+---The frame's colour as drawn so far, copied into a texture: its index in the bindless table, inside RenderPoint.
+---@return integer|nil
+---@return string|nil reason
+function render.SceneColorSlot() end
+
+---The frame's depth as drawn so far, as a one-channel texture: its index in the bindless table, inside RenderPoint.
+---@return integer|nil
+---@return string|nil reason
+function render.SceneDepthSlot() end
+
+---Gives the client's shaders named `name` (or starting with it) the mod's SPIR-V for `stage` (0 vertex,
+---1 pixel): bytes, or a .spv file of the mod's folder. Kept until RestoreShader, or until the mod is
+---disabled, reloads or unloads; the last Lua mod to replace a name holds it.
+---@param name string
+---@param stage integer
+---@param spirv string
+---@return true|nil ok
+---@return string|nil reason
+function render.ReplaceShader(name, stage, spirv) end
+
+---Gives a shader this mod replaced its own program back; nil, "not_found" for one it did not replace.
+---@param name string
+---@param stage integer
+---@return true|nil ok
+---@return string|nil reason
+function render.RestoreShader(name, stage) end
+
+---Came with abi 0.1.34: a mod whose mod.json asks for an older abi cannot use it.
+---Runs a compute pipeline over x * y * z workgroups inside OnRenderPoint, outside a pass: the
+---frame's drawing stops for it. What it writes through buffer addresses is seen after it.
+---`push`: a table of numbers (each a 32-bit float) or a string of bytes, up to 128 bytes; nil for none.
+---@param pipeline wxl.Pipeline
+---@param x integer
+---@param y integer
+---@param z integer
+---@param push? number[]|string
+---@return true|nil ok
+---@return string|nil reason
+function render.Dispatch(pipeline, x, y, z, push) end
+
+---Came with abi 0.1.34: a mod whose mod.json asks for an older abi cannot use it.
+---Writes matrices into the open frame and answers their address on the GPU, read until the frame
+---ends: a table of numbers, 12 a matrix (three rows of four), or a string of bytes, 48 a matrix.
+---No bound on their count but 16 MiB at once. The address goes into a program's push constants
+---as two 32-bit words, low first (a string of bytes).
+---@param matrices number[]|string
+---@return number|nil address
+---@return string|nil reason
+function render.BonePalette(matrices) end
+
+---wxl.terrain. The ground of the map the player is on: its height, rays against it, its grid, and its vertices set to other heights, which the client then draws, walks on and collides with. Main thread only.
+---Came with abi 0.1.35: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.terrain
+local terrain = {}
+
+---The ground's height under a point, on the triangle the client walks on; nil where there is no ground (a hole, a chunk not loaded). original true: before any mod's edit.
+---@param x number
+---@param y number
+---@param original? boolean
+---@return number|nil
+---@return string|nil reason
+function terrain.Height(x, y, original) end
+
+---Whether there is ground under a point: "ground", "hole", "not_loaded" or "none" (off the map, out of the world, a map without terrain).
+---@param x number
+---@param y number
+---@return wxl.TerrainPresence|integer|nil
+---@return string|nil reason
+function terrain.Presence(x, y) end
+
+---The first point where the segment from `start` to `finish` meets the loaded ground, holes let
+---through: the point, the unit normal of the triangle met (facing up), its chunk, and how far
+---along the segment (0 to 1). nil when it meets none.
+---@param start {x: number, y: number, z: number}
+---@param finish {x: number, y: number, z: number}
+---@return {point: {x: number, y: number, z: number}, normal: {x: number, y: number, z: number}, chunk_x: integer, chunk_y: integer, fraction: number}|nil hit
+function terrain.Trace(start, finish) end
+
+---Where a point is on the grid: its chunk (column and row on the map, 0-1023), its cell in the
+---chunk (0-7, the row along world x), the chunk's vertex nearest to it (0-144), and whether the
+---chunk is loaded. nil off the map.
+---@param x number
+---@param y number
+---@return {chunk_x: integer, chunk_y: integer, cell_row: integer, cell_col: integer, nearest: integer, loaded: boolean}|nil place
+function terrain.Locate(x, y) end
+
+---The world positions of a loaded chunk's 145 vertices, in index order (index i at [i + 1]):
+---rows of 9 outer vertices, each but the last followed by a row of 8 inner ones. nil,
+---"not_found" when the chunk is not loaded. `original` true: the heights before any mod's edit.
+---@param chunk_x integer
+---@param chunk_y integer
+---@param original? boolean
+---@return {x: number, y: number, z: number}[]|nil vertices
+---@return string|nil reason
+function terrain.Vertices(chunk_x, chunk_y, original) end
+
+---Sets vertices to absolute world heights, all or none: the ground drawn, the walking, the
+---falling, the camera and the client's clicks follow. A vertex on a chunk's edge is set in
+---its neighbour too. Held by this mod until Reset, ResetAll, or until the mod is disabled,
+---reloads or unloads; kept while the chunk is away and put back when it loads; dropped with
+---the map. nil, "invalid" for an entry off the grid (logged, nothing set); nil,
+---"unsupported" out of the world or on a map without terrain.
+---@param heights {chunk_x: integer, chunk_y: integer, index: integer, height: number}[]
+---@return true|nil ok
+---@return string|nil reason
+function terrain.SetHeights(heights) end
+
+---Takes this mod's edits off a chunk (and off its edge vertices' copies in its neighbours): the
+---original heights come back, or another mod's edits where it has some. nil, "not_found" when
+---this mod has none there.
+---@param chunk_x integer
+---@param chunk_y integer
+---@return true|nil ok
+---@return string|nil reason
+function terrain.Reset(chunk_x, chunk_y) end
+
+---Takes every edit of this mod off. nil, "not_found" when it has none.
+---@return true|nil ok
+---@return string|nil reason
+function terrain.ResetAll() end
+
+---What the service holds and what its last edit cost: edited_chunks, edited_vertices, edits,
+---reapplied (chunks given their edits back as they loaded), last_vertices, last_chunks,
+---last_microseconds, max_microseconds.
+---@return {edited_chunks: integer, edited_vertices: integer, edits: integer, reapplied: integer, last_vertices: integer, last_chunks: integer, last_microseconds: integer, max_microseconds: integer}|nil stats
+---@return string|nil reason
+function terrain.Stats() end
+
+---Every vertex within `radius` yards (0 to 128) of a point, each once whichever chunks it is on:
+---its chunk and index (ready for SetHeights, which writes a vertex on a chunk's edge into every
+---chunk holding it), its place, its height now and before any edit, whether it is an inner
+---vertex, and whether its chunk is loaded (the heights are 0 when it is not). An empty list
+---off the map or for a radius out of range.
+---@param x number
+---@param y number
+---@param radius number
+---@return {chunk_x: integer, chunk_y: integer, index: integer, x: number, y: number, z: number, original_z: number, inner: boolean, loaded: boolean}[] vertices
+function terrain.VerticesIn(x, y, radius) end
+
+---wxl.draw. Shapes drawn in the world: lines, shapes lying on the ground, volumes; for a frame, or kept, or following an object. Main thread only.
+---Came with abi 0.1.36: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.draw
+local draw = {}
+
+---Whether this runtime draws shapes on the device it runs now.
+---@return boolean|nil
+---@return string|nil reason
+function draw.Supported() end
+
+---Why shapes are not drawn, in a sentence for a log; empty when they are.
+---@return string|nil
+---@return string|nil reason
+function draw.UnsupportedReason() end
+
+---Draws a shape in the next frame of the world only: call it each frame for what follows the
+---frame. nil, "invalid" for a shape refused (logged under `draw`, saying why).
+---`shape.kind` says which fields it reads: line `points` (`closed`, `on_ground`); circle `center`, `radius`;
+---ring and `inner`; sector and `facing`, `angle` (radians), `inner`; rectangle `center`, `size` (x along
+---`facing`, y across); polygon `points`; grid `center`, `size`, `spacing`, `facing`; box `center`, `size`,
+---`facing`, `pitch`, `roll`; sphere `center`, `radius`; cylinder `center`, `radius`, `size.z` (its height).
+---Points are offsets from `center` (nil: world coordinates). Ground shapes follow the ground; `flat` keeps
+---them at `center.z`. `style.color` 0xRRGGBB; `alpha` the lines' opacity, `fill_alpha` the inside's;
+---`width` pixels at 1080 lines; `depth` "tested" (hidden behind walls) or "on_top"; `pulse` seconds a beat.
+---Since abi 0.1.38: `softness` fades the lines' edges (pixels); `alpha_start`, `alpha_end` (and the shape's
+---`alphas`, one per point) fade a line along its length; `shadow_alpha` draws a shadow under the lines
+---(`shadow_color`, `shadow_offset` {x, y} pixels right and down, 1.5 by default, `shadow_softness`).
+---A ground shape's inside takes a `texture` (a BLP path, or {path, right, bottom} as wxl.texture.Make
+---answers), laid by `uv` "fit", "tile" or "world" (`uv_size`, `uv_rotation`, `uv_offset`), tinted by
+---`fill_color` (or `color`) and `fill_alpha`, put on the ground by `blend` "alpha", "add" or "modulate",
+---faded at its border over `feather` yards and from its centre by `radial_fade` (0 to 1).
+---Since abi 0.1.39: a box's faces and a cylinder's side and ends take the same look, each face in its own
+---frame; `occluded_alpha` (0 to 1) draws what the scene hides of the shape at that part of its opacity.
+---Since abi 0.1.40: `mask = true` takes only the texture's opacity, the colour being the style's;
+---`texture_blur` blurs the picture, a step halving its detail. A "beam" (its 2 `points`, `widths` at
+---each end, `alphas` its opacity at each end) faces the camera around its axis, drawn with `fill_alpha`.
+---@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder"|"beam", widths: number|number[]?, center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
+---@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?, occluded_alpha: number?, mask: boolean?, texture_blur: number?}
+---@return true|nil ok
+---@return string|nil reason
+function draw.Draw(shape, style) end
+
+---Keeps a shape until removed (shape:Remove()), or for `duration` seconds; it goes when this mod
+---unloads. `style.fade_in` and `fade_out` bring it in and take it out over the end of its duration.
+---`shape.kind` says which fields it reads: line `points` (`closed`, `on_ground`); circle `center`, `radius`;
+---ring and `inner`; sector and `facing`, `angle` (radians), `inner`; rectangle `center`, `size` (x along
+---`facing`, y across); polygon `points`; grid `center`, `size`, `spacing`, `facing`; box `center`, `size`,
+---`facing`, `pitch`, `roll`; sphere `center`, `radius`; cylinder `center`, `radius`, `size.z` (its height).
+---Points are offsets from `center` (nil: world coordinates). Ground shapes follow the ground; `flat` keeps
+---them at `center.z`. `style.color` 0xRRGGBB; `alpha` the lines' opacity, `fill_alpha` the inside's;
+---`width` pixels at 1080 lines; `depth` "tested" (hidden behind walls) or "on_top"; `pulse` seconds a beat.
+---Since abi 0.1.38: `softness` fades the lines' edges (pixels); `alpha_start`, `alpha_end` (and the shape's
+---`alphas`, one per point) fade a line along its length; `shadow_alpha` draws a shadow under the lines
+---(`shadow_color`, `shadow_offset` {x, y} pixels right and down, 1.5 by default, `shadow_softness`).
+---A ground shape's inside takes a `texture` (a BLP path, or {path, right, bottom} as wxl.texture.Make
+---answers), laid by `uv` "fit", "tile" or "world" (`uv_size`, `uv_rotation`, `uv_offset`), tinted by
+---`fill_color` (or `color`) and `fill_alpha`, put on the ground by `blend` "alpha", "add" or "modulate",
+---faded at its border over `feather` yards and from its centre by `radial_fade` (0 to 1).
+---Since abi 0.1.39: a box's faces and a cylinder's side and ends take the same look, each face in its own
+---frame; `occluded_alpha` (0 to 1) draws what the scene hides of the shape at that part of its opacity.
+---Since abi 0.1.40: `mask = true` takes only the texture's opacity, the colour being the style's;
+---`texture_blur` blurs the picture, a step halving its detail. A "beam" (its 2 `points`, `widths` at
+---each end, `alphas` its opacity at each end) faces the camera around its axis, drawn with `fill_alpha`.
+---@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder"|"beam", widths: number|number[]?, center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
+---@param style? {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?, occluded_alpha: number?, mask: boolean?, texture_blur: number?}
+---@param duration? number
+---@return wxl.Shape|nil shape
+---@return string|nil reason
+function draw.Add(shape, style, duration) end
+
+---The kept shape becomes another, from a table as Draw's; it stays attached when it is.
+---@param self wxl.Shape
+---@param shape {kind: "line"|"circle"|"ring"|"sector"|"rectangle"|"polygon"|"grid"|"box"|"sphere"|"cylinder"|"beam", widths: number|number[]?, center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}
+---@return true|nil ok
+---@return string|nil reason
+function draw.Update(self, shape) end
+
+---The kept shape's look, from a table as Draw's.
+---@param self wxl.Shape
+---@param style {color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: "tested"|"on_top"?, pulse: number?, fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, texture: string|table?, texture_right: number?, texture_bottom: number?, uv: "fit"|"tile"|"world"?, uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, blend: "alpha"|"add"|"modulate"?, feather: number?, radial_fade: number?, occluded_alpha: number?, mask: boolean?, texture_blur: number?}
+---@return true|nil ok
+---@return string|nil reason
+function draw.SetStyle(self, style) end
+
+---Every shape and emitter this mod keeps goes.
+function draw.Clear() end
+
+---What the last frame of the world drew and what it cost (every mod's shapes).
+---@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer, textured: integer, textures: integer, textures_loading: integer, shadows: integer, occluded: integer, reused: integer, particles: integer, particles_emitted: integer, particles_culled: integer, particle_draws: integer, emitters: integer, particle_microseconds: number}|nil stats
+---@return string|nil reason
+function draw.Stats() end
+
+---Came with abi 0.1.40: a mod whose mod.json asks for an older abi cannot use it.
+---Throws one burst of `emitter.burst` particles and forgets them.
+---Since abi 0.1.40. The emitter: `spawn` ("point", "disc" of extent.x yards, "box" of extent, "segment"
+---to center + extent), a cone along `direction` (up by default) of half angle `spread`; `speed`, `life`, `size`
+---(yards across) and `spin` a number or {min, max}; `gravity` (yards/s^2 down), `drag`, `ground` "bounce"
+---(once, `restitution`, `friction`) or "settle"; `attraction` towards `attractor` (taking them out within
+---`attract_radius`). The look: `mode`, a `texture` (none: a soft round blot), sprite sheet `frames` and
+---`frame_rate`, `blend`, `softness` (yards over which they fade near the ground), up to 4 `keys` of their life.
+---@param emitter {spawn: "point"|"disc"|"box"|"segment"?, center: wxl.Vec3?, extent: wxl.Vec3?, facing: number?, direction: wxl.Vec3?, spread: number?, burst: integer?, rate: number?, duration: number?, speed: number|number[]?, life: number|number[]?, size: number|number[]?, spin: number|number[]?, gravity: number?, drag: number?, ground: "none"|"bounce"|"settle"?, restitution: number?, friction: number?, attractor: wxl.Vec3?, attraction: number?, attract_radius: number?, seed: integer?}
+---@param look? {mode: "camera"|"ground"|"stretched"?, texture: string|table?, frames: number|{x: integer, y: integer}?, frame_rate: number?, blend: "alpha"|"add"|"modulate"?, depth: "tested"|"on_top"?, occluded_alpha: number?, stretch: number?, softness: number?, mask: boolean?, texture_blur: number?, keys: {t: number, size: number?, color: integer?, alpha: number?}[]?}
+---@return true|nil ok
+---@return string|nil reason
+function draw.Emit(emitter, look) end
+
+---Came with abi 0.1.40: a mod whose mod.json asks for an older abi cannot use it.
+---Keeps an emitter: its burst now, then `rate` particles a second for `duration` seconds (nil: until
+---stopped); it goes when this mod unloads.
+---Since abi 0.1.40. The emitter: `spawn` ("point", "disc" of extent.x yards, "box" of extent, "segment"
+---to center + extent), a cone along `direction` (up by default) of half angle `spread`; `speed`, `life`, `size`
+---(yards across) and `spin` a number or {min, max}; `gravity` (yards/s^2 down), `drag`, `ground` "bounce"
+---(once, `restitution`, `friction`) or "settle"; `attraction` towards `attractor` (taking them out within
+---`attract_radius`). The look: `mode`, a `texture` (none: a soft round blot), sprite sheet `frames` and
+---`frame_rate`, `blend`, `softness` (yards over which they fade near the ground), up to 4 `keys` of their life.
+---@param emitter {spawn: "point"|"disc"|"box"|"segment"?, center: wxl.Vec3?, extent: wxl.Vec3?, facing: number?, direction: wxl.Vec3?, spread: number?, burst: integer?, rate: number?, duration: number?, speed: number|number[]?, life: number|number[]?, size: number|number[]?, spin: number|number[]?, gravity: number?, drag: number?, ground: "none"|"bounce"|"settle"?, restitution: number?, friction: number?, attractor: wxl.Vec3?, attraction: number?, attract_radius: number?, seed: integer?}
+---@param look? {mode: "camera"|"ground"|"stretched"?, texture: string|table?, frames: number|{x: integer, y: integer}?, frame_rate: number?, blend: "alpha"|"add"|"modulate"?, depth: "tested"|"on_top"?, occluded_alpha: number?, stretch: number?, softness: number?, mask: boolean?, texture_blur: number?, keys: {t: number, size: number?, color: integer?, alpha: number?}[]?}
+---@return wxl.Emitter|nil emitter
+---@return string|nil reason
+function draw.AddEmitter(emitter, look) end
+
+---Came with abi 0.1.40: a mod whose mod.json asks for an older abi cannot use it.
+---The emitter becomes another, from a table as Emit's; its particles keep how they move.
+---@param self wxl.Emitter
+---@param emitter {spawn: "point"|"disc"|"box"|"segment"?, center: wxl.Vec3?, extent: wxl.Vec3?, facing: number?, direction: wxl.Vec3?, spread: number?, burst: integer?, rate: number?, duration: number?, speed: number|number[]?, life: number|number[]?, size: number|number[]?, spin: number|number[]?, gravity: number?, drag: number?, ground: "none"|"bounce"|"settle"?, restitution: number?, friction: number?, attractor: wxl.Vec3?, attraction: number?, attract_radius: number?, seed: integer?}
+---@return true|nil ok
+---@return string|nil reason
+function draw.UpdateEmitter(self, emitter) end
+
+---Came with abi 0.1.40: a mod whose mod.json asks for an older abi cannot use it.
+---Its particles' look, those alive included, from a table as Emit's.
+---@param self wxl.Emitter
+---@param look {mode: "camera"|"ground"|"stretched"?, texture: string|table?, frames: number|{x: integer, y: integer}?, frame_rate: number?, blend: "alpha"|"add"|"modulate"?, depth: "tested"|"on_top"?, occluded_alpha: number?, stretch: number?, softness: number?, mask: boolean?, texture_blur: number?, keys: {t: number, size: number?, color: integer?, alpha: number?}[]?}
+---@return true|nil ok
+---@return string|nil reason
+function draw.SetEmitterStyle(self, look) end
+
+---wxl.animation. An animation of the game played on a unit through the client's own animation of units, seen on this client only. Main thread only.
+---Came with abi 0.1.37: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.animation
+local animation = {}
+
+---Plays an AnimationData animation on a unit as the game plays an emote, seen on this client only:
+---the whole body standing, the upper body over the legs' run while it moves. `flags`: loop 1 (again
+---at each end until Stop), no_blend 2 (no blend from the pose it leaves), override 4 (a loop played
+---again whenever the game replaced it, death excepted; a one-shot ignores it), exact 8 (no fallback to the model's nearest
+---animation); 0 or nil plays it once, blended, yielding to the game. `speed`: 1 (or nil) its own.
+---Kept until it ends (OnUnitAnimationEnded), Stop, or the mod disabled, reloaded or unloaded; nil,
+---"failed" when the client did not play it (its model loading, the unit dead).
+---@param unit wxl.Object
+---@param anim_id integer
+---@param flags? integer
+---@param speed? number
+---@return true|nil ok
+---@return string|nil reason
+function animation.Play(unit, anim_id, flags, speed) end
+
+---Ends this mod's animation on a unit; the game chooses the unit's animation again at once. nil,
+---"not_found" when this mod plays none on it.
+---@param unit wxl.Object
+---@return true|nil ok
+---@return string|nil reason
+function animation.Stop(unit) end
+
+---The animation a mod plays on a unit, as it was asked for; nil when none.
+---@param unit wxl.Object
+---@return integer|nil
+---@return string|nil reason
+function animation.Playing(unit) end
+
+---The animation the unit's model shows now (its upper body's when it plays one there), whoever chose it.
+---@param unit wxl.Object
+---@return integer|nil
+---@return string|nil reason
+function animation.Current(unit) end
+
+---wxl.net. Messages of the mod's own on the world connection: opcode numbers it claims, receives and sends.
+---Came with abi 0.1.41: a mod whose mod.json asks for an older abi cannot use it.
+---@class wxl.net
+local net = {}
+
+---Where the client is with the world server: "offline", "connecting", "connected" (the
+---socket is up) or "authenticated" (the server accepted the session: messages flow).
+---@return "offline"|"connecting"|"connected"|"authenticated"|nil state
+---@return string|nil reason
+function net.State() end
+
+---Sends a message of a number this mod claimed to the server: `body` is a wxl.net.Writer or a
+---string of bytes, at most MaxSend() bytes. nil, "failed" while not authenticated, and until
+---the server has sent this mod one of its numbers on this connection (Heard()): a server that
+---does not know a number closes the connection. nil, "busy" past 64 messages of a number in a
+---second.
+---@param opcode integer
+---@param body? wxl.net.Writer|string
+---@return true|nil ok
+---@return string|nil reason
+function net.Send(opcode, body) end
+
+---Claims an opcode number for this mod: the server's messages of it stop at the mod (its
+---function, once SetHandler gives one), and the mod may send it. Refused (nil, "invalid", and a
+---line in the log saying why) for a number above 0xFFFF, one of the client's own (up to 0x520)
+---unless mod.json says "net": { "stock": true }, one another mod claimed or declares, or
+---one outside the numbers this mod's mod.json lists in "net": { "opcodes": [...] }.
+---Given back when the mod is disabled, reloads or unloads.
+---@param opcode integer from 0x521
+---@return true|nil ok
+---@return string|nil reason
+function net.Claim(opcode) end
+
+---Gives a claimed number back, its function and its compressed number with it.
+---@param opcode integer
+---@return true|nil ok
+---@return string|nil reason
+function net.Release(opcode) end
+
+---The highest number the client and its servers use, 0x520: a mod's own start above it.
+---@return integer|nil
+---@return string|nil reason
+function net.ReservedOpcodeLimit() end
+
+---Sets the function a claimed number's messages are handed to, on the main thread:
+---`fn(reader, opcode)`, the reader over the message's body. A reader left read past its end
+---is logged once per number as malformed. nil takes the function away; the messages still stop.
+---@param opcode integer
+---@param fn? fun(reader: wxl.net.Reader, opcode: integer)
+---@return true|nil ok
+---@return string|nil reason
+function net.SetHandler(opcode, fn) end
+
+---Makes `compressed`, a second number this mod claimed, the compressed form of `opcode`: its
+---messages are a u32 size and a zlib stream, as the client's own compressed opcodes are; the
+---runtime inflates them and hands them to `opcode`'s function as `opcode` messages. 0 undoes it.
+---@param opcode integer
+---@param compressed integer
+---@return true|nil ok
+---@return string|nil reason
+function net.SetCompressed(opcode, compressed) end
+
+---The largest body Send takes, in bytes.
+---@return integer|nil
+---@return string|nil reason
+function net.MaxSend() end
+
+---The world connection, counted: 0 while there is none, a new number each time one comes up.
+---@return integer|nil
+---@return string|nil reason
+function net.Connection() end
+
+---Whether this mod may send on this connection: the server has sent it one of its numbers
+---since the connection came up.
+---@return boolean heard
+function net.Heard() end
+
+---Compresses a string of bytes into a zlib stream.
+---@param data string the bytes, as a string
+---@return string|nil bytes
+---@return string|nil reason
+function net.Deflate(data) end
+
+---Inflates a zlib stream into the bytes it holds.
+---@param data string the bytes, as a string
+---@return string|nil bytes
+---@return string|nil reason
+function net.Inflate(data) end
+
+---A reader over a string of bytes, as a handler is handed one.
+---@param bytes string
+---@return wxl.net.Reader reader
+function net.Reader(bytes) end
+
+---An empty message body, refusing to grow past MaxSend() bytes, or past `limit`.
+---@param limit? integer
+---@return wxl.net.Writer writer
+function net.Writer(limit) end
+
+---Reads a message's body, little-endian. A read past the end answers 0 ("" for strings) and
+---leaves the reader failed: read the whole message, then check Ok().
+---@class wxl.net.Reader
+local NetReader = {}
+---@return number
+function NetReader:U8() end
+---@return number
+function NetReader:U16() end
+---@return number
+function NetReader:U32() end
+---@return number
+function NetReader:U64() end
+---@return number
+function NetReader:I8() end
+---@return number
+function NetReader:I16() end
+---@return number
+function NetReader:I32() end
+---@return number
+function NetReader:I64() end
+---@return number
+function NetReader:F32() end
+---@return number
+function NetReader:F64() end
+---@return boolean
+function NetReader:Bool() end
+---Eight bytes as a guid, "0x" and sixteen hex digits.
+---@return string
+function NetReader:Guid() end
+---A guid as the server packs one: a mask byte, then the bytes it marks.
+---@return string
+function NetReader:PackedGuid() end
+---Three floats.
+---@return wxl.Vec3
+function NetReader:Vec3() end
+---A string ended by a zero byte, at most `max` bytes before it (4096).
+---@param max? integer
+---@return string
+function NetReader:String(max) end
+---@param count integer
+---@return string
+function NetReader:Bytes(count) end
+---@param count integer
+---@return wxl.net.Reader self
+function NetReader:Skip(count) end
+---@return boolean
+function NetReader:Ok() end
+---Whether every byte was read, and nothing past.
+---@return boolean
+function NetReader:AtEnd() end
+---@return integer
+function NetReader:Remaining() end
+---@return integer
+function NetReader:Position() end
+---@return integer
+function NetReader:Size() end
+---The whole body.
+---@return string
+function NetReader:Data() end
+
+---Writes a message's body, little-endian; each call answers the writer, to chain. A write past
+---the limit is dropped and leaves the writer failed: Send refuses it.
+---@class wxl.net.Writer
+local NetWriter = {}
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:U8(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:U16(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:U32(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:U64(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:I8(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:I16(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:I32(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:I64(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:F32(value) end
+---@param value number
+---@return wxl.net.Writer self
+function NetWriter:F64(value) end
+---@param value boolean
+---@return wxl.net.Writer self
+function NetWriter:Bool(value) end
+---@param guid string|integer
+---@return wxl.net.Writer self
+function NetWriter:Guid(guid) end
+---@param guid string|integer
+---@return wxl.net.Writer self
+function NetWriter:PackedGuid(guid) end
+---@param v wxl.Vec3
+---@return wxl.net.Writer self
+function NetWriter:Vec3(v) end
+---The text and a zero byte.
+---@param text string
+---@return wxl.net.Writer self
+function NetWriter:String(text) end
+---@param bytes string
+---@return wxl.net.Writer self
+function NetWriter:Bytes(bytes) end
+---@return boolean
+function NetWriter:Ok() end
+---@return integer
+function NetWriter:Size() end
+---@return string
+function NetWriter:Data() end
 
 ---@class wxl.ModInfo
 ---@field id string
@@ -3050,6 +4575,22 @@ function object.Unwatch(type, name) end
 ---@field action wxl.action
 ---@field point wxl.point
 ---@field m2 wxl.m2
+---@field gx wxl.gx
+---@field engine wxl.engine
+---@field relay wxl.relay
+---@field camera wxl.camera
+---@field input wxl.input
+---@field world wxl.world
+---@field pose wxl.pose
+---@field highlight wxl.highlight
+---@field selectioncircle wxl.selectioncircle
+---@field texture wxl.texture
+---@field cvar wxl.cvar
+---@field render wxl.render
+---@field terrain wxl.terrain
+---@field draw wxl.draw
+---@field animation wxl.animation
+---@field net wxl.net
 ---@field events table<wxl.Family, string[]> every family's events, as On<Event>
 wxl = {}
 

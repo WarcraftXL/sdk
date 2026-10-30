@@ -23,6 +23,11 @@
 //   message     a line of text on the timeline, at this moment.
 //   frame_mark  marks the end of a frame of a named frame set of the mod's own, drawn beside the
 //               client's frames, which the runtime marks itself at each present.
+//   gpu_zone_begin, gpu_zone_end  (abi 0.1.33) a zone of the GPU's time, around the commands a
+//               mod records inside RenderPoint on the Vulkan renderer (wxl.render, wxl.vk): drawn
+//               on the "Vulkan" GPU timeline beside the frame's own zones, once the GPU has
+//               finished the frame. Nest them, inside one handler: one left open is closed when
+//               the handler returns. Outside a point, or on another device, they do nothing.
 
 #ifndef WXL_SERVICE_PROFILE_H
 #define WXL_SERVICE_PROFILE_H
@@ -72,6 +77,15 @@ typedef struct wxl_profile_api
     /// Ends a frame of a frame set named after the mod's own work; an empty name is refused, as
     /// the client's frames are the runtime's to mark.
     void(WXL_CALL* frame_mark)(wxl_str name);
+
+    // --- abi 0.1.33 ----------------------------------------------------------------------------
+
+    /// Opens a GPU zone named @p name (copied) in the frame's commands, inside RenderPoint.
+    /// WXL_E_UNSUPPORTED on a device without GPU timestamps for mods (Direct3D 9), WXL_E_INVALID
+    /// outside a point; WXL_OK and nothing recorded while no viewer is connected.
+    wxl_result(WXL_CALL* gpu_zone_begin)(wxl_str name);
+    /// Closes the innermost GPU zone the mod opened.
+    void(WXL_CALL* gpu_zone_end)(void);
 } wxl_profile_api;
 
 #ifdef __cplusplus

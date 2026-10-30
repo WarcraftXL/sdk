@@ -55,12 +55,37 @@
 //   bytes_size uint32_t: the length of the bytes before it, which must all be as long
 //   object wxl_handle: a world object; a script passes the object, C++ a wxl::Object
 //   vec3 wxl_vec3: a point; a script passes a table with x, y and z
-//   f32 float  vec3_in const wxl_vec3*  i16_out int16_t*  vec3_out wxl_vec3*: the C parameters as they
-//       are; no script reaches a row taking one of these four but f32
-//   placement const wxl_m2_placement*  bones_filter_fn wxl_m2_bones_filter_fn  bones_fn wxl_m2_bones_fn:
-//       what wxl.m2's world models and bone watchers take; no script reaches them
+//   f32 float: a number
+//   vec3_in const wxl_vec3*: a point, passed by address; a script passes a table with x, y and z,
+//       C++ a wxl_vec3
+//   placement const wxl_m2_placement*: where wxl.m2 puts a model; a script passes a table
+//       {position = {x, y, z}, yaw, pitch, roll, scale}, C++ a wxl_m2_placement
+//   i16_out int16_t*  vec3_out wxl_vec3*  bones_filter_fn wxl_m2_bones_filter_fn
+//   bones_fn wxl_m2_bones_fn: what wxl.m2's bone watchers take; no script reaches them
+//   texture_request const wxl_texture_request*: what wxl.texture makes a texture of; a script
+//       passes the source, the size, a table of groups and a tint, C++ a wxl::TextureRequest
+//   render_pipeline const wxl_render_pipeline_desc*: what wxl.render makes a pipeline of; a
+//       script passes a table (its shim reads the SPIR-V from the mod's folder)
+//   render_pass const wxl_render_pass*: what a wxl.render pass draws into; a script passes a table
+//   terrain_heights (const wxl_terrain_height*, uint32_t count): vertices of wxl.terrain set to
+//       heights; a script passes a list of {chunk_x, chunk_y, index, height}
+//   terrain_layer_provider const wxl_terrain_layer_provider*: what a native mod hands
+//       wxl.terrain's set_layer_provider
+//   terrain_tile_provider const wxl_terrain_tile_provider*: what a native mod hands
+//       wxl.terrain's set_tile_provider
+//   gx_shader_provider const wxl_gx_shader_provider*: what a native mod hands wxl.gx's
+//       set_shader_provider
+//   draw_emitter const wxl_draw_emitter*  draw_particles const wxl_draw_particles*: wxl.draw's
+//       particles, where they come from and how they look; a table each, a wxl::DrawEmitter and a
+//       wxl::DrawParticles
+//   draw_shape const wxl_draw_shape*  draw_style const wxl_draw_style*: what wxl.draw draws and
+//       how it looks; a script passes a table each, C++ a wxl::DrawShape and a wxl::DrawStyle
 //   provider const wxl_asset_provider*  transform const wxl_asset_transform*: what a native
 //       mod hands wxl.storage; no script reaches a row taking one
+//   hash_fn wxl_file_hash_fn  relay_endpoint const wxl_relay_endpoint*
+//   relay_reply wxl_relay_reply_fn: a callback; a script hands a function, which its shim keeps
+//   net_handler wxl_net_handler_fn: what wxl.net hands a claimed number's messages to; a script
+//       hands a function, which its shim keeps
 //   a resource: its ctype
 //   opt<K> the C parameters of K, a parameter a script may leave out: it is then K's zero (0
 //       for a number), which the row's doc says. Every other parameter a script must give, and
@@ -72,7 +97,10 @@
 //   ptr void*, null meaning none: an address of the client's, which a script holds as it is
 //   enumeration<E> uint32_t holding a value of E, an enumeration of enums.def
 //   out<K> wxl_result, K*            found<K> wxl_bool, K*: K a value kind (u64 u32 i32 f64 str
-//       boolean vec3) or a struct kind (m2_item_display: wxl_m2_item_display, written no longer
+//       boolean vec3) or a struct kind (m2_item_display: wxl_m2_item_display, file_hash:
+//       wxl_file_hash, asset_reload: wxl_asset_reload, texture: wxl_texture, texture_stats:
+//       wxl_texture_stats, terrain_hit: wxl_terrain_hit, terrain_place: wxl_terrain_place,
+//       terrain_stats: wxl_terrain_stats, draw_stats: wxl_draw_stats, written no longer
 //       than its struct_size)
 //   whole_bytes wxl_result, (void* buffer, uint64_t capacity, uint64_t* out_read): a buffer
 //       too small is WXL_E_INVALID with out_read set to what it needs
@@ -101,8 +129,25 @@
 #include "wxl/services/profile.h"
 #include "wxl/services/action.h"
 #include "wxl/services/gx.h"
+#include "wxl/services/engine.h"
+#include "wxl/services/camera.h"
+#include "wxl/services/input.h"
+#include "wxl/services/world.h"
+#include "wxl/services/pose.h"
+#include "wxl/services/imgui.h"
+#include "wxl/services/highlight.h"
+#include "wxl/services/selectioncircle.h"
+#include "wxl/services/texture.h"
+#include "wxl/services/cvar.h"
+#include "wxl/services/terrain.h"
+#include "wxl/services/animation.h"
+#include "wxl/services/draw.h"
+#include "wxl/services/render.h"
+#include "wxl/services/vk.h"
 #include "wxl/services/m2.h"
 #include "wxl/services/m2file.h"
+#include "wxl/services/relay.h"
+#include "wxl/services/net.h"
 #include "wxl/objects/object.hpp"
 #include "wxl/services/script.h"
 #include "wxl/services/storage.h"
@@ -141,6 +186,12 @@ namespace wxl::api
         struct provider {};
         struct transform {};
         struct m2_item_display {};
+        struct file_hash {};
+        struct asset_reload {};
+        struct hash_fn {};
+        struct relay_endpoint {};
+        struct relay_reply {};
+        struct net_handler {};
         struct f32 {};
         struct vec3_in {};
         struct i16_out {};
@@ -148,6 +199,23 @@ namespace wxl::api
         struct placement {};
         struct bones_filter_fn {};
         struct bones_fn {};
+        struct texture_request {};
+        struct render_pipeline {};
+        struct render_pass {};
+        struct texture {};
+        struct texture_stats {};
+        struct terrain_hit {};
+        struct terrain_place {};
+        struct terrain_stats {};
+        struct terrain_heights {};
+        struct draw_shape {};
+        struct draw_style {};
+        struct draw_emitter {};
+        struct terrain_layer_provider {};
+        struct terrain_tile_provider {};
+        struct gx_shader_provider {};
+        struct draw_particles {};
+        struct draw_stats {};
         template <class K>
         struct opt {};
 
@@ -213,7 +281,15 @@ namespace wxl::api
     template <> struct Value<kind::boolean> { using type = wxl_bool; };
     template <> struct Value<kind::vec3> { using type = wxl_vec3; };
     template <> struct Value<kind::m2_item_display> { using type = wxl_m2_item_display; };
+    template <> struct Value<kind::file_hash> { using type = wxl_file_hash; };
+    template <> struct Value<kind::asset_reload> { using type = wxl_asset_reload; };
     template <> struct Value<kind::f32> { using type = float; };
+    template <> struct Value<kind::texture> { using type = wxl_texture; };
+    template <> struct Value<kind::texture_stats> { using type = wxl_texture_stats; };
+    template <> struct Value<kind::terrain_hit> { using type = wxl_terrain_hit; };
+    template <> struct Value<kind::terrain_place> { using type = wxl_terrain_place; };
+    template <> struct Value<kind::terrain_stats> { using type = wxl_terrain_stats; };
+    template <> struct Value<kind::draw_stats> { using type = wxl_draw_stats; };
 
     /// The C parameters a parameter kind stands for.
     template <class K, class = void>
@@ -240,6 +316,10 @@ namespace wxl::api
     template <> struct Param<kind::vec3> { using C = List<wxl_vec3>; };
     template <> struct Param<kind::provider> { using C = List<const wxl_asset_provider*>; };
     template <> struct Param<kind::transform> { using C = List<const wxl_asset_transform*>; };
+    template <> struct Param<kind::hash_fn> { using C = List<wxl_file_hash_fn>; };
+    template <> struct Param<kind::relay_endpoint> { using C = List<const wxl_relay_endpoint*>; };
+    template <> struct Param<kind::relay_reply> { using C = List<wxl_relay_reply_fn>; };
+    template <> struct Param<kind::net_handler> { using C = List<wxl_net_handler_fn>; };
     template <> struct Param<kind::f32> { using C = List<float>; };
     template <> struct Param<kind::vec3_in> { using C = List<const wxl_vec3*>; };
     template <> struct Param<kind::i16_out> { using C = List<int16_t*>; };
@@ -247,6 +327,17 @@ namespace wxl::api
     template <> struct Param<kind::placement> { using C = List<const wxl_m2_placement*>; };
     template <> struct Param<kind::bones_filter_fn> { using C = List<wxl_m2_bones_filter_fn>; };
     template <> struct Param<kind::bones_fn> { using C = List<wxl_m2_bones_fn>; };
+    template <> struct Param<kind::texture_request> { using C = List<const wxl_texture_request*>; };
+    template <> struct Param<kind::render_pipeline> { using C = List<const wxl_render_pipeline_desc*>; };
+    template <> struct Param<kind::render_pass> { using C = List<const wxl_render_pass*>; };
+    template <> struct Param<kind::terrain_heights> { using C = List<const wxl_terrain_height*, uint32_t>; };
+    template <> struct Param<kind::draw_shape> { using C = List<const wxl_draw_shape*>; };
+    template <> struct Param<kind::draw_style> { using C = List<const wxl_draw_style*>; };
+    template <> struct Param<kind::draw_emitter> { using C = List<const wxl_draw_emitter*>; };
+    template <> struct Param<kind::terrain_layer_provider> { using C = List<const wxl_terrain_layer_provider*>; };
+    template <> struct Param<kind::terrain_tile_provider> { using C = List<const wxl_terrain_tile_provider*>; };
+    template <> struct Param<kind::gx_shader_provider> { using C = List<const wxl_gx_shader_provider*>; };
+    template <> struct Param<kind::draw_particles> { using C = List<const wxl_draw_particles*>; };
     template <class R>
     struct Param<R, std::enable_if_t<IsResource<R>::value>>
     {
@@ -720,6 +811,26 @@ namespace wxl::api
         static wxl_vec3 ToC(wxl_vec3 value) { return value; }
     };
     template <>
+    struct CxxParam<kind::f32>
+    {
+        using type = float;
+        static float ToC(float value) { return value; }
+    };
+    /// A struct the C member takes by address is a value in C++: the method's own parameter,
+    /// which lives through the call.
+    template <>
+    struct CxxParam<kind::vec3_in>
+    {
+        using type = const wxl_vec3&;
+        static const wxl_vec3* ToC(const wxl_vec3& value) { return &value; }
+    };
+    template <>
+    struct CxxParam<kind::placement>
+    {
+        using type = const wxl_m2_placement&;
+        static const wxl_m2_placement* ToC(const wxl_m2_placement& value) { return &value; }
+    };
+    template <>
     struct CxxParam<kind::ptr>
     {
         using type = void*;
@@ -730,6 +841,55 @@ namespace wxl::api
     {
         using type = const void*;
         static const void* ToC(const void* value) { return value; }
+    };
+    /// Bytes are their address and their length, two parameters in C++ as in C.
+    template <>
+    struct CxxParam<kind::bytes>
+    {
+        using type = const void*;
+        static const void* ToC(const void* value) { return value; }
+    };
+    template <>
+    struct CxxParam<kind::bytes_size>
+    {
+        using type = uint32_t;
+        static uint32_t ToC(uint32_t value) { return value; }
+    };
+    template <>
+    struct CxxParam<kind::render_pipeline>
+    {
+        using type = const wxl_render_pipeline_desc&;
+        static const wxl_render_pipeline_desc* ToC(const wxl_render_pipeline_desc& value) { return &value; }
+    };
+    template <>
+    struct CxxParam<kind::render_pass>
+    {
+        using type = const wxl_render_pass&;
+        static const wxl_render_pass* ToC(const wxl_render_pass& value) { return &value; }
+    };
+    template <>
+    struct CxxParam<kind::draw_shape>
+    {
+        using type = const wxl_draw_shape&;
+        static const wxl_draw_shape* ToC(const wxl_draw_shape& value) { return &value; }
+    };
+    template <>
+    struct CxxParam<kind::draw_style>
+    {
+        using type = const wxl_draw_style&;
+        static const wxl_draw_style* ToC(const wxl_draw_style& value) { return &value; }
+    };
+    template <>
+    struct CxxParam<kind::draw_emitter>
+    {
+        using type = const wxl_draw_emitter&;
+        static const wxl_draw_emitter* ToC(const wxl_draw_emitter& value) { return &value; }
+    };
+    template <>
+    struct CxxParam<kind::draw_particles>
+    {
+        using type = const wxl_draw_particles&;
+        static const wxl_draw_particles* ToC(const wxl_draw_particles& value) { return &value; }
     };
     /// A resource is its C value in C++: what the row that handed it out answered.
     template <class R>

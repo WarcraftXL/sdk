@@ -38,6 +38,35 @@ namespace wxl::lua
 
     /// nil and ReasonOf(result): what a call that failed answers. Returns 2.
     int PushResultFailure(lua_State* L, wxl_result result);
+
+    /// wxl.render's resources, which its shims hand out and read as the generated rows do.
+    enum class RenderResource
+    {
+        image,
+        buffer,
+        pipeline,
+    };
+
+    /// Pushes a wxl.<Image|Buffer|Pipeline> box holding @p value, given back when collected.
+    void PushRenderResource(lua_State* L, RenderResource kind, wxl_handle value);
+
+    /// The handle of the box of that kind at @p index; WXL_HANDLE_NONE for anything else, or one
+    /// given back already.
+    wxl_handle ToRenderResource(lua_State* L, int index, RenderResource kind);
+
+    /// Pushes a wxl.Shape box holding @p value (wxl.draw), kept until the state unloads.
+    void PushDrawShape(lua_State* L, wxl_handle value);
+
+    /// The handle of the wxl.Shape box at @p index; WXL_HANDLE_NONE for anything else, or one
+    /// given back already.
+    wxl_handle ToDrawShape(lua_State* L, int index);
+
+    /// Gives back every wxl.Shape the state still holds.
+    void CloseDrawShapes(lua_State* L);
+    /// wxl.draw's Emitters (abi 0.1.40), as its Shapes.
+    void       PushDrawEmitter(lua_State* L, wxl_handle value);
+    wxl_handle ToDrawEmitter(lua_State* L, int index);
+    void       CloseDrawEmitters(lua_State* L);
 } // namespace wxl::lua
 
 #endif // WXL_LUA_SERVICES_HPP

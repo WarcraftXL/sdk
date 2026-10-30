@@ -32,3 +32,7 @@
 
         /// The art kit it shows.
         Expected<uint32_t> ArtKit() const { return ReadAs<uint32_t>(&wxl_object_api::gameobject_art_kit); }
+
+        /// Whether the active player can use it now, as the client decides the cursor over it: its kind lets it be used, its quest is in the log, its lock opens; out of reach counts.
+        /// Came with abi 0.1.26: WXL_E_UNSUPPORTED on an older runtime.
+        Expected<bool> CanUse() const { return ReadAs<bool>(&wxl_object_api::gameobject_can_use); }

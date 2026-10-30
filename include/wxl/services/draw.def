@@ -1,0 +1,66 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.draw as data: one row per member of wxl_draw_api, in member order. The shapes and their
+// columns are described in wxl/services/rows.hpp.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including draw.def"
+#endif
+
+WXL_API_SERVICE(draw, WXL_DRAW_SERVICE, WXL_DRAW_SERVICE_VERSION, (0, 1, 36), open,
+                "Shapes drawn in the world: lines, shapes lying on the ground, volumes; for a frame, or kept, or following an object. Main thread only.")
+
+WXL_API_RESOURCE(draw, Shape, wxl_handle, WXL_HANDLE_NONE)
+WXL_API_RESOURCE(draw, Emitter, wxl_handle, WXL_HANDLE_NONE)
+
+WXL_API(draw, supported, Supported, boolean, (), generated, generated,
+        "Whether this runtime draws shapes on the device it runs now.")
+WXL_API(draw, unsupported_reason, UnsupportedReason, str, (), generated, generated,
+        "Why shapes are not drawn, in a sentence for a log; empty when they are.")
+WXL_API(draw, draw, Draw, result, (draw_shape shape, draw_style style), shim, generated,
+        "Draws a shape in the next frame of the world only, from two tables: the shape {kind, center, radius, inner, angle, facing, pitch, roll, size, spacing, points, alphas, flat, on_ground, closed} and its look {color, alpha, fill_alpha, width, depth, pulse, fill_color, softness, alpha_start, alpha_end, shadow_color, shadow_alpha, shadow_offset, shadow_softness, texture, texture_right, texture_bottom, uv, uv_size, uv_rotation, uv_offset, blend, feather, radial_fade, occluded_alpha, mask, texture_blur} (nil: white lines 2 pixels wide).")
+WXL_API(draw, add, Add, Shape, (draw_shape shape, draw_style style, f32 duration), shim, generated,
+        "Keeps a shape (tables as Draw's) until removed, or for duration seconds when it is above 0 (nil: until removed); the style may add fade_in and fade_out. Answers the Shape, or nil and why.")
+WXL_API(draw, update, Update, result, (Shape self, draw_shape shape), shim, generated,
+        "The kept shape becomes another, from a table as Draw's; it stays attached when it is.")
+WXL_API(draw, move, Move, result, (Shape self, vec3 center, f32 facing), generated, generated,
+        "The kept shape's center (a line's or a polygon's points are offsets from it) and facing in radians.")
+WXL_API(draw, set_style, SetStyle, result, (Shape self, draw_style style), shim, generated,
+        "The kept shape's look, from a table as Draw's.")
+WXL_API(draw, set_duration, SetDuration, result, (Shape self, f32 seconds), generated, generated,
+        "The kept shape goes in seconds from now, after its fade-out; 0: when removed.")
+WXL_API(draw, attach, Attach, result, (Shape self, object target, opt<u32> flags), generated, generated,
+        "The kept shape follows a world object: its center and points become offsets from the object's position, turned with its facing when flags is 1 (ATTACH_TURN; 0 or nil: not turned). It goes when the object leaves view.")
+WXL_API(draw, detach, Detach, result, (Shape self), generated, generated,
+        "The kept shape stays where it is now, in world coordinates.")
+WXL_API_CLOSE(draw, remove, Remove, none, Shape, unloaded,
+              "The kept shape goes now; a Lua mod's go when it unloads.")
+WXL_API(draw, clear, Clear, none, (), shim, generated,
+        "Every shape this mod keeps goes, and its emitters with their particles (abi 0.1.40).")
+WXL_API(draw, stats, Stats, out<draw_stats>, (), shim, by_hand,
+        "What the last frame drew and cost: a table {shapes, immediate, drawn, vertices, left_out, rebuilt, build_microseconds, max_build_microseconds, immediate_microseconds, frames, textured, textures, textures_loading, shadows, occluded, reused, particles, particles_emitted, particles_culled, particle_draws, emitters, particle_microseconds}.")
+WXL_API_SINCE(draw, emit, (0, 1, 40))
+WXL_API(draw, emit, Emit, result, (draw_emitter emitter, draw_particles look), shim, generated,
+        "Throws one burst of particles and forgets them, from two tables: the emitter {spawn, center, extent, facing, direction, spread, burst, speed, life, size, spin, gravity, drag, ground, restitution, friction, attractor, attraction, attract_radius, seed} and their look {mode, texture, frames, frame_rate, blend, depth, occluded_alpha, stretch, softness, mask, texture_blur, keys} (nil: soft white blots fading out).")
+WXL_API(draw, add_emitter, AddEmitter, Emitter, (draw_emitter emitter, draw_particles look), shim, generated,
+        "Keeps an emitter (tables as Emit's; the emitter may add rate and duration): its burst now, then rate particles a second. Answers the Emitter, or nil and why.")
+WXL_API(draw, update_emitter, UpdateEmitter, result, (Emitter self, draw_emitter emitter), shim, generated,
+        "The emitter becomes another, from a table as Emit's; its particles keep how they move.")
+WXL_API(draw, set_emitter_style, SetEmitterStyle, result, (Emitter self, draw_particles look), shim, generated,
+        "Its particles' look, those alive included, from a table as Emit's.")
+WXL_API(draw, burst, Burst, result, (Emitter self, u32 count), generated, generated,
+        "Throws count more particles now.")
+WXL_API(draw, place, Place, result, (Emitter self, vec3 center, f32 facing), generated, generated,
+        "Where it throws from, and its facing in radians; it stops following an object.")
+WXL_API(draw, follow, Follow, result, (Emitter self, object target, opt<u32> flags), generated, generated,
+        "It throws from a world object from now on: its center an offset from the object's position, turned with its facing when flags is 1 (ATTACH_TURN). It stops when the object leaves view.")
+WXL_API_CLOSE(draw, stop, Stop, none, Emitter, unloaded,
+              "It stops and goes; its particles live out their lives. A Lua mod's go when it unloads.")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

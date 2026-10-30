@@ -323,6 +323,131 @@ WXL_ENUM_VALUE(wxl_appearance_change, WXL_APPEARANCE_REMOVED, 2, removed) ///< a
 WXL_ENUM_VALUE(wxl_appearance_change, WXL_APPEARANCE_FREED,   3, freed)   ///< the appearance is about to be freed: forget what was kept for it
 WXL_ENUM_END(wxl_appearance_change)
 
+/// What a file the client asked for is for, told by its extension: the subsystem that reads it.
+WXL_ENUM(wxl_asset_kind)
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_OTHER,      0, other)      ///< none of the kinds below
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_MODEL,      1, model)      ///< .m2 (.mdx, .mdl): the model loader
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_SKIN,       2, skin)       ///< .skin: a model's skin profile
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_ANIMATION,  3, animation)  ///< .anim: a model's sequence file
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_TEXTURE,    4, texture)    ///< .blp, .tga
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_TERRAIN,    5, terrain)    ///< .adt, .wdt, .wdl: a map's tiles
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_MAP_OBJECT, 6, map_object) ///< .wmo: a building, its root or a group
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_SOUND,      7, sound)      ///< .wav, .mp3, .ogg
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_DATABASE,   8, database)   ///< .dbc, .db2
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_INTERFACE,  9, interface)  ///< .lua, .xml, .toc
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_SHADER,    10, shader)     ///< .bls
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_FONT,      11, font)       ///< .ttf
+WXL_ENUM_VALUE(wxl_asset_kind, WXL_ASSET_MOVIE,     12, movie)      ///< .avi
+WXL_ENUM_END(wxl_asset_kind)
+
+/// What the click in the world met, as the world frame resolved it for its default action.
+WXL_ENUM(wxl_world_hit)
+WXL_ENUM_VALUE(wxl_world_hit, WXL_WORLD_HIT_NONE,         0, none)         ///< nothing: the sky, or no player to act
+WXL_ENUM_VALUE(wxl_world_hit, WXL_WORLD_HIT_GROUND,       1, ground)       ///< the terrain
+WXL_ENUM_VALUE(wxl_world_hit, WXL_WORLD_HIT_OBJECT,       2, object)       ///< an object's model: a unit, a player, a game object, a corpse
+WXL_ENUM_VALUE(wxl_world_hit, WXL_WORLD_HIT_WORLD_OBJECT, 3, world_object) ///< a building or a doodad of the map, or a transport
+WXL_ENUM_VALUE(wxl_world_hit, WXL_WORLD_HIT_NAME_PLATE,   4, name_plate)   ///< a unit's name plate over the world
+WXL_ENUM_END(wxl_world_hit)
+
+/// The client's verdict on an interface's signature: the numbers FrameXML_CheckSignature answers.
+WXL_ENUM(wxl_interface_signature)
+WXL_ENUM_VALUE(wxl_interface_signature, WXL_INTERFACE_SIGNATURE_MISSING,  0, missing)  ///< no <toc>.sig file
+WXL_ENUM_VALUE(wxl_interface_signature, WXL_INTERFACE_SIGNATURE_CORRUPT,  1, corrupt)  ///< a .sig of the wrong size, or one the key does not verify
+WXL_ENUM_VALUE(wxl_interface_signature, WXL_INTERFACE_SIGNATURE_MODIFIED, 2, modified) ///< a valid .sig, but the files differ from what it signed
+WXL_ENUM_VALUE(wxl_interface_signature, WXL_INTERFACE_SIGNATURE_SIGNED,   3, signed)   ///< a valid .sig, and the files are the ones it signed
+WXL_ENUM_END(wxl_interface_signature)
+
+/// The graphics API the client's device runs on, as wxl.gx's api answers it.
+WXL_ENUM(wxl_gx_backend)
+WXL_ENUM_VALUE(wxl_gx_backend, WXL_GX_BACKEND_NONE,   0, none)   ///< no device yet
+WXL_ENUM_VALUE(wxl_gx_backend, WXL_GX_BACKEND_D3D9,   1, d3d9)   ///< Direct3D 9
+WXL_ENUM_VALUE(wxl_gx_backend, WXL_GX_BACKEND_D3D9EX, 2, d3d9ex) ///< Direct3D 9Ex
+WXL_ENUM_VALUE(wxl_gx_backend, WXL_GX_BACKEND_OPENGL, 3, opengl) ///< OpenGL
+WXL_ENUM_VALUE(wxl_gx_backend, WXL_GX_BACKEND_VULKAN, 4, vulkan) ///< the runtime's Vulkan renderer
+WXL_ENUM_END(wxl_gx_backend)
+
+/// A point of the frame where a mod draws (RenderPoint), in the order a frame reaches them.
+WXL_ENUM(wxl_render_point)
+WXL_ENUM_VALUE(wxl_render_point, WXL_RENDER_POINT_AFTER_OPAQUE_WORLD, 0, after_opaque_world) ///< terrain, buildings, models and ground clutter drawn; no liquid, nothing blended yet
+WXL_ENUM_VALUE(wxl_render_point, WXL_RENDER_POINT_AFTER_LIQUIDS,      1, after_liquids)      ///< the liquids drawn too
+WXL_ENUM_VALUE(wxl_render_point, WXL_RENDER_POINT_AFTER_WORLD,        2, after_world)        ///< the whole world and its full-screen effects drawn, the interface not
+WXL_ENUM_VALUE(wxl_render_point, WXL_RENDER_POINT_AFTER_UI,           3, after_ui)           ///< the interface drawn too: the frame as it will be shown, the mods' Dear ImGui windows aside
+WXL_ENUM_END(wxl_render_point)
+
+/// Whether there is ground under a point of the map (wxl.terrain's presence).
+WXL_ENUM(wxl_terrain_presence)
+WXL_ENUM_VALUE(wxl_terrain_presence, WXL_TERRAIN_NONE,       0, none)       ///< off the map, out of the world, or a map without terrain
+WXL_ENUM_VALUE(wxl_terrain_presence, WXL_TERRAIN_GROUND,     1, ground)     ///< ground, loaded
+WXL_ENUM_VALUE(wxl_terrain_presence, WXL_TERRAIN_HOLE,       2, hole)       ///< a hole of the map's ground (a cave's mouth, a building's cellar)
+WXL_ENUM_VALUE(wxl_terrain_presence, WXL_TERRAIN_NOT_LOADED, 3, not_loaded) ///< the chunk there is not loaded: too far, or still being read
+WXL_ENUM_END(wxl_terrain_presence)
+
+/// What wxl.draw draws (wxl_draw_shape.kind).
+WXL_ENUM(wxl_draw_kind)
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_LINE,      0, line)      ///< a polyline through points
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_CIRCLE,    1, circle)    ///< on the ground: a disc
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_RING,      2, ring)      ///< on the ground: a disc with a hole
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_SECTOR,    3, sector)    ///< on the ground: a cone or an arc of a ring
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_RECTANGLE, 4, rectangle) ///< on the ground: a rectangle turned to a facing
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_POLYGON,   5, polygon)   ///< on the ground: the inside of points
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_GRID,      6, grid)      ///< on the ground: lines every spacing yards over a rectangle
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_BOX,       7, box)       ///< a volume: a box turned to a facing, a pitch and a roll
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_SPHERE,    8, sphere)    ///< a volume: a ball
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_CYLINDER,  9, cylinder)  ///< a volume: an upright cylinder, turned as a box
+WXL_ENUM_VALUE(wxl_draw_kind, WXL_DRAW_BEAM,     10, beam)      ///< a shaft of light from a point to another, turned around its axis to face the camera (abi 0.1.40)
+WXL_ENUM_END(wxl_draw_kind)
+
+/// Whether a wxl.draw shape is hidden by what stands in front of it.
+WXL_ENUM(wxl_draw_depth)
+WXL_ENUM_VALUE(wxl_draw_depth, WXL_DRAW_DEPTH_TESTED, 0, tested) ///< walls, units and the ground hide it
+WXL_ENUM_VALUE(wxl_draw_depth, WXL_DRAW_DEPTH_ON_TOP, 1, on_top) ///< drawn over everything of the world
+WXL_ENUM_END(wxl_draw_depth)
+
+/// Why a mod's animation on a unit ended (wxl.animation, UnitAnimationEnded).
+WXL_ENUM(wxl_animation_end)
+WXL_ENUM_VALUE(wxl_animation_end, WXL_ANIMATION_END_FINISHED,    0, finished)    ///< a one-shot played its length
+WXL_ENUM_VALUE(wxl_animation_end, WXL_ANIMATION_END_INTERRUPTED, 1, interrupted) ///< the game replaced a one-shot before its end (a move, a cast, a hit, death)
+WXL_ENUM_VALUE(wxl_animation_end, WXL_ANIMATION_END_STOPPED,     2, stopped)     ///< its mod stopped it, or went (disabled, unloaded)
+WXL_ENUM_VALUE(wxl_animation_end, WXL_ANIMATION_END_REPLACED,    3, replaced)    ///< a play on the same unit took its place, of this mod or another
+WXL_ENUM_VALUE(wxl_animation_end, WXL_ANIMATION_END_GONE,        4, gone)        ///< the unit left view, or the world was left
+WXL_ENUM_END(wxl_animation_end)
+
+/// How a wxl.draw ground shape's texture is laid on the ground (wxl_draw_style.uv).
+WXL_ENUM(wxl_draw_uv)
+WXL_ENUM_VALUE(wxl_draw_uv, WXL_DRAW_UV_FIT,   0, fit)   ///< once over the shape's bounds, turned with its facing
+WXL_ENUM_VALUE(wxl_draw_uv, WXL_DRAW_UV_TILE,  1, tile)  ///< repeated in the shape's frame, turned with its facing
+WXL_ENUM_VALUE(wxl_draw_uv, WXL_DRAW_UV_WORLD, 2, world) ///< repeated in the world's frame, its top to the north
+WXL_ENUM_END(wxl_draw_uv)
+
+/// How a wxl.draw ground shape's inside goes onto the ground (wxl_draw_style.blend).
+WXL_ENUM(wxl_draw_blend)
+WXL_ENUM_VALUE(wxl_draw_blend, WXL_DRAW_BLEND_ALPHA,    0, alpha)    ///< over it, by its opacity
+WXL_ENUM_VALUE(wxl_draw_blend, WXL_DRAW_BLEND_ADD,      1, add)      ///< added to it, as light
+WXL_ENUM_VALUE(wxl_draw_blend, WXL_DRAW_BLEND_MODULATE, 2, modulate) ///< multiplied into it, darkening it as a stain
+WXL_ENUM_END(wxl_draw_blend)
+
+/// Where a wxl.draw emitter throws its particles from (wxl_draw_emitter.spawn).
+WXL_ENUM(wxl_draw_spawn)
+WXL_ENUM_VALUE(wxl_draw_spawn, WXL_DRAW_SPAWN_POINT,   0, point)   ///< its center
+WXL_ENUM_VALUE(wxl_draw_spawn, WXL_DRAW_SPAWN_DISC,    1, disc)    ///< a flat disc of extent.x yards around it
+WXL_ENUM_VALUE(wxl_draw_spawn, WXL_DRAW_SPAWN_BOX,     2, box)     ///< a box of extent around it
+WXL_ENUM_VALUE(wxl_draw_spawn, WXL_DRAW_SPAWN_SEGMENT, 3, segment) ///< the segment from center to center + extent
+WXL_ENUM_END(wxl_draw_spawn)
+
+/// What a wxl.draw particle does at the ground (wxl_draw_emitter.ground).
+WXL_ENUM(wxl_draw_ground)
+WXL_ENUM_VALUE(wxl_draw_ground, WXL_DRAW_GROUND_NONE,   0, none)   ///< it goes through
+WXL_ENUM_VALUE(wxl_draw_ground, WXL_DRAW_GROUND_BOUNCE, 1, bounce) ///< it bounces once, then settles
+WXL_ENUM_VALUE(wxl_draw_ground, WXL_DRAW_GROUND_SETTLE, 2, settle) ///< it rests where it lands, sliding to a stop
+WXL_ENUM_END(wxl_draw_ground)
+
+/// How a wxl.draw particle faces (wxl_draw_particles.mode).
+WXL_ENUM(wxl_draw_billboard)
+WXL_ENUM_VALUE(wxl_draw_billboard, WXL_DRAW_BILLBOARD_CAMERA,    0, camera)    ///< towards the camera, turned by its spin
+WXL_ENUM_VALUE(wxl_draw_billboard, WXL_DRAW_BILLBOARD_GROUND,    1, ground)    ///< lying flat, turned by its spin
+WXL_ENUM_VALUE(wxl_draw_billboard, WXL_DRAW_BILLBOARD_STRETCHED, 2, stretched) ///< along its velocity on the screen, as long as stretch says
+WXL_ENUM_END(wxl_draw_billboard)
+
 #ifdef WXL_ENUM_DEFAULTED
     #undef WXL_ENUM
     #undef WXL_ENUM_DEFAULTED

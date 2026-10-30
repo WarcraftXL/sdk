@@ -73,13 +73,13 @@ namespace
 #undef WXL_ARGS_FIELD
 
     /// The size and alignment of each row's member, in the order of the field table.
-    struct Shape
+    struct FieldShape
     {
         uint32_t size;
         uint32_t align;
     };
 
-    constexpr Shape kShapes[] = {
+    constexpr FieldShape kShapes[] = {
 #define WXL_ARGS_FIELD(args, member, kind) \
     { uint32_t(sizeof(decltype(args::member))), uint32_t(alignof(decltype(args::member))) },
 #include "wxl/fields.def"
@@ -239,7 +239,7 @@ int main()
         bool           laidOut = true;
         for (uint32_t i = 0; i < event.field_count; ++i)
         {
-            const Shape& shape = kShapes[first + i];
+            const FieldShape& shape = kShapes[first + i];
             if (event.fields[i].offset != AlignUp(end, shape.align)) laidOut = false;
             end   = event.fields[i].offset + shape.size;
             align = shape.align > align ? shape.align : align;
@@ -513,7 +513,7 @@ int main()
         uint32_t                     serviceCount = 0, rowCount = 0;
         const wxl::api::ServiceRow*  services     = wxl::api::Services(&serviceCount);
         const wxl::api::Row*         rows         = wxl::api::Rows(&rowCount);
-        Check(serviceCount == 13, "thirteen service tables: script, storage, data, hook, hook.raw, patch, footprint, profile, point, action, m2file, m2, gx");
+        Check(serviceCount == 30, "thirty service tables: script, storage, data, hook, hook.raw, patch, footprint, profile, point, action, m2file, m2, gx, engine, relay, camera, input, world, pose, imgui, highlight, selectioncircle, texture, cvar, render, vk, terrain, draw, animation, net");
 
         // A service's rows follow each other, from the first member after struct_size to the
         // last, one function pointer apart: a member missing from its table, or one the table

@@ -3,6 +3,7 @@
 
 #include "wxl/host/manifest.hpp"
 
+#include <cstdio>
 #include <fstream>
 #include <limits>
 #include <sstream>
@@ -157,8 +158,62 @@ namespace wxl::host
         return true;
     }
 
+    bool NetManifest::Declares(uint32_t opcode) const
+    {
+        for (const OpcodeRange& range : opcodes)
+            if (opcode >= range.first && opcode <= range.last) return true;
+        return false;
+    }
+
     namespace
     {
+        bool ParseOpcode(std::string_view text, uint32_t& out)
+        {
+            int base = 10;
+            if (text.size() > 2 && text[0] == '0' && (text[1] == 'x' || text[1] == 'X'))
+            {
+                base = 16;
+                text.remove_prefix(2);
+            }
+            if (text.empty() || text.size() > (base == 16 ? 4u : 5u)) return false;
+            uint32_t value = 0;
+            for (const char c : text)
+            {
+                uint32_t digit = 0;
+                if (c >= '0' && c <= '9') digit = static_cast<uint32_t>(c - '0');
+                else if (base == 16 && c >= 'a' && c <= 'f') digit = static_cast<uint32_t>(c - 'a' + 10);
+                else if (base == 16 && c >= 'A' && c <= 'F') digit = static_cast<uint32_t>(c - 'A' + 10);
+                else return false;
+                value = value * static_cast<uint32_t>(base) + digit;
+            }
+            if (value > kOpcodeMax) return false;
+            out = value;
+            return true;
+        }
+    } // namespace
+
+    bool ParseOpcodeRange(std::string_view text, OpcodeRange& out)
+    {
+        const size_t dash = text.find('-');
+        OpcodeRange  range;
+        if (!ParseOpcode(text.substr(0, dash), range.first)) return false;
+        range.last = range.first;
+        if (dash != std::string_view::npos && !ParseOpcode(text.substr(dash + 1), range.last)) return false;
+        if (range.last < range.first) return false;
+        out = range;
+        return true;
+    }
+
+    namespace
+    {
+        /// "0x521".
+        std::string Hex(uint32_t value)
+        {
+            char text[16];
+            std::snprintf(text, sizeof text, "0x%X", static_cast<unsigned>(value));
+            return text;
+        }
+
         /// Walks a parsed document against the schema. Stops at the first problem.
         class Reader
         {
@@ -313,6 +368,67 @@ namespace wxl::host
                 return true;
             }
 
+            bool ReadNet(const json::Value& value)
+            {
+                if (!ExpectType(value, json::Type::Object, "net")) return false;
+                const json::Value* opcodes = nullptr;
+                for (const json::Member& member : value.object)
+                {
+                    if (member.key == "stock")
+                    {
+                        if (!ExpectType(member.value, json::Type::Bool, "net.stock")) return false;
+                        out_.net.stock = member.value.boolean;
+                    }
+                    else if (member.key == "opcodes")
+                    {
+                        if (!ExpectType(member.value, json::Type::Array, "net.opcodes")) return false;
+                        opcodes = &member.value;
+                    }
+                    else
+                    {
+                        return Fail(member.value, "'net' has an unknown field '" + member.key +
+                                                      "'; it takes 'opcodes' and 'stock'");
+                    }
+                }
+                if (!opcodes) return true;
+                for (size_t i = 0; i < opcodes->array.size(); ++i)
+                {
+                    const json::Value& entry = opcodes->array[i];
+                    const std::string  where = "net.opcodes[" + std::to_string(i) + "]";
+                    OpcodeRange        range;
+                    if (entry.Is(json::Type::Number))
+                    {
+                        if (!entry.integral || entry.integer < 0 || entry.integer > static_cast<int64_t>(kOpcodeMax))
+                            return Fail(entry, "'" + where + "' must be a whole number from 0 to 0xFFFF");
+                        range.first = range.last = static_cast<uint32_t>(entry.integer);
+                    }
+                    else if (entry.Is(json::Type::String))
+                    {
+                        if (!ParseOpcodeRange(entry.string, range))
+                            return Fail(entry, "'" + where + "' is \"" + entry.string +
+                                                   "\"; it takes a number up to 0xFFFF, \"0x521\", or a "
+                                                   "range \"0x521-0x52A\" whose first number is the lower");
+                    }
+                    else
+                    {
+                        return Fail(entry, "'" + where + "' must be a number or a string, not " +
+                                               json::TypeName(entry.type));
+                    }
+                    if (range.first <= kStockOpcodeLimit && !out_.net.stock)
+                        return Fail(entry, "'" + where + "' declares " + Hex(range.first) +
+                                               ", one of the client's own numbers (up to " +
+                                               Hex(kStockOpcodeLimit) + "); a mod's own start at " +
+                                               Hex(kStockOpcodeLimit + 1) +
+                                               ", and a tool that must use the client's says "
+                                               "\"stock\": true in 'net'");
+                    for (const OpcodeRange& other : out_.net.opcodes)
+                        if (range.first <= other.last && other.first <= range.last)
+                            return Fail(entry, "'" + where + "' overlaps an earlier entry of 'net.opcodes'");
+                    out_.net.opcodes.push_back(range);
+                }
+                return true;
+            }
+
             bool ReadField(const json::Member& member)
             {
                 const std::string& key   = member.key;
@@ -372,6 +488,7 @@ namespace wxl::host
                 if (key == "loadAfter") return ReadStringArray(value, key, out_.load_after);
                 if (key == "lua")
                     return ReadString(value, key, out_.lua, 1, std::numeric_limits<size_t>::max());
+                if (key == "net") return ReadNet(value);
                 if (key == "description") return ReadString(value, key, out_.description, 0, 512);
                 if (key == "authors") return ReadStringArray(value, key, out_.authors);
                 if (key == "homepage")

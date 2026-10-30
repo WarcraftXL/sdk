@@ -1,0 +1,44 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 WarcraftXL
+//
+// wxl.terrain as data: one row per member of wxl_terrain_api, in member order. The shapes and
+// their columns are described in wxl/services/rows.hpp.
+
+#ifndef WXL_API
+#error "define the WXL_API shapes (wxl/services/rows.hpp lists them) before including terrain.def"
+#endif
+
+WXL_API_SERVICE(terrain, WXL_TERRAIN_SERVICE, WXL_TERRAIN_SERVICE_VERSION, (0, 1, 35), open,
+                "The ground of the map the player is on: its height, rays against it, its grid, and its vertices set to other heights, which the client then draws, walks on and collides with. Main thread only.")
+
+WXL_API(terrain, height, Height, found<f64>, (f64 x, f64 y, opt<boolean> original), generated, by_hand,
+        "The ground's height under a point, on the triangle the client walks on; nil where there is no ground (a hole, a chunk not loaded). original true: before any mod's edit.")
+WXL_API(terrain, presence, Presence, enumeration<wxl_terrain_presence>, (f64 x, f64 y), generated, by_hand,
+        "Whether there is ground under a point: \"ground\", \"hole\", \"not_loaded\" or \"none\" (off the map, out of the world, a map without terrain).")
+WXL_API(terrain, trace, Trace, found<terrain_hit>, (vec3 start, vec3 finish), shim, by_hand,
+        "The first point where a segment meets the loaded ground: a table {point, normal, chunk_x, chunk_y, fraction}, or nil.")
+WXL_API(terrain, locate, Locate, found<terrain_place>, (f64 x, f64 y), shim, by_hand,
+        "Where a point is on the grid: a table {chunk_x, chunk_y, cell_row, cell_col, nearest, loaded}, or nil off the map.")
+WXL_API(terrain, vertices, Vertices, list<wxl_vec3>, (i32 chunk_x, i32 chunk_y, opt<boolean> original), shim, by_hand,
+        "The world positions of a chunk's 145 vertices, in index order (a list of {x, y, z}), or nil when it is not loaded. original true: before any mod's edit.")
+WXL_API(terrain, set_heights, SetHeights, result, (terrain_heights heights, u32 layer), shim, by_hand,
+        "Sets vertices to absolute heights: a list of {chunk_x, chunk_y, index, height}, all or none. The ground, its drawing and its collision follow.")
+WXL_API(terrain, reset_chunk, Reset, result, (i32 chunk_x, i32 chunk_y, u32 layer), shim, by_hand,
+        "Takes this mod's edits off a chunk: its original heights come back, or another mod's edits where one has some.")
+WXL_API(terrain, reset_all, ResetAll, result, (u32 layer), shim, by_hand,
+        "Takes every edit of this mod off.")
+WXL_API(terrain, stats, Stats, out<terrain_stats>, (), shim, by_hand,
+        "What the service holds and what its last edit cost: a table {edited_chunks, edited_vertices, edits, reapplied, last_vertices, last_chunks, last_microseconds, max_microseconds}.")
+WXL_API(terrain, vertices_in, VerticesIn, list<wxl_terrain_vertex>, (f64 x, f64 y, f64 radius), shim, by_hand,
+        "Every vertex within radius yards of a point, each once whichever chunks it is on: a list of {chunk_x, chunk_y, index, x, y, z, original_z, inner, loaded}, ready for SetHeights.")
+WXL_API_SINCE(terrain, set_layer_provider, (0, 1, 42))
+WXL_API(terrain, set_layer_provider, SetLayerProvider, result, (terrain_layer_provider provider), native, by_hand, "")
+WXL_API_SINCE(terrain, set_tile_provider, (0, 1, 45))
+WXL_API(terrain, set_tile_provider, SetTileProvider, result, (terrain_tile_provider provider), native, by_hand, "")
+
+// MSVC takes a file that expands to nothing outside its opening #ifndef X ... #endif for one
+// guarded by X, and skips it when it is included again with X defined: this table is read
+// several times in one translation unit, under shapes that may leave it empty. A directive
+// after the rows keeps it from looking guarded.
+#ifdef WXL_TABLE_END
+#endif

@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "fake_services.hpp"
+#include "wxl/services/net.hpp"
 #include "wxl/objects/fields.hpp"
 #include "wxl/host/event_bus.hpp"
 #include "wxl/host/log.hpp"
@@ -932,7 +933,7 @@ int main(int argc, char** argv)
         const wxl_spell_cast_args go{WXL_HANDLE_NONE, 0x10, WXL_HANDLE_NONE, 0, 0, 133, 1, 0, 0, 0,
                                      2, 1, hits, sizeof hits, misses, sizeof misses, reasons};
         host.Raise(WXL_EV_SpellCastGo, &go);
-        Check(sink.Has("[wxl.probe] cast go 14 parameters, spell 133, 2 hit in 16 bytes, 1 miss, caster 0x0000000000000010"),
+        Check(sink.Has("[wxl.probe] cast go 20 parameters, spell 133, 2 hit in 16 bytes, 1 miss, caster 0x0000000000000010"),
               "a member that only measures another is not a parameter: its bytes carry it");
 
         // Unobserve.
@@ -1718,8 +1719,8 @@ print("later " .. tostring(s.Unredirect("Interface\\Nope.txt")) .. " " .. tostri
         host.LoadAll();
         host.Stage(WXL_STAGE_READY);
 
-        // Every event but the one this runtime lacks and the one the probe skips.
-        const size_t offered = static_cast<size_t>(WXL_EV_COUNT) - 2;
+        // Every event but the one this runtime lacks and the two the probe skips.
+        const size_t offered = static_cast<size_t>(WXL_EV_COUNT) - 3;
         Check(sink.Has(("[wxl.probe] listening to " + std::to_string(offered) + " events").c_str()) &&
                   sink.Has("[wxl.probe] not raised by this runtime: OnSoundPlay"),
               "the probe listens to every event the runtime raises, and names the one it does not");
@@ -2184,6 +2185,18 @@ Observe("ObjectScript", "OnAppearanceChanged", function(change, wearer, model, r
     local spare = wxl.m2.CreateModel(model, "Item\\Spare.m2")
     spare:Release()
     print("released " .. tostring(pcall(function() return spare:Parent() end)))
+    local effect = wxl.m2.CreateWorldModel("Spells\\Fire.m2")
+    print("placed " .. tostring(effect:Place({ position = { x = 1, y = 2, z = 3 }, yaw = 0.5 })))
+    print("transform " .. tostring(effect:SetTransform({ position = { x = 0, y = 0, z = 1 }, scale = 2 })))
+    print("animation " .. tostring(effect:PlayAnimation(158, 1.5)))
+    effect:SetAlpha(0.25)
+    effect:SetEmitting(false)
+    print("loaded " .. tostring(wxl.m2.ModelLoaded(effect)) .. " length " .. wxl.m2.AnimationLength(effect, 0))
+    print("hand " .. wxl.m2.AttachmentWorld(model, 32).z)
+    print("ground " .. wxl.m2.GroundHeight({ x = 1, y = 2, z = 10 }, 5, 50))
+    print("no ground " .. tostring(select(2, wxl.m2.GroundHeight({ x = 1, y = 2, z = 10 }, 5, 1))))
+    print("no position " .. tostring(select(2, pcall(function() return effect:Place({ yaw = 1 }) end))))
+    kept[#kept + 1] = effect
 end)
 Observe("AssetScript", "OnModelParsed", function(path, file, header, size)
     print("parsed " .. path .. " " .. type(file) .. " " .. size)
@@ -2221,6 +2234,24 @@ end)
               "AttachmentPoint answers {x, y, z}, AttachToBone takes one, RacePrefix a string");
         Check(sink.Has("[wxl.tailor] released false") && wxltest::FakeModels::Released() == released + 1,
               "a model given back is given back once, and refuses its methods after");
+        {
+            const wxltest::FakeModels::Model* effect = nullptr;
+            for (const auto& [address, model] : wxltest::FakeModels::Made())
+                if (model->world) effect = model;
+            Check(effect && effect->path == "Spells\\Fire.m2" && sink.Has("[wxl.tailor] placed true") &&
+                      sink.Has("[wxl.tailor] transform true") && sink.Has("[wxl.tailor] animation true"),
+                  "a world model is made in Lua and placed, set on its point and animated");
+            Check(effect && effect->placed.position.z == 3.0f && effect->placed.yaw == 0.5f &&
+                      effect->placed.pitch == 0.0f && effect->placed.scale == 1.0f &&
+                      effect->placed.struct_size == sizeof(wxl_m2_placement) && effect->transform.scale == 2.0f &&
+                      effect->anim == 158 && effect->speed == 1.5f && effect->alpha == 0.25f && !effect->emitting,
+                  "a placement table reads its position and turn, the scale 1 when left out; speed, alpha, emitting");
+            Check(sink.Has("[wxl.tailor] loaded true length 1333") && sink.Has("[wxl.tailor] hand 31.5") &&
+                      sink.Has("[wxl.tailor] ground 8") && sink.Has("[wxl.tailor] no ground not_found"),
+                  "ModelLoaded, AnimationLength, AttachmentWorld and GroundHeight answer as the service does");
+            Check(sink.Has("[wxl.tailor] no position") && sink.Has("a placement: a table with a position"),
+                  "a placement without a position is refused, saying what it takes");
+        }
         Check(sink.Has("[wxl.plain] undeclared") && sink.Has("reaches the client's memory"),
               "a mod that does not declare wxl.m2 is told how to");
 
@@ -2237,7 +2268,984 @@ end)
               "the loader's stages and a drawn batch reach Lua");
 
         host.Shutdown();
-        Check(wxltest::FakeModels::Released() == released + 2, "the mod's models are given back when it unloads");
+        Check(wxltest::FakeModels::Released() == released + 3, "the mod's models, the world's too, are given back when it unloads");
+        if (g_failures) sink.Dump();
+    }
+
+    Section("hashes, overrides, reloads and the relay in Lua");
+    {
+        using wxltest::FakeRelay;
+        using wxltest::FakeStorage;
+        const fs::path mods = MakeTree(scratch, "bricks", binary, fs::path());
+        WriteFile(mods / "fetcher" / "mod.json", LuaManifest("wxl.fetcher"));
+        WriteFile(mods / "fetcher" / "init.lua", R"(
+local s = wxl.storage
+local h = s.HashFile("Interface\\hello.txt")
+print("hash " .. h.md5 .. " " .. h.size .. " " .. h.layer .. " " .. h.source)
+print("nohash " .. tostring(select(2, s.HashFile("Interface\\none.txt"))))
+print("override " .. tostring(s.OverrideFile("Interface\\big.bin", "Interface\\hello.txt")) .. " " ..
+      tostring(s.HashFile("Interface\\big.bin").size) .. " " .. tostring(s.RestoreFile("Interface\\big.bin")) .. " " ..
+      tostring(select(2, s.RestoreFile("Interface\\big.bin"))))
+s.OverrideFile("Interface\\kept.bin", "Interface\\hello.txt")
+local r = s.ReloadAsset("Textures\\a.blp")
+print("reload " .. r.textures .. " " .. r.models .. " " .. r.objects .. " " .. r.busy .. " " ..
+      tostring(select(2, s.ReloadAsset("World\\a.wmo"))))
+print("async " .. tostring(type(s.HashFileAsync("Interface\\hello.txt", function(hash, why)
+    print("hashed " .. tostring(hash and hash.size) .. " " .. tostring(why))
+end))))
+wxl.relay.Publish("wxl.fetcher.fetch", function(request, method, path)
+    if method == "now" then return "Fetched\\" .. path, 7 end
+    if method == "bad" then error("on purpose") end
+    pending = request
+end, function(request) print("told cancelled " .. tostring(request == cancelme)) end)
+wxl.script.RegisterFunction("BrickAnswer", function() print("answered " .. tostring(wxl.relay.Answer(pending, "later", true))) end)
+wxl.script.RegisterFunction("BrickFail", function() print("failed " .. tostring(wxl.relay.Fail(pending, "no such file"))) end)
+wxl.script.RegisterFunction("BrickMark", function() cancelme = pending end)
+)");
+        WriteFile(mods / "asker" / "mod.json", LuaManifest("wxl.asker", "\"loadAfter\": [ \"wxl.fetcher\" ]"));
+        WriteFile(mods / "asker" / "init.lua", R"(
+local relay = wxl.relay
+print("published " .. tostring(relay.Published("WXL.fetcher.fetch")) .. " " .. tostring(relay.Published("nobody")))
+relay.Call("wxl.fetcher.fetch", "now", { "Creature\\Foo\\Foo.m2" }, function(ok, name, n)
+    print("now " .. tostring(ok) .. " " .. tostring(name) .. " " .. tostring(n))
+end)
+relay.Call("nobody", "x", nil, function(ok, why) print("nobody " .. tostring(ok) .. " " .. tostring(why)) end)
+relay.Call("wxl.fetcher.fetch", "bad", nil, function(ok, why) print("bad " .. tostring(ok) .. " " .. tostring(why)) end)
+function Ask(method)
+    return relay.Call("wxl.fetcher.fetch", method, { "x" }, function(ok, a, b)
+        print("later " .. tostring(ok) .. " " .. tostring(a) .. " " .. tostring(b))
+    end)
+end
+print("missing fn " .. tostring(pcall(relay.Call, "wxl.fetcher.fetch", "now", nil)))
+wxl.script.RegisterFunction("BrickAsk", function(method) Ask(method) end)
+)");
+
+        wxltest::FakeScript::Live() = WXL_SCRIPT_CONTEXT_GAME;
+        wxltest::FakeScript::Functions().clear();
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_SCRIPT_SERVICE, WXL_SCRIPT_SERVICE_VERSION, wxltest::FakeScript::Table()});
+        config.services.push_back(PublishedService{WXL_STORAGE_SERVICE, WXL_STORAGE_SERVICE_VERSION, FakeStorage::Table()});
+        config.services.push_back(PublishedService{WXL_RELAY_SERVICE, WXL_RELAY_SERVICE_VERSION, FakeRelay::Table()});
+        ModHost host(std::move(config));
+        host.LoadAll();
+        host.Stage(WXL_STAGE_READY);
+        const wxl_lua_api* api =
+            static_cast<const wxl_lua_api*>(host.Table()->get_service(WXL_LUA_SERVICE, WXL_LUA_SERVICE_VERSION));
+
+        Check(sink.Has("[wxl.fetcher] hash 050102030405060708090a0b0c0d0e0f 5 archive Data\\fake.MPQ"),
+              "HashFile answers the digest as hex, the size, the layer by name and the source");
+        Check(sink.Has("[wxl.fetcher] nohash not_found"), "a name nobody has is not_found");
+        Check(sink.Has("[wxl.fetcher] override true 5 true not_found"),
+              "OverrideFile puts one name in place of another until RestoreFile");
+        Check(sink.Has("[wxl.fetcher] reload 3 0 0 1 unsupported"), "ReloadAsset answers what it did as a table");
+        Check(sink.Has("[wxl.fetcher] async number") && !sink.Has("hashed"), "HashFileAsync answers a request number at once");
+        FakeStorage::PumpHashes();
+        Check(sink.Has("[wxl.fetcher] hashed 5 nil"), "and the hash comes to the function later");
+        Check(sink.Has("[wxl.asker] published true false") && sink.Has("[wxl.asker] missing fn false"),
+              "Published finds a service in any case; Call without a function is an error");
+
+        FakeRelay::Pump();
+        FakeRelay::Pump();
+        Check(sink.Has("[wxl.asker] now true Fetched\\Creature\\Foo\\Foo.m2 7"),
+              "a service that returns values answers at once: the caller gets true and them");
+        Check(sink.Has("[wxl.asker] nobody false not_found"), "a name nobody publishes fails with not_found");
+        Check(sink.Has("[wxl.asker] bad false the service's Lua function errored") &&
+                  sink.Has("errored in its wxl.relay service wxl.fetcher.fetch"),
+              "a service whose function errors fails the request, and the error counts against it");
+
+        // The client's script calls what the two mods registered.
+        const auto run = [&](const char* function, const char* argument) {
+            wxl_value text{};
+            text.type            = WXL_VALUE_STRING;
+            text.as.string       = argument ? wxl::Str(argument) : wxl_str{nullptr, 0};
+            wxl_script_call call = argument ? ScriptCallOf({text}) : ScriptCallOf({});
+            wxltest::FakeScript::Invoke(function, call);
+        };
+        run("BrickAsk", "later");
+        FakeRelay::Pump();
+        run("BrickAnswer", nullptr);
+        FakeRelay::Pump();
+        Check(sink.Has("[wxl.fetcher] answered true") && sink.Has("[wxl.asker] later true later true"),
+              "a service that returns nothing answers later through Answer");
+        run("BrickAsk", "later");
+        FakeRelay::Pump();
+        run("BrickFail", nullptr);
+        FakeRelay::Pump();
+        Check(sink.Has("[wxl.asker] later false no such file nil"), "or fails through Fail, with its reason");
+
+        run("BrickAsk", "later");
+        FakeRelay::Pump();
+        run("BrickMark", nullptr);
+        const size_t waiting = FakeRelay::Requests().size();
+        Check(api && api->reload("wxl.asker") == WXL_OK, "the caller reloads with a request in flight");
+        FakeRelay::Pump();
+        Check(FakeRelay::Requests().size() + 1 == waiting && sink.Has("[wxl.fetcher] told cancelled true") &&
+                  !sink.Has("[wxl.asker] later true x"),
+              "its request is cancelled, the service told, the gone caller never answered");
+
+        Check(FakeStorage::Overrides().count("interface\\kept.bin") == 1, "an override is held while its mod runs");
+        Check(api && api->reload("wxl.fetcher") == WXL_OK && FakeRelay::Endpoints().count("wxl.fetcher.fetch") == 1,
+              "the service is published again by the reloaded mod");
+        host.Shutdown();
+        Check(FakeRelay::Endpoints().empty() && FakeStorage::Overrides().count("interface\\kept.bin") == 0,
+              "a mod's services and overrides go when it unloads");
+        if (g_failures) sink.Dump();
+    }
+
+    Section("the camera, the pointer and the world in Lua");
+    {
+        using wxltest::FakeView;
+        const fs::path mods = MakeTree(scratch, "camera", binary, fs::path());
+        WriteFile(mods / "aim-a" / "mod.json", LuaManifest("wxl.aim-a"));
+        WriteFile(mods / "aim-a" / "init.lua", R"(
+local p = wxl.camera.Position()
+print("position " .. p.x .. " " .. p.z .. " fov " .. wxl.camera.Fov() .. " pivot " .. wxl.camera.Pivot().z)
+print("cinematic " .. tostring(wxl.camera.Cinematic()))
+print("set " .. tostring(wxl.camera.SetView({ x = 1, y = 2, z = 3 }, { x = 1, y = 0, z = 0 }, 0)))
+print("capture " .. tostring(wxl.input.CaptureCursor(true)) .. " " .. tostring(wxl.input.CursorCaptured()))
+print("hit " .. wxl.world.Trace({ x = 0, y = 4, z = 0 }, { x = 20, y = 4, z = 0 }).x)
+print("clear " .. tostring(wxl.world.Trace({ x = 0, y = 0, z = 0 }, { x = 5, y = 0, z = 0 }, 0x100111)))
+print("face " .. tostring(wxl.action.Face(2.5)))
+print("block " .. tostring(wxl.input.BlockMouseLook(true)) .. " " .. tostring(wxl.input.MouseLookBlocked()))
+print("head " .. tostring(wxl.pose.Head(wxl.object.LocalPlayer(), 0.5, 0.1, 0.1)) .. " " ..
+      tostring(wxl.pose.ReleaseHead(wxl.object.LocalPlayer())) .. " " ..
+      tostring(wxl.pose.Head(wxl.object.LocalPlayer(), 0.25, 0, 0)))
+print("missing " .. tostring(select(2, pcall(function() return wxl.camera.SetView({ x = 1, y = 2, z = 3 }) end))))
+print("lit " .. tostring(wxl.highlight.Set(wxl.object.LocalPlayer(), 0xFFE03030, 3, 12, 0.5)) .. " " ..
+      tostring(wxl.highlight.Supported()) .. " " .. wxl.highlight.Drawn() .. " [" .. wxl.highlight.UnsupportedReason() .. "]")
+print("lit colour " .. tostring(select(2, pcall(function() return wxl.highlight.Set(wxl.object.LocalPlayer(), -1, 1, 1, 1) end))))
+print("circle " .. tostring(wxl.selectioncircle.Hide("target")) .. " " ..
+      tostring(wxl.selectioncircle.SetStyle({ "target", "pet_target" }, "hostile",
+                                            { texture = "Interface\\Mod\\C.blp", color = 0x80FF8000, scale = 1.5 })) .. " " ..
+      tostring(wxl.selectioncircle.HideObject(wxl.object.LocalPlayer())) .. " " ..
+      wxl.selectioncircle.Drawn() .. " " .. wxl.selectioncircle.Hidden())
+print("circle kind " .. tostring(select(2, pcall(function() return wxl.selectioncircle.Hide("nope") end))))
+Observe("WorldScript", "OnMouseMotion", function(dx, dy) print("motion " .. dx .. " " .. dy) end)
+Override("WorldScript", "OnMouseWheel", function(delta) print("wheel " .. delta) return true end)
+Observe("RenderScript", "OnCameraUpdate", function(index, delta) print("camera " .. index) end)
+Override("WorldScript", "OnWorldClickRequest", function(button, hit, object, guid, point, targeting)
+    print("click " .. button .. " " .. hit .. " " .. tostring(targeting) .. " " .. point.z)
+    return hit == "object"
+end)
+Override("LuaScript", "OnInterfaceSignature", function(file, extra, verdict)
+    print("signature " .. file .. " [" .. extra .. "] " .. verdict)
+    return verdict == "modified"
+end)
+Override("LuaScript", "OnInterfaceCleanupRequest", function() print("cleanup") return true end)
+)");
+        WriteFile(mods / "aim-b" / "mod.json", LuaManifest("wxl.aim-b", "\"loadAfter\": [ \"wxl.aim-a\" ]"));
+        WriteFile(mods / "aim-b" / "init.lua", R"(
+print("b set " .. tostring(wxl.camera.SetView({ x = 9, y = 9, z = 9 }, { x = 0, y = 1, z = 0 }, 1.2)))
+print("b capture " .. tostring(wxl.input.CaptureCursor(true)))
+print("b unlit " .. tostring(select(2, wxl.highlight.Clear(wxl.object.LocalPlayer()))))
+print("b circle " .. tostring(select(2, wxl.selectioncircle.ResetObject(wxl.object.LocalPlayer()))) .. " " ..
+      tostring(wxl.selectioncircle.Reset("target")))
+Observe("WorldScript", "OnMouseMotion", function(dx)
+    if dx ~= 99 then return end
+    print("b release " .. tostring(wxl.camera.ReleaseView()) .. " " .. tostring(wxl.input.CaptureCursor(false)))
+    print("b again " .. tostring(select(2, wxl.camera.ReleaseView())))
+end)
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_CAMERA_SERVICE, WXL_CAMERA_SERVICE_VERSION, FakeView::CameraTable()});
+        config.services.push_back(PublishedService{WXL_INPUT_SERVICE, WXL_INPUT_SERVICE_VERSION, FakeView::InputTable()});
+        config.services.push_back(PublishedService{WXL_WORLD_SERVICE, WXL_WORLD_SERVICE_VERSION, FakeView::WorldTable()});
+        config.services.push_back(PublishedService{WXL_POSE_SERVICE, WXL_POSE_SERVICE_VERSION, FakeView::PoseTable()});
+        config.services.push_back(PublishedService{WXL_HIGHLIGHT_SERVICE, WXL_HIGHLIGHT_SERVICE_VERSION, FakeView::HighlightTable()});
+        config.services.push_back(
+            PublishedService{WXL_SELECTIONCIRCLE_SERVICE, WXL_SELECTIONCIRCLE_SERVICE_VERSION, FakeView::SelectionCircleTable()});
+        FakeView::Calls().clear();
+        FakeView::HighlightColors().clear();
+        FakeView::CircleCalls().clear();
+        wxltest::FakeActions::Calls().clear();
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            Check(sink.Has("[wxl.aim-a] position 1 3 fov 1.5 pivot 1.75") && sink.Has("[wxl.aim-a] cinematic false"),
+                  "the camera's reads answer numbers and points");
+            Check(sink.Has("[wxl.aim-a] set true") && sink.Has("[wxl.aim-a] capture true true") &&
+                      sink.Has("[wxl.aim-b] b set true") && sink.Has("[wxl.aim-b] b capture true"),
+                  "two mods set a view and capture the pointer");
+            Check(sink.Has("[wxl.aim-a] hit 10") && sink.Has("[wxl.aim-a] clear nil") && sink.Has("[wxl.aim-a] face true"),
+                  "a trace answers the point met or nil, Face answers true");
+            Check(sink.Has("[wxl.aim-a] block true true") && sink.Has("[wxl.aim-a] head true true true"),
+                  "BlockMouseLook and Head answer true; releasing a head turned again answers");
+            Check(sink.Has("[wxl.aim-a] missing") && sink.Has("'forward' (argument 2) is missing"),
+                  "a view without its direction is an error naming it");
+            Check(sink.Has("[wxl.aim-a] lit true true 7 []") && FakeView::HighlightColors().size() == 1 &&
+                      FakeView::HighlightColors()[0] == 0xFFE03030u,
+                  "Set highlights an object with its colour whole; Available, Drawn and UnsupportedReason answer");
+            Check(sink.Has("[wxl.aim-a] lit colour") && sink.Has("'color' (argument 2) must be a whole number") &&
+                      sink.Has("[wxl.aim-b] b unlit not_found"),
+                  "a colour out of range is an error naming it; clearing what the mod did not set is not found");
+            {
+                const auto& circles = FakeView::CircleCalls();
+                Check(sink.Has("[wxl.aim-a] circle true true true 2 1") && circles.size() >= 3 && circles[0].name == "hide" &&
+                          circles[0].kinds == 1u && circles[0].reactions == 0u && circles[1].name == "set_style" &&
+                          circles[1].kinds == 3u && circles[1].reactions == 2u && circles[1].texture == "Interface\\Mod\\C.blp" &&
+                          circles[1].color == 0x80FF8000u && circles[1].scale == 1.5f && circles[2].name == "hide_object",
+                      "Hide, SetStyle and HideObject reach wxl.selectioncircle with names turned into masks and the style whole");
+                Check(sink.Has("[wxl.aim-a] circle kind") && sink.Has("has no kinds named \"nope\"") &&
+                          sink.Has("[wxl.aim-b] b circle not_found true") && circles.size() == 3,
+                      "a kind that does not exist is an error; another mod's reset leaves what it does not hold");
+            }
+            const auto& actions = wxltest::FakeActions::Calls();
+            Check(!actions.empty() && actions.back().name == "face" && actions.back().point.x == 2.5f,
+                  "Face reaches wxl.action");
+
+            const wxl_mouse_motion_args motion{3, -4};
+            host.Raise(WXL_EV_MouseMotion, &motion);
+            wxl_bool                   kept = WXL_FALSE;
+            const wxl_mouse_wheel_args wheel{-1.0f, &kept};
+            host.Raise(WXL_EV_MouseWheel, &wheel);
+            const wxl_frame_args frame{7, 0.016f};
+            host.Raise(WXL_EV_CameraUpdate, &frame);
+            Check(sink.Has("[wxl.aim-a] motion 3 -4") && sink.Has("[wxl.aim-a] wheel -1") && kept == WXL_TRUE &&
+                      sink.Has("[wxl.aim-a] camera 7"),
+                  "the mouse's events and the camera's update reach Lua; an Override keeps the wheel");
+
+            wxl_bool refused = WXL_FALSE;
+            const wxl_world_click_request_args onModel{WXL_MOUSE_LEFT, WXL_WORLD_HIT_OBJECT, WXL_HANDLE_NONE, 0,
+                                                       wxl_vec3{0, 0, 5}, WXL_FALSE, &refused};
+            host.Raise(WXL_EV_WorldClickRequest, &onModel);
+            const bool modelRefused = refused == WXL_TRUE;
+            refused = WXL_FALSE;
+            const wxl_world_click_request_args onGround{WXL_MOUSE_RIGHT, WXL_WORLD_HIT_GROUND, WXL_HANDLE_NONE, 0,
+                                                        wxl_vec3{0, 0, 6}, WXL_TRUE, &refused};
+            host.Raise(WXL_EV_WorldClickRequest, &onGround);
+            Check(modelRefused && refused == WXL_FALSE && sink.Has("[wxl.aim-a] click left object false 5") &&
+                      sink.Has("[wxl.aim-a] click right ground true 6"),
+                  "a click before the game acts reaches Lua with its button and hit by name; an Override refuses it");
+
+            wxl_bool accepted = WXL_FALSE;
+            const wxl_interface_signature_args frameXml{wxl_str{"FrameXML.toc", 12}, wxl_str{"Bindings.xml", 12},
+                                                        WXL_INTERFACE_SIGNATURE_MODIFIED, &accepted};
+            host.Raise(WXL_EV_InterfaceSignature, &frameXml);
+            const bool modifiedAccepted = accepted == WXL_TRUE;
+            accepted = WXL_FALSE;
+            const wxl_interface_signature_args addOn{wxl_str{"Bag.toc", 7}, wxl_str{"", 0},
+                                                     WXL_INTERFACE_SIGNATURE_MISSING, &accepted};
+            host.Raise(WXL_EV_InterfaceSignature, &addOn);
+            wxl_bool foldersKept = WXL_FALSE;
+            const wxl_interface_cleanup_args cleanup{&foldersKept};
+            host.Raise(WXL_EV_InterfaceCleanupRequest, &cleanup);
+            Check(modifiedAccepted && accepted == WXL_FALSE && foldersKept == WXL_TRUE &&
+                      sink.Has("[wxl.aim-a] signature FrameXML.toc [Bindings.xml] modified") &&
+                      sink.Has("[wxl.aim-a] signature Bag.toc [] missing") && sink.Has("[wxl.aim-a] cleanup"),
+                  "an interface's signature reaches Lua with its verdict by name; an Override takes it as signed or keeps the folders");
+
+            // b, the later, holds the view applied; giving it back brings a's back.
+            FakeView::Calls().clear();
+            const wxl_mouse_motion_args release{99, 0};
+            host.Raise(WXL_EV_MouseMotion, &release);
+            const auto& calls = FakeView::Calls();
+            Check(sink.Has("[wxl.aim-b] b release true true") && sink.Has("[wxl.aim-b] b again not_found") &&
+                      calls.size() == 1 && calls[0].name == "set_view" && calls[0].position.x == 1.0f,
+                  "a mod letting its view go brings back the one set before; the pointer stays held for the other");
+            Check(FakeView::Captures() == 1, "the pointer is held while one Lua mod holds it");
+            FakeView::Calls().clear();
+            host.Shutdown();
+        }
+        const auto& calls = FakeView::Calls();
+        bool released = false, freed = false, unblocked = false, headReleased = false, unlit = false;
+        for (const auto& call : calls)
+        {
+            if (call.name == "release_view") released = true;
+            if (call.name == "free") freed = true;
+            if (call.name == "unblock") unblocked = true;
+            if (call.name == "release_head") headReleased = true;
+            if (call.name == "highlight_clear") unlit = true;
+        }
+        bool circlesReset = false, circleObjectReset = false;
+        for (const auto& call : FakeView::CircleCalls())
+        {
+            if (call.name == "reset" && call.kinds == 1u && call.reactions == 2u) circlesReset = true;
+            if (call.name == "reset_object") circleObjectReset = true;
+        }
+        Check(released && freed && FakeView::Captures() == 0,
+              "the last mod's view and capture go when it unloads");
+        Check(unblocked && headReleased && FakeView::Blocks() == 0, "and so do its block of the mouse look and its heads");
+        Check(unlit, "and its highlights");
+        Check(circlesReset && circleObjectReset, "and what it changed on the selection circles");
+        if (g_failures) sink.Dump();
+    }
+
+    Section("drawing into the frame in Lua (wxl.render)");
+    {
+        using wxltest::FakeRender;
+        FakeRender::Reset();
+        const fs::path mods = MakeTree(scratch, "render", binary, fs::path());
+        WriteFile(mods / "draw-a" / "mod.json", LuaManifest("wxl.draw-a"));
+        // SPIR-V as a file of the mod's folder: the magic number, then anything.
+        const std::string spirv("\x03\x02\x23\x07\x00\x05\x01\x00", 8);
+        WriteFile(mods / "draw-a" / "shaders" / "tint.spv", spirv);
+        WriteFile(mods / "draw-a" / "init.lua", R"(
+local SPIRV = "\3\2\35\7\0\5\1\0"
+local tint = wxl.render.CreatePipeline({ kind = "fullscreen", name = "tint", fragment = "shaders/tint.spv", blend = "alpha" })
+local mask = wxl.render.CreatePipeline({ kind = "batch", fragment = SPIRV, colors = { "rgba8", "rgba8" },
+                                         depth_test = "less_equal", samples = 0 })
+local image = wxl.render.CreateScreenImage(2, 1, 0)
+print("made " .. tostring(tint ~= nil) .. " " .. tostring(mask ~= nil) .. " " .. image:ImageWidth() .. " " .. image:ImageSlot())
+print("kind " .. tostring(select(2, pcall(function() return wxl.render.CreatePipeline({ kind = "nope", fragment = SPIRV }) end))))
+print("escape " .. tostring(select(2, pcall(function() return wxl.render.CreatePipeline({ kind = "fullscreen", fragment = "../x.spv" }) end))))
+print("vertexless " .. tostring(select(2, pcall(function() return wxl.render.CreatePipeline({ fragment = SPIRV }) end))))
+print("outside " .. tostring(select(2, wxl.render.Fullscreen(tint, { 1, 0, 0, 1 }))))
+print("replace " .. tostring(wxl.render.ReplaceShader("Diffuse_T1", 1, "shaders/tint.spv")) .. " " ..
+      tostring(select(2, wxl.render.RestoreShader("Ocean", 0))))
+local fill = wxl.render.CreatePipeline({ kind = "compute", name = "fill", compute = "shaders/tint.spv" })
+print("compute " .. tostring(fill ~= nil) .. " " ..
+      tostring(select(2, pcall(function() return wxl.render.CreatePipeline({ kind = "compute", fragment = SPIRV }) end))))
+local bones = {}
+for i = 1, 12 * 300 do bones[i] = i end
+print("palette " .. tostring(wxl.render.BonePalette(bones)) .. " " .. tostring(select(2, pcall(function() return wxl.render.BonePalette({ 1, 2, 3 }) end))))
+Observe("RenderScript", "OnRenderPoint", function(point, frame, width, height, samples)
+    print("point " .. point .. " " .. frame .. " " .. width .. "x" .. height .. " " .. samples)
+    if point ~= "after_world" then return end
+    print("begin " .. tostring(wxl.render.Begin({ colors = { { image, clear = { 0, 0, 0, 0 } }, "scene_color" }, depth = "scene_depth" })))
+    print("full " .. tostring(wxl.render.Fullscreen(tint, { 1, 0.5, 0.25, 1 })))
+    print("raw " .. tostring(wxl.render.Fullscreen(tint, "abcd")))
+    wxl.render.End()
+    print("slots " .. wxl.render.SceneColorSlot() .. " " .. wxl.render.SceneDepthSlot())
+    print("dispatch " .. tostring(wxl.render.Dispatch(fill, 4, 2, 1, { 1, 2 })) .. " " .. tostring(select(2, wxl.render.Dispatch(tint, 1, 1, 1))))
+end)
+Observe("RenderScript", "OnModelBatchDrawn", function(model, root, ...)
+    local batch = select(14, ...)
+    local kept = wxl.render.KeepBatch(batch)
+    print("kept " .. tostring(kept ~= nil))
+    wxl.render.Begin({ colors = { image } })
+    print("batch " .. tostring(wxl.render.DrawBatch(kept, mask, { 1, 0, 0, 1, 0.5, 0, 0, 0.1 })))
+    wxl.render.End()
+end)
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_RENDER_SERVICE, WXL_RENDER_SERVICE_VERSION, FakeRender::Table()});
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            Check(sink.Has("[wxl.draw-a] made true true 960 118"),
+                  "pipelines from a file of the mod's folder and from bytes, and a screen image with its size and slot");
+            Check(FakeRender::Trace().size() >= 2 && FakeRender::Trace()[0] == "pipeline tint 8" && !FakeRender::Pipelines().empty(),
+                  "the file's bytes reach the service with the pipeline's name");
+            bool batchDesc = false;
+            for (const auto& [handle, desc] : FakeRender::Pipelines())
+                if (desc.kind == WXL_RENDER_PIPELINE_BATCH && desc.color_count == 2 && desc.depth_test == WXL_RENDER_DEPTH_LESS_EQUAL &&
+                    desc.cull == WXL_RENDER_CULL_BATCH && desc.color_formats[1] == WXL_RENDER_FORMAT_RGBA8)
+                    batchDesc = true;
+            Check(batchDesc, "a batch pipeline's names become the desc's numbers, culled as the batch by default");
+            Check(sink.Has("[wxl.draw-a] kind") && sink.Has("'kind' must be one of \"graphics\", \"fullscreen\", \"batch\"") &&
+                      sink.Has("[wxl.draw-a] escape") && sink.Has("is not inside the mod's folder") &&
+                      sink.Has("[wxl.draw-a] vertexless") && sink.Has("a graphics pipeline takes a vertex program"),
+                  "a kind of no name, a path out of the folder and a graphics pipeline without its vertex program are errors");
+            Check(sink.Has("[wxl.draw-a] outside invalid"), "a draw outside a pass is refused");
+            Check(sink.Has("[wxl.draw-a] compute true") && sink.Has("'compute' is missing; a compute pipeline takes SPIR-V"),
+                  "a compute pipeline from a file of the mod's folder; one without its program is an error");
+            Check(sink.Has(("[wxl.draw-a] palette " + std::to_string(0x20000000ull + 300 * 48)).c_str()) &&
+                      sink.Has("'matrices' (argument 1) must hold whole matrices"),
+                  "a palette of 300 matrices from a table answers its address; a table of no whole matrix is an error");
+            Check(sink.Has("[wxl.draw-a] replace true not_found") && FakeRender::Replaced().count("Diffuse_T1/1"),
+                  "a shader replaced from a file; restoring one the mod did not replace is not found");
+
+            const wxl_render_point_args point{WXL_RENDER_POINT_AFTER_WORLD, 12, 1920, 1080, 4};
+            host.Raise(WXL_EV_RenderPoint, &point);
+            Check(sink.Has("[wxl.draw-a] point after_world 12 1920x1080 4") && sink.Has("[wxl.draw-a] begin true") &&
+                      sink.Has("[wxl.draw-a] full true") && sink.Has("[wxl.draw-a] raw true") && sink.Has("[wxl.draw-a] slots 1 2"),
+                  "RenderPoint reaches Lua by name; a pass of an image cleared and the frame's attachments, full-screen draws");
+            Check(sink.Has("[wxl.draw-a] dispatch true invalid"), "a compute pipeline is dispatched between passes; another kind is refused");
+            const wxl_render_pass& pass = FakeRender::LastPass();
+            // The trace's bytes: the palette (at load), the two full-screen pushes, the dispatch's push.
+            float first[4] = {}, matrix[12] = {};
+            if (FakeRender::Bytes().size() > 1 && FakeRender::Bytes()[1].size() == 16) std::memcpy(first, FakeRender::Bytes()[1].data(), 16);
+            if (!FakeRender::Bytes().empty() && FakeRender::Bytes()[0].size() == 300 * 48)
+                std::memcpy(matrix, FakeRender::Bytes()[0].data() + 299 * 48, 48);
+            Check(pass.color_count == 2 && pass.clear == 1u && pass.colors[1] == WXL_RENDER_SCENE_COLOR &&
+                      pass.depth == WXL_RENDER_SCENE_DEPTH && first[1] == 0.5f && first[2] == 0.25f &&
+                      FakeRender::Bytes().size() == 4 && FakeRender::Bytes()[2].size() == 4 && FakeRender::Bytes()[3].size() == 8,
+                  "the pass crosses whole; push as numbers become 32-bit floats, a string its bytes");
+            Check(matrix[0] == 3589.0f && matrix[11] == 3600.0f, "a palette's numbers become 32-bit floats, 12 a matrix, in order");
+
+            wxl_model_batch_args drawn{};
+            int                  token = 0;
+            drawn.batch                = &token;
+            host.Raise(WXL_EV_ModelBatchDrawn, &drawn);
+            Check(sink.Has("[wxl.draw-a] kept true") && sink.Has("[wxl.draw-a] batch true") && FakeRender::Bytes().size() == 5 &&
+                      FakeRender::Bytes()[4].size() == 32,
+                  "a batch kept from ModelBatchDrawn is drawn again with the mod's constants");
+            host.Shutdown();
+        }
+        Check(FakeRender::Replaced().empty(), "a Lua mod's replaced shaders are restored when it goes");
+        Check(FakeRender::Pipelines().empty() && FakeRender::Images().empty(), "and its pipelines and images are given back");
+        if (g_failures) sink.Dump();
+    }
+
+    Section("console variables in Lua");
+    {
+        using wxltest::FakeView;
+        const fs::path mods = MakeTree(scratch, "cvars", binary, fs::path());
+        WriteFile(mods / "cv-a" / "mod.json", LuaManifest("wxl.cv-a"));
+        WriteFile(mods / "cv-a" / "init.lua", R"(
+print("reg " .. tostring(wxl.cvar.Register("cvA_scale", 1.5, { "saved", "latched" }, "a size")) .. " " ..
+      tostring(wxl.cvar.Register("cvA_on", true, "character")) .. " " .. tostring(wxl.cvar.Register("cvA_mask", "x", 9)))
+print("read " .. wxl.cvar.Get("cvA_scale") .. " " .. wxl.cvar.GetNumber("cvA_scale") .. " " ..
+      tostring(wxl.cvar.GetBool("cvA_on")) .. " " .. tostring(wxl.cvar.Exists("CVA_SCALE")) .. " " .. wxl.cvar.GetDefault("cvA_on"))
+print("set " .. tostring(wxl.cvar.SetRange("cvA_scale", 0.5, 3)) .. " " .. tostring(wxl.cvar.SetNumber("cvA_scale", 2)) .. " " ..
+      tostring(select(2, wxl.cvar.Set("cvA_scale", "9"))) .. " " .. tostring(wxl.cvar.SetBool("cvA_on", false)) .. " " ..
+      tostring(wxl.cvar.Reset("cvA_scale")))
+print("missing " .. tostring(select(2, wxl.cvar.Get("cvA_none"))))
+print("flag " .. tostring(select(2, pcall(function() return wxl.cvar.Register("cvA_x", "0", "nope") end))))
+print("value " .. tostring(select(2, pcall(function() return wxl.cvar.Register("cvA_x") end))))
+)");
+        WriteFile(mods / "cv-b" / "mod.json", LuaManifest("wxl.cv-b", "\"loadAfter\": [ \"wxl.cv-a\" ]"));
+        WriteFile(mods / "cv-b" / "init.lua", R"(
+print("b taken " .. tostring(select(2, wxl.cvar.Register("CVA_SCALE", "1"))))
+print("b release " .. tostring(select(2, wxl.cvar.Release("cvA_scale"))))
+print("b own " .. tostring(wxl.cvar.Register("cvB_name", "x")) .. " " .. tostring(wxl.cvar.Release("cvB_name")))
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_CVAR_SERVICE, WXL_CVAR_SERVICE_VERSION, FakeView::CVarTable()});
+        FakeView::CVars().clear();
+        FakeView::CVarCalls().clear();
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            const auto& calls = FakeView::CVarCalls();
+            Check(sink.Has("[wxl.cv-a] reg true true true") && calls.size() >= 3 && calls[0].name == "cvA_scale" &&
+                      calls[0].value == "1.5" && calls[0].flags == (WXL_CVAR_SAVED | WXL_CVAR_LATCHED) &&
+                      calls[0].help == "a size" && calls[1].value == "1" && calls[1].flags == WXL_CVAR_CHARACTER &&
+                      calls[2].flags == 9u,
+                  "Register takes a number, a boolean or a string, and flags as names, a list or a mask");
+            Check(sink.Has("[wxl.cv-a] read 1.5 1.5 true true 1"), "Get, GetNumber, GetBool, Exists and GetDefault answer");
+            Check(sink.Has("[wxl.cv-a] set true true invalid true true"), "a range refuses a set outside it");
+            Check(sink.Has("[wxl.cv-a] missing not_found"), "a name nobody registered is not found");
+            Check(sink.Has("[wxl.cv-a] flag") && sink.Has("has no flag named \"nope\"") &&
+                      sink.Has("'default' (argument 2) is missing"),
+                  "a flag that does not exist, or no default, is an error naming it");
+            Check(sink.Has("[wxl.cv-b] b taken invalid") && sink.Has("[wxl.cv-b] b release not_found") &&
+                      sink.Has("[wxl.cv-b] b own true true") && sink.Has("holds it; choose a name of your own"),
+                  "another Lua mod's name is refused with the reason, and cannot be released by it");
+            FakeView::CVarCalls().clear();
+            host.Shutdown();
+        }
+        size_t released = 0;
+        for (const auto& call : FakeView::CVarCalls())
+            if (call.name.rfind("cvA_", 0) == 0) ++released;
+        Check(released == 3, "a Lua mod's variables are released when it unloads");
+        if (g_failures) sink.Dump();
+    }
+
+    Section("the terrain in Lua");
+    {
+        using wxltest::FakeView;
+        const fs::path mods = MakeTree(scratch, "terrain", binary, fs::path());
+        WriteFile(mods / "dig-a" / "mod.json", LuaManifest("wxl.dig-a"));
+        WriteFile(mods / "dig-a" / "init.lua", R"(
+print("height " .. wxl.terrain.Height(10, 5) .. " " .. wxl.terrain.Height(10, 5, true) .. " " .. tostring(wxl.terrain.Height(-1, 5)))
+print("presence " .. wxl.terrain.Presence(1, 1) .. " " .. wxl.terrain.Presence(-1, 1))
+local hit = wxl.terrain.Trace({ x = 1, y = 2, z = 50 }, { x = 1, y = 2, z = 0 })
+print("trace " .. hit.point.z .. " " .. hit.normal.z .. " " .. hit.chunk_x .. " " .. hit.chunk_y .. " " .. hit.fraction .. " " ..
+      tostring(wxl.terrain.Trace({ x = -1, y = 0, z = 0 }, { x = -1, y = 0, z = -1 })))
+local at = wxl.terrain.Locate(0, 0)
+print("locate " .. at.chunk_x .. " " .. at.chunk_y .. " " .. at.cell_row .. " " .. at.nearest .. " " .. tostring(at.loaded))
+local v = wxl.terrain.Vertices(at.chunk_x, at.chunk_y)
+print("vertices " .. #v .. " " .. v[1].z .. " " .. tostring(select(2, wxl.terrain.Vertices(-1, 0))))
+local region = wxl.terrain.VerticesIn(0, 0, 3)
+print("region " .. tostring(#region > 0) .. " " .. region[1].original_z .. " " .. tostring(region[1].loaded) .. " " ..
+      type(region[1].inner) .. " " .. tostring(#wxl.terrain.VerticesIn(0, 0, 0.001) == 1))
+print("set " .. tostring(wxl.terrain.SetHeights({ { chunk_x = 512, chunk_y = 512, index = 0, height = 41 },
+                                                  { chunk_x = 512, chunk_y = 512, index = 9, height = 41.5 } })))
+print("bad " .. tostring(select(2, wxl.terrain.SetHeights({ { chunk_x = 512, chunk_y = 512, index = 145, height = 1 } }))))
+print("shape " .. tostring(select(2, pcall(function() return wxl.terrain.SetHeights({ { chunk_x = 512, index = 0, height = 1 } }) end))))
+print("reset " .. tostring(wxl.terrain.Reset(512, 512)) .. " " .. tostring(wxl.terrain.ResetAll()))
+print("stats " .. wxl.terrain.Stats().edited_chunks)
+)");
+        WriteFile(mods / "dig-b" / "mod.json", LuaManifest("wxl.dig-b", "\"loadAfter\": [ \"wxl.dig-a\" ]"));
+        WriteFile(mods / "dig-b" / "init.lua", R"(
+print("b " .. tostring(wxl.terrain.SetHeights({ { chunk_x = 1, chunk_y = 2, index = 3, height = 4 } })))
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_TERRAIN_SERVICE, WXL_TERRAIN_SERVICE_VERSION, FakeView::TerrainTable()});
+        FakeView::TerrainCalls().clear();
+        uint32_t layerA = 0, layerB = 0;
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            Check(sink.Has("[wxl.dig-a] height 42 40 nil"), "Height answers a number, the original on request, nil for none");
+            Check(sink.Has("[wxl.dig-a] presence ground none"), "Presence answers a name");
+            Check(sink.Has("[wxl.dig-a] trace 42 1 511 511 0.5 nil"), "Trace answers a table, nil for a miss");
+            Check(sink.Has("[wxl.dig-a] locate 512 512 0 0 true"), "Locate answers a table");
+            Check(sink.Has("[wxl.dig-a] vertices 145 42 not_found"), "Vertices answers the 145 points, not_found for none");
+            Check(sink.Has("[wxl.dig-a] region true 40 true boolean true"), "VerticesIn answers a list of vertex tables");
+            Check(sink.Has("[wxl.dig-a] set true") && sink.Has("[wxl.dig-a] bad invalid"), "SetHeights answers true, or why not");
+            Check(sink.Has("[wxl.dig-a] shape") && sink.Has("entry 1 must be a table {chunk_x, chunk_y, index, height} of numbers; its chunk_y is nil"),
+                  "an entry without a field is an error naming it");
+            Check(sink.Has("[wxl.dig-a] reset true true") && sink.Has("[wxl.dig-a] stats 4"), "Reset, ResetAll and Stats answer");
+            Check(sink.Has("[wxl.dig-b] b true"), "a second Lua mod edits too");
+            const auto& calls = FakeView::TerrainCalls();
+            for (const auto& call : calls)
+            {
+                if (call.what != "set") continue;
+                if (!layerA) layerA = call.layer;
+                else if (call.layer != layerA) layerB = call.layer;
+            }
+            Check(layerA && layerB && layerA != layerB && calls[0].heights.size() == 2 && calls[0].heights[1].height == 41.5f,
+                  "each Lua mod edits in a layer of its own, its entries as given");
+            FakeView::TerrainCalls().clear();
+            host.Shutdown();
+        }
+        bool resetA = false, resetB = false;
+        for (const auto& call : FakeView::TerrainCalls())
+        {
+            if (call.what != "reset_all") continue;
+            resetA = resetA || call.layer == layerA;
+            resetB = resetB || call.layer == layerB;
+        }
+        Check(resetA && resetB, "a Lua mod's edits come off when it unloads");
+        if (g_failures) sink.Dump();
+    }
+
+    Section("shapes in the world in Lua");
+    {
+        using wxltest::FakeView;
+        const fs::path mods = MakeTree(scratch, "draw", binary, fs::path());
+        WriteFile(mods / "shapes" / "mod.json", LuaManifest("wxl.shapes"));
+        WriteFile(mods / "shapes" / "init.lua", R"(
+print("supported " .. tostring(wxl.draw.Supported()))
+print("grid " .. tostring(wxl.draw.Draw({ kind = "grid", center = { x = 1, y = 2, z = 3 }, length = 12, width = 8, spacing = 1 },
+                                        { color = 0x40C0FF, alpha = 0.7, width = 1.5 })))
+print("line " .. tostring(wxl.draw.Draw({ kind = "line", points = { { 0, 0, 0 }, { x = 5, y = 0, z = 0 }, { 5, 5, 0 } }, on_ground = true })))
+print("refused " .. tostring(select(2, wxl.draw.Draw({ kind = "circle", radius = 500 }))))
+print("kind " .. tostring(select(2, pcall(wxl.draw.Draw, { kind = "blob" }))))
+print("color " .. tostring(select(2, pcall(wxl.draw.Draw, { kind = "circle", radius = 1 }, { color = "red" }))))
+local cone = wxl.draw.Add({ kind = "sector", center = { x = 4, y = 5, z = 6 }, radius = 15, facing = 1, angle = 1.2 },
+                          { color = 0xFF4020, fill_alpha = 0.3, fade_out = 0.4, depth = "on_top" }, 3)
+print("cone " .. tostring(cone))
+print("move " .. tostring(cone:Move({ x = 7, y = 8, z = 9 }, 0.5)) .. " " .. tostring(cone:SetDuration(2)) .. " " ..
+      tostring(wxl.draw.SetStyle(cone, { color = 0x00FF00 })) .. " " ..
+      tostring(wxl.draw.Update(cone, { kind = "ring", radius = 4, inner = 3 })))
+local kept = wxl.draw.Add({ kind = "box", center = { x = 0, y = 0, z = 0 }, size = { x = 1, y = 1, z = 1 } })
+cone:Remove()
+print("stats " .. wxl.draw.Stats().vertices)
+print("soft " .. tostring(wxl.draw.Draw({ kind = "line", points = { { 0, 0, 0 }, { 5, 0, 0 }, { 9, 0, 0 } }, alphas = { 0, 1, 0.5 } },
+                                        { color = 0xE0B040, softness = 1.5, alpha_start = 0.25, shadow_alpha = 0.6 })))
+print("textured " .. tostring(wxl.draw.Draw({ kind = "circle", radius = 4 },
+                                            { fill_alpha = 0.9, fill_color = 0x606060, texture = { "Interface\\WXL\\x.blp", 0.5, 0.75 },
+                                              uv = "world", uv_size = 4, uv_rotation = 0.3, uv_offset = { 0.1, 0.2 },
+                                              blend = "modulate", feather = 1, radial_fade = 0.5, shadow_offset = { x = -2, y = 3 } })))
+print("xray " .. tostring(wxl.draw.Draw({ kind = "box", size = { 2, 2, 4 } }, { fill_alpha = 0.3, texture = "x.blp", occluded_alpha = 0.35 })))
+print("blend " .. tostring(select(2, pcall(wxl.draw.Draw, { kind = "circle", radius = 1 }, { blend = "screen" }))))
+print("emit " .. tostring(wxl.draw.Emit({ spawn = "disc", center = { 1, 2, 3 }, extent = { 1.5, 0, 0 }, burst = 12, speed = { 3, 6 }, life = 0.5,
+                                         gravity = 19.29, ground = "bounce", restitution = 0.35, friction = 0.5 },
+                                       { texture = "dust.blp", frames = { 4, 2 }, blend = "add", softness = 0.3,
+                                         keys = { { t = 0, size = 0.6, color = 0x8A7A60, alpha = 0.5 }, { t = 1, size = 2.5, alpha = 0 } } })))
+local fountain = wxl.draw.AddEmitter({ center = { 4, 5, 6 }, rate = 30, attractor = { 4, 5, 6 }, attraction = 8, attract_radius = 0.2 })
+print("emitter " .. tostring(fountain ~= nil) .. " " .. tostring(fountain:Burst(5)) .. " " .. tostring(fountain:Place({ x = 7, y = 8, z = 9 }, 0.5)) .. " " ..
+      tostring(wxl.draw.UpdateEmitter(fountain, { spawn = "box", extent = { 1, 1, 1 } })) .. " " ..
+      tostring(wxl.draw.SetEmitterStyle(fountain, { mode = "stretched", stretch = 0.05 })))
+print("spawn " .. tostring(select(2, pcall(wxl.draw.Emit, { spawn = "cube" }))))
+print("particles " .. wxl.draw.Stats().particles)
+print("beam " .. tostring(wxl.draw.Draw({ kind = "beam", points = { { 0, 0, 0 }, { 0, 0, 10 } }, widths = { 0.8, 2.2 }, alphas = { 0.9, 0 } },
+                                       { fill_alpha = 1, mask = true, texture = "ray.blp", texture_blur = 1.5, feather = 1 })))
+print("alphas " .. tostring(select(2, pcall(wxl.draw.Draw, { kind = "line", points = { { 0, 0, 0 }, { 1, 0, 0 } }, alphas = { 1 } }))))
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_DRAW_SERVICE, WXL_DRAW_SERVICE_VERSION, FakeView::DrawTable()});
+        FakeView::DrawCalls().clear();
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            Check(sink.Has("[wxl.shapes] supported true"), "Supported answers");
+            Check(sink.Has("[wxl.shapes] grid true") && sink.Has("[wxl.shapes] line true"), "Draw takes tables and answers true");
+            Check(sink.Has("[wxl.shapes] refused invalid"), "a shape the service refuses answers nil and why");
+            Check(sink.Has("the shape's 'kind' must be one of \"line\""), "an unknown kind is an error listing the kinds");
+            Check(sink.Has("the style's 'color' must be a number 0xRRGGBB"), "a colour that is no number is an error saying so");
+            Check(sink.Has("[wxl.shapes] cone ") && sink.Has("[wxl.shapes] move true true true true"),
+                  "Add answers a Shape whose methods and functions reach it");
+            Check(sink.Has("[wxl.shapes] stats 1234"), "Stats answers a table");
+            const auto& calls = FakeView::DrawCalls();
+            bool grid = false, line = false, cone = false;
+            for (const auto& c : calls)
+            {
+                grid = grid || (c.what == "draw" && c.kind == WXL_DRAW_GRID && c.center.y == 2.0f && c.style.color == 0x40C0FF &&
+                                std::fabs(c.style.alpha - 0.7f) < 1e-6f);
+                line = line || (c.what == "draw" && c.kind == WXL_DRAW_LINE && c.points.size() == 3 && c.points[1].x == 5.0f &&
+                                (c.flags & WXL_DRAW_ON_GROUND) && !c.styled);
+                cone = cone || (c.what == "add" && c.kind == WXL_DRAW_SECTOR && c.duration == 3.0f && c.style.depth == WXL_DRAW_DEPTH_ON_TOP &&
+                                std::fabs(c.style.fill_alpha - 0.3f) < 1e-6f);
+            }
+            Check(grid && line && cone, "the tables reach the service as given, a style left out as none");
+            Check(sink.Has("[wxl.shapes] soft true") && sink.Has("[wxl.shapes] textured true"), "abi 0.1.38's fields are taken");
+            Check(sink.Has("the style's 'blend' must be one of \"alpha\""), "an unknown blend is an error listing the blends");
+            Check(sink.Has("the shape has 2 points and 1 'alphas'"), "alphas that do not match the points are an error");
+            bool soft = false, textured = false;
+            for (const auto& c : calls)
+            {
+                soft = soft || (c.what == "draw" && c.alphas.size() == 3 && c.alphas[2] == 0.5f && c.style.softness == 1.5f &&
+                                (c.style.flags & WXL_DRAW_STYLE_LINE_ALPHA) && c.style.alpha_start == 0.25f && c.style.alpha_end == 1.0f &&
+                                std::fabs(c.style.shadow_alpha - 0.6f) < 1e-6f && c.style.shadow_x == 1.5f && c.style.shadow_softness == 1.0f);
+                textured = textured || (c.what == "draw" && c.texture == "Interface\\WXL\\x.blp" && c.style.texture_right == 0.5f &&
+                                        c.style.texture_bottom == 0.75f && c.style.uv == WXL_DRAW_UV_WORLD && c.style.uv_size_x == 4.0f &&
+                                        c.style.uv_size_y == 4.0f && std::fabs(c.style.uv_offset_y - 0.2f) < 1e-6f &&
+                                        c.style.blend == WXL_DRAW_BLEND_MODULATE && c.style.feather == 1.0f && c.style.radial_fade == 0.5f &&
+                                        (c.style.flags & WXL_DRAW_STYLE_FILL_COLOR) && c.style.fill_color == 0x606060 &&
+                                        c.style.shadow_x == -2.0f && c.style.shadow_y == 3.0f);
+            }
+            Check(soft && textured, "the line's opacities and shadow, the texture and its frame reach the service as given");
+            bool xray = false;
+            for (const auto& c : calls) xray = xray || (c.kind == WXL_DRAW_BOX && std::fabs(c.style.occluded_alpha - 0.35f) < 1e-6f && c.texture == "x.blp");
+            Check(sink.Has("[wxl.shapes] xray true") && xray, "a textured box's occluded_alpha reaches the service (abi 0.1.39)");
+            Check(sink.Has("[wxl.shapes] emit true") && sink.Has("[wxl.shapes] emitter true true true true true"),
+                  "Emit and AddEmitter take tables; an Emitter's methods and functions reach it (abi 0.1.40)");
+            Check(sink.Has("'spawn' must be one of \"point\""), "an unknown spawn is an error listing the spawns");
+            Check(sink.Has("[wxl.shapes] particles 321"), "Stats answers the particles alive");
+            bool emitTable = false, keptTable = false;
+            for (const auto& c : calls)
+            {
+                emitTable = emitTable || (c.what == "emit" && c.emitter.spawn == WXL_DRAW_SPAWN_DISC && c.emitter.extent.x == 1.5f && c.emitter.burst == 12 &&
+                                          c.emitter.speed_min == 3.0f && c.emitter.speed_max == 6.0f && c.emitter.life_min == 0.5f &&
+                                          c.emitter.ground == WXL_DRAW_GROUND_BOUNCE && c.texture == "dust.blp" && c.particles.frames_x == 4 &&
+                                          c.particles.frames_y == 2 && c.particles.blend == WXL_DRAW_BLEND_ADD && c.particles.key_count == 2 &&
+                                          c.particles.keys[1].size == 2.5f && c.particles.keys[1].color == 0xFFFFFFu);
+                keptTable = keptTable || (c.what == "add_emitter" && c.emitter.rate == 30.0f && c.emitter.attraction == 8.0f && !c.looked);
+            }
+            Check(emitTable && keptTable, "the emitter's and the look's tables reach the service as given");
+            bool beamTable = false;
+            for (const auto& c : calls)
+                beamTable = beamTable || (c.kind == WXL_DRAW_BEAM && c.points.size() == 2 && c.alphas.size() == 2 && (c.style.flags & WXL_DRAW_STYLE_MASK) &&
+                                          c.style.texture_blur == 1.5f);
+            Check(sink.Has("[wxl.shapes] beam true") && beamTable, "a beam's table, its mask and blur reach the service");
+            FakeView::DrawCalls().clear();
+            host.Shutdown();
+        }
+        bool removed = false;
+        for (const auto& c : FakeView::DrawCalls()) removed = removed || c.what == "remove";
+        Check(removed, "the shapes a Lua mod keeps go when it unloads");
+        if (g_failures) sink.Dump();
+    }
+
+    Section("animations played on units in Lua");
+    {
+        using wxltest::FakeView;
+        const fs::path mods = MakeTree(scratch, "animation", binary, fs::path());
+        WriteFile(mods / "swing-a" / "mod.json", LuaManifest("wxl.swing-a"));
+        WriteFile(mods / "swing-a" / "init.lua", R"(
+local me = wxl.object.LocalPlayer()
+print("play " .. tostring(wxl.animation.Play(me, 62)) .. " " .. tostring(wxl.animation.Play(me, 62, 1 + 4, 1.25)))
+print("playing " .. wxl.animation.Playing(me) .. " current " .. wxl.animation.Current(me))
+print("bad " .. tostring(select(2, wxl.animation.Play(me, 600))))
+print("arg " .. tostring(select(2, pcall(wxl.animation.Play, me, -1))))
+print("missing " .. tostring(select(2, pcall(wxl.animation.Play, me))))
+Observe("ObjectScript", "OnUnitAnimationEnded", function(unit, anim_id, reason, looped)
+    print("ended " .. anim_id .. " " .. reason .. " " .. tostring(looped))
+end)
+)");
+        WriteFile(mods / "swing-b" / "mod.json", LuaManifest("wxl.swing-b", "\"loadAfter\": [ \"wxl.swing-a\" ]"));
+        WriteFile(mods / "swing-b" / "init.lua", R"(
+local me = wxl.object.LocalPlayer()
+print("b play " .. tostring(wxl.animation.Play(me, 17)))
+print("b stop " .. tostring(wxl.animation.Stop(me)) .. " " .. tostring(select(2, wxl.animation.Stop(me))))
+print("b again " .. tostring(wxl.animation.Play(me, 18)))
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_ANIMATION_SERVICE, WXL_ANIMATION_SERVICE_VERSION, FakeView::AnimationTable()});
+        FakeView::AnimationCalls().clear();
+        FakeView::AnimationPlays().clear();
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            Check(sink.Has("[wxl.swing-a] play true true") && sink.Has("[wxl.swing-a] playing 62 current 62"),
+                  "Play answers true; Playing and Current answer the ids");
+            Check(sink.Has("[wxl.swing-a] bad invalid"), "an id the service refuses answers nil and why");
+            Check(sink.Has("takes a whole number from 0") && sink.Has("'anim_id' (argument 2) is missing"),
+                  "a negative id or none is an error naming the argument");
+            Check(sink.Has("[wxl.swing-b] b play true") && sink.Has("[wxl.swing-b] b stop true not_found"),
+                  "the last Lua mod to play on a unit holds it and stops it once");
+            const auto& calls = FakeView::AnimationCalls();
+            Check(calls.size() >= 2 && calls[1].anim == 62 && calls[1].flags == 5u && calls[1].speed == 1.25 && calls[0].speed == 0.0,
+                  "the flags and the speed reach the service as given, left out as 0");
+            wxl_unit_animation_args args{};
+            args.unit    = 0x1234;
+            args.anim_id = 17;
+            args.reason  = WXL_ANIMATION_END_INTERRUPTED;
+            args.looped  = WXL_FALSE;
+            host.Raise(WXL_EV_UnitAnimationEnded, &args);
+            Check(sink.Has("[wxl.swing-a] ended 17 interrupted false"), "OnUnitAnimationEnded reaches a Lua mod with the reason's name");
+            FakeView::AnimationCalls().clear();
+            host.Shutdown();
+        }
+        bool stopped = false;
+        for (const auto& c : FakeView::AnimationCalls()) stopped = stopped || c.what == "stop";
+        Check(stopped, "the animation a Lua mod plays is stopped when it unloads");
+        if (g_failures) sink.Dump();
+    }
+
+    Section("a rolled view and a pointer held off the centre in Lua");
+    {
+        using wxltest::FakeView;
+        const fs::path mods = MakeTree(scratch, "roll", binary, fs::path());
+        WriteFile(mods / "roll-a" / "mod.json", LuaManifest("wxl.roll-a"));
+        WriteFile(mods / "roll-a" / "init.lua", R"(
+print("rolled " .. tostring(wxl.camera.SetViewRolled({ x = 1, y = 2, z = 3 }, { x = 1, y = 0, z = 0 }, 0, 0.4)) ..
+      " " .. wxl.camera.Roll())
+print("at " .. tostring(wxl.input.CaptureCursorAt(0.5, 0.375)) .. " " .. wxl.input.CapturePoint().y)
+print("off " .. tostring(select(2, wxl.input.CaptureCursorAt(0.5, 1.5))))
+print("no roll " .. tostring(select(2, pcall(function()
+    return wxl.camera.SetViewRolled({ x = 1, y = 2, z = 3 }, { x = 1, y = 0, z = 0 }, 0) end))))
+)");
+        WriteFile(mods / "roll-b" / "mod.json", LuaManifest("wxl.roll-b", "\"loadAfter\": [ \"wxl.roll-a\" ]"));
+        WriteFile(mods / "roll-b" / "init.lua", R"(
+print("b set " .. tostring(wxl.camera.SetView({ x = 9, y = 9, z = 9 }, { x = 0, y = 1, z = 0 }, 0)))
+print("b capture " .. tostring(wxl.input.CaptureCursor(true)))
+Observe("WorldScript", "OnMouseMotion", function(dx)
+    if dx ~= 99 then return end
+    print("b release " .. tostring(wxl.camera.ReleaseView()) .. " " .. tostring(wxl.input.CaptureCursor(false)))
+end)
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_CAMERA_SERVICE, WXL_CAMERA_SERVICE_VERSION, FakeView::CameraTable()});
+        config.services.push_back(PublishedService{WXL_INPUT_SERVICE, WXL_INPUT_SERVICE_VERSION, FakeView::InputTable()});
+        FakeView::Calls().clear();
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            Check(sink.Has("[wxl.roll-a] rolled true 0.25") && sink.Has("[wxl.roll-a] at true 0.375") &&
+                      sink.Has("[wxl.roll-a] off invalid"),
+                  "SetViewRolled and CaptureCursorAt answer true, Roll and CapturePoint read, a point off the window is invalid");
+            Check(sink.Has("[wxl.roll-a] no roll") && sink.Has("'roll' (argument 4) is missing"),
+                  "a rolled view without its roll is an error naming it");
+            {
+                const auto& calls = FakeView::Calls();
+                Check(calls.size() == 4 && calls[0].name == "set_view_rolled" && calls[0].roll == 0.4 &&
+                          calls[1].name == "capture_at" && calls[1].position.y == 0.375f && calls[2].name == "set_view" &&
+                          calls[3].name == "capture",
+                      "the runtime gets the roll and the point, then the later mod's view and centre");
+            }
+            FakeView::Calls().clear();
+            const wxl_mouse_motion_args release{99, 0};
+            host.Raise(WXL_EV_MouseMotion, &release);
+            const auto& calls = FakeView::Calls();
+            Check(sink.Has("[wxl.roll-b] b release true true") && calls.size() == 2 &&
+                      calls[0].name == "set_view_rolled" && calls[0].roll == 0.4 && calls[1].name == "capture_at" &&
+                      calls[1].position.y == 0.375f,
+                  "the later mod letting go brings back the earlier's rolled view and its point");
+            host.Shutdown();
+        }
+        if (g_failures) sink.Dump();
+    }
+
+    Section("textures in Lua");
+    {
+        using wxltest::FakeView;
+        const fs::path mods = MakeTree(scratch, "texture", binary, fs::path());
+        WriteFile(mods / "tex-a" / "mod.json", LuaManifest("wxl.tex-a"));
+        WriteFile(mods / "tex-a" / "init.lua", R"(
+local path, right, bottom, tw, th = wxl.texture.Make(".\\assets\\reticle.svg", 34, 21,
+    { fill = "ff4040ff", outline = { color = "#000000cc", width = 2 }, glow = false, ring = 0x80FFFFFF }, "ffffff80")
+print("made " .. path .. " " .. right .. " " .. bottom .. " " .. tw .. " " .. th)
+print("missing " .. tostring(select(2, wxl.texture.Make("Interface\\AddOns\\X\\missing.png", 16, 16))))
+print("bad colour " .. tostring(select(2, pcall(function() return wxl.texture.Make("a.svg", 8, 8, { fill = "red" }) end))))
+print("bad field " .. tostring(select(2, pcall(function() return wxl.texture.Make("a.svg", 8, 8, { fill = { colour = "ff0000" } }) end))))
+print("bad size " .. tostring(select(2, pcall(function() return wxl.texture.Make("a.svg", -1, 8) end))))
+local stats = wxl.texture.Stats()
+print("stats " .. stats.textures .. " " .. stats.resident .. " " .. stats.byte_limit)
+)");
+
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_TEXTURE_SERVICE, WXL_TEXTURE_SERVICE_VERSION, FakeView::TextureTable()});
+        FakeView::TextureCalls().clear();
+        {
+            ModHost host(std::move(config));
+            host.LoadAll();
+            host.Stage(WXL_STAGE_READY);
+            Check(sink.Has("[wxl.tex-a] made Interface\\WXL\\fake\\made_34x21.blp 0.53125 0.65625 64 32"),
+                  "Make answers the path, the picture's texture coordinates and the texture's size");
+            const auto& calls = FakeView::TextureCalls();
+            bool groupsWhole = calls.size() == 2 && calls[0].groups.size() == 4;
+            for (const auto& g : groupsWhole ? calls[0].groups : std::vector<FakeView::TextureGroupCall>{})
+            {
+                if (g.id == "fill") groupsWhole = groupsWhole && g.set == WXL_TEXTURE_SET_COLOR && g.color == 0xFFFF4040u;
+                else if (g.id == "outline")
+                    groupsWhole = groupsWhole && g.set == (WXL_TEXTURE_SET_COLOR | WXL_TEXTURE_SET_WIDTH) &&
+                                  g.color == 0xCC000000u && g.width == 2.0f;
+                else if (g.id == "glow") groupsWhole = groupsWhole && g.set == WXL_TEXTURE_SET_VISIBLE && !g.visible;
+                else if (g.id == "ring") groupsWhole = groupsWhole && g.set == WXL_TEXTURE_SET_COLOR && g.color == 0x80FFFFFFu;
+                else groupsWhole = false;
+            }
+            Check(groupsWhole && calls[0].source == "Mods\\tex-a\\assets\\reticle.svg" && calls[0].width == 34 &&
+                      calls[0].height == 21 && calls[0].tint == 0x80FFFFFFu,
+                  "\".\\\\\" names the mod's folder, colours are read as rrggbbaa or 0xAARRGGBB, false hides, a table sets "
+                  "colour and width");
+            Check(sink.Has("[wxl.tex-a] missing no file Interface\\AddOns\\X\\missing.png"), "a failure answers nil and the reason");
+            Check(sink.Has("[wxl.tex-a] bad colour") && sink.Has("group 'fill' \"red\" is not a colour"),
+                  "a colour that is not one is an error naming the group");
+            Check(sink.Has("[wxl.tex-a] bad field") && sink.Has("group 'fill' has a field 'colour'; it takes color, width and visible"),
+                  "a group's unknown field is an error naming what it takes");
+            Check(sink.Has("[wxl.tex-a] bad size") && sink.Has("'width' (argument 2) must be a whole number of pixels"),
+                  "a size that is not one is an error naming it");
+            Check(sink.Has("[wxl.tex-a] stats 3 2 67108864"), "Stats answers a table");
+            host.Shutdown();
+        }
+        if (g_failures) sink.Dump();
+    }
+
+    Section("opcodes of a mod's own in Lua");
+    {
+        using wxltest::FakeNet;
+        const fs::path mods = MakeTree(scratch, "net", binary, fs::path());
+        WriteFile(mods / "pinger" / "mod.json",
+                  LuaManifest("wxl.pinger", "\"net\": { \"opcodes\": [ \"0x521-0x526\" ] }"));
+        WriteFile(mods / "pinger" / "init.lua", R"(
+local net = wxl.net
+print("claim " .. tostring(net.Claim(0x521)) .. " " .. tostring(net.Claim(0x522)) .. " " ..
+      tostring(net.Claim(0x523)) .. " " .. tostring(net.Claim(0x524)) .. " " .. tostring(net.Claim(0x522)))
+print("outside " .. tostring(select(2, net.Claim(0x530))))
+print("stock " .. tostring(select(2, net.Claim(0x100))))
+print("unclaimed " .. tostring(select(2, net.SetHandler(0x525, function() end))))
+net.SetHandler(0x522, function(r, op)
+    local seq, x, name, guid = r:U32(), r:F32(), r:String(), r:PackedGuid()
+    print("got " .. string.format("0x%X", op) .. " " .. seq .. " " .. x .. " " .. name .. " " .. guid .. " " ..
+          tostring(r:AtEnd()))
+end)
+net.SetHandler(0x523, function(r) r:U32() r:U32() end)
+print("compressed " .. tostring(net.SetCompressed(0x522, 0x524)))
+print("early " .. tostring(select(2, net.Send(0x521, net.Writer():U32(1)))) .. " " .. tostring(net.Heard()))
+local z = net.Deflate("abcabcabc")
+print("zip " .. tostring(net.Inflate(z)))
+local w = net.Writer(4)
+w:U32(1):U8(2)
+print("full " .. tostring(w:Ok()) .. " " .. w:Size() .. " " .. tostring(select(2, net.Send(0x521, w))))
+print("state " .. net.State() .. " " .. string.format("0x%X", net.ReservedOpcodeLimit()) .. " " .. net.MaxSend())
+local r = net.Reader("\1\0")
+print("short " .. r:U32() .. " " .. tostring(r:Ok()))
+wxl.script.RegisterFunction("NetPing", function()
+    print("ping " .. tostring(net.Send(0x521, net.Writer():U16(0x1234):String("hi"):PackedGuid("0x0000000000000F00"))) ..
+          " " .. tostring(net.Heard()))
+end)
+)");
+        WriteFile(mods / "thief" / "mod.json", LuaManifest("wxl.thief", "\"loadAfter\": [ \"wxl.pinger\" ]"));
+        WriteFile(mods / "thief" / "init.lua", R"(
+print("held " .. tostring(select(2, wxl.net.Claim(0x522))) .. " declared " .. tostring(select(2, wxl.net.Claim(0x525))) ..
+      " free " .. tostring(wxl.net.Claim(0x600)))
+print("not mine " .. tostring(select(2, wxl.net.Send(0x522, "x"))) .. " " .. tostring(select(2, wxl.net.Release(0x522))))
+)");
+        WriteFile(mods / "twin" / "mod.json",
+                  LuaManifest("wxl.twin", "\"net\": { \"opcodes\": [ \"0x526\" ] }, \"loadAfter\": [ \"wxl.pinger\" ]"));
+        WriteFile(mods / "twin" / "init.lua", "print('twin ran')\n");
+
+        FakeNet::Claims().clear();
+        wxltest::FakeScript::Live() = WXL_SCRIPT_CONTEXT_GAME;
+        wxltest::FakeScript::Functions().clear();
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_SCRIPT_SERVICE, WXL_SCRIPT_SERVICE_VERSION, wxltest::FakeScript::Table()});
+        config.services.push_back(PublishedService{WXL_NET_SERVICE, WXL_NET_SERVICE_VERSION, FakeNet::Table()});
+        ModHost host(std::move(config));
+        host.LoadAll();
+        host.Stage(WXL_STAGE_READY);
+        FakeNet::Connect();
+
+        Check(sink.Has("[wxl.pinger] claim true true true true true"), "a mod claims the numbers its mod.json declares, again too");
+        Check(sink.Has("[wxl.pinger] outside invalid") && sink.Has("0x530 is not among them"),
+              "a number outside its declared ones is refused, saying so");
+        Check(sink.Has("[wxl.pinger] stock invalid") && sink.Has("one of the client's own numbers"),
+              "a number of the client's own is refused without \"stock\"");
+        Check(sink.Has("[wxl.pinger] unclaimed invalid"), "a handler for a number not claimed is refused");
+        Check(sink.Has("[wxl.pinger] compressed true"), "a compressed number pairs with a plain one");
+        Check(sink.Has("[wxl.pinger] early failed false"), "nothing is sent before the server speaks");
+        Check(sink.Has("[wxl.pinger] zip abcabcabc"), "Deflate and Inflate go round");
+        Check(sink.Has("[wxl.pinger] full false 4 invalid"), "a writer past its limit fails, and is not sent");
+        Check(sink.Has("[wxl.pinger] state authenticated 0x520 10000"), "the state, the limit and the largest body read");
+        Check(sink.Has("[wxl.pinger] short 0 false"), "a short read answers 0 and fails the reader");
+        Check(sink.Has("[wxl.thief] held invalid declared invalid free true") && sink.Has("0x522 is claimed by wxl.pinger") &&
+                  sink.Has("0x525 is declared by wxl.pinger"),
+              "another mod's number is refused, held or declared, and the log names its mod");
+        Check(sink.Has("[wxl.thief] not mine invalid not_found"), "nor can it send or release one");
+        Check(!sink.Has("twin ran") && sink.Has("declares opcode 0x526, which wxl.pinger declares"),
+              "a mod declaring a number another declared first does not load");
+
+        wxl::ByteWriter message;
+        message.U32(77).F32(0.5f).String("dig").PackedGuid(0x0000000000000F00ull);
+        const std::string bytes(reinterpret_cast<const char*>(message.Data()), message.Size());
+        Check(FakeNet::Deliver(0x522, bytes) && sink.Has("[wxl.pinger] got 0x522 77 0.5 dig 0x0000000000000F00 true"),
+              "a message reaches the mod's function as a reader over its body");
+        std::string packed(4, '\0');
+        const uint32_t want = static_cast<uint32_t>(bytes.size());
+        std::memcpy(&packed[0], &want, 4);
+        packed += FakeNet::DeflateStored(bytes.data(), bytes.size());
+        sink.lines.clear();
+        Check(FakeNet::Deliver(0x524, packed) && sink.Has("[wxl.pinger] got 0x522 77"),
+              "a compressed message is inflated and handed to the plain number's function");
+        Check(FakeNet::Deliver(0x523, std::string("\1\2\3", 3)) && sink.Has("malformed 0x523 from the server"),
+              "a handler that reads past the end is logged as malformed");
+        FakeNet::Deliver(0x523, std::string("\1\2\3", 3));
+        Check(sink.Count("malformed 0x523") == 1, "once per number");
+
+        wxl_script_call ping = ScriptCallOf({});
+        wxltest::FakeScript::Invoke("NetPing", ping);
+        Check(sink.Has("[wxl.pinger] ping true true") && FakeNet::Sent().back().first == 0x521 &&
+                  FakeNet::Bodies().back() == std::string("\x34\x12hi\0\x02\x0F", 7),
+              "once the server spoke, the mod sends its body as it wrote it");
+        FakeNet::Connect();
+        sink.lines.clear();
+        wxl_script_call again = ScriptCallOf({});
+        wxltest::FakeScript::Invoke("NetPing", again);
+        Check(sink.Has("[wxl.pinger] ping nil false"), "and a new connection closes its gate again");
+
+        host.Shutdown();
+        Check(FakeNet::Claimed().empty(), "every number goes back when the mods go");
+        if (g_failures) sink.Dump();
+    }
+
+    Section("the net-echo example");
+    {
+        using wxltest::FakeNet;
+        const fs::path mods = MakeTree(scratch, "net-echo", binary, fs::path());
+        fs::copy(example.parent_path() / "net-echo", mods / "net-echo", fs::copy_options::recursive);
+        FakeNet::Claims().clear();
+        CaptureSink sink;
+        HostConfig  config = Config(mods, sink);
+        config.services.push_back(PublishedService{WXL_NET_SERVICE, WXL_NET_SERVICE_VERSION, FakeNet::Table()});
+        ModHost host(std::move(config));
+        host.LoadAll();
+        host.Stage(WXL_STAGE_READY);
+        FakeNet::Connect();
+        const size_t          before = FakeNet::Sent().size();
+        const wxl_update_args tick{6.0f};
+        host.Raise(WXL_EV_Update, &tick);
+        Check(FakeNet::Claimed().count(0x521) && FakeNet::Claimed().count(0x522) && FakeNet::Sent().size() == before,
+              "the example claims its two numbers and sends nothing before the server's hello");
+        wxl::ByteWriter hello;
+        hello.U32(0).U32(0).String("");
+        FakeNet::Deliver(0x522, std::string(reinterpret_cast<const char*>(hello.Data()), hello.Size()));
+        host.Raise(WXL_EV_Update, &tick);
+        Check(sink.Has("[wxl.net-echo] the server knows the echo") && FakeNet::Sent().size() == before + 1 &&
+                  FakeNet::Sent().back().first == 0x521,
+              "after the hello it pings");
+        const std::string ping = FakeNet::Bodies().back();
+        FakeNet::Deliver(0x522, ping);
+        Check(sink.Has("[wxl.net-echo] echo 1: \"ping 1\" in"), "and times the echo");
+        host.Shutdown();
         if (g_failures) sink.Dump();
     }
 

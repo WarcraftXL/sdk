@@ -90,11 +90,18 @@ typedef struct wxl_script_api
     wxl_result(WXL_CALL* register_event)(const char* name);
 
     /// Raises a declared event, with its payload: WXL_E_NOT_FOUND for a name nobody declared on
-    /// this context, WXL_E_FAILED while no context exists.
+    /// this context, WXL_E_FAILED while no context exists or when the client faults inside a
+    /// frame's handler (see run).
     wxl_result(WXL_CALL* fire_event)(const char* name, const wxl_value* args, uint32_t count);
 
     /**
      * @brief Runs a chunk of script text in the live context.
+     *
+     * A Lua error in the chunk goes to the interface's error handler, as the client's own scripts'
+     * do, and the call still answers WXL_OK. A hardware fault inside it (a function of the client
+     * called before what it reads exists, such as GetBindingKey before the key bindings are loaded
+     * after a /reload) abandons the chunk the way a Lua error would: the script state is put back
+     * as it was before the call, the runtime logs the fault, and the call answers WXL_E_FAILED.
      * @param name  what to call it in an error message.
      */
     wxl_result(WXL_CALL* run)(wxl_str chunk, const char* name);

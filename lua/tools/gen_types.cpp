@@ -265,7 +265,11 @@ namespace
         if (k == "boolean") return "---@param " + name + " boolean\n";
         if (k == "object")
             return "---@param " + name + " wxl.Object" + (optional.empty() ? "" : " none when left out") + "\n";
-        if (k == "vec3") return "---@param " + name + " wxl.Vec3\n";
+        if (k == "vec3" || k == "vec3_in") return "---@param " + name + " wxl.Vec3\n";
+        if (k == "f32") return "---@param " + name + " number\n";
+        if (k == "placement")
+            return "---@param " + name +
+                   " {position: wxl.Vec3, yaw?: number, pitch?: number, roll?: number, scale?: number}\n";
         if (k == "ptr" || k == "cptr")
             return "---@param " + name + " lightuserdata|wxl.Model an address an event or a call handed you\n";
         if (IsResourceKind(k)) return "---@param " + name + " wxl." + k + "\n";
@@ -277,6 +281,16 @@ namespace
         if (parameter.kind == "bytes_size") return std::string();
         if (parameter.kind == "values") return "...";
         return parameter.name;
+    }
+
+    /// The Lua type of a value kind an out<K> or a found<K> answers.
+    std::string ValueType(const std::string& k)
+    {
+        if (k == "str") return "string";
+        if (k == "vec3") return "wxl.Vec3";
+        if (k == "f64" || k == "f32") return "number";
+        if (k == "boolean") return "boolean";
+        return "integer";
     }
 
     /// The value an answer kind gives, as a Lua type; empty for none.
@@ -294,11 +308,64 @@ namespace
         const std::string listed = Inside(k, "list");
         if (!listed.empty()) return (listed == "wxl_str" ? std::string("string") : ClassOf(listed.c_str())) + "[]|nil";
         const std::string out = Inside(k, "out");
-        if (!out.empty()) return out == "str" ? "string|nil" : out == "vec3" ? "wxl.Vec3|nil" : "integer|nil";
+        if (!out.empty()) return ValueType(out) + "|nil";
+        const std::string found = Inside(k, "found");
+        if (!found.empty()) return ValueType(found) + "|nil";
         const std::string named = Inside(k, "enumeration");
         if (!named.empty())
             if (const wxl::reflect::Enum* e = wxl::reflect::FindEnum(named.c_str())) return AliasOf(*e) + "|integer|nil";
         return "any";
+    }
+
+    /// wxl.net's reader and writer, which no row brings.
+    std::string NetExtras(const std::string& owner)
+    {
+        std::string text =
+            "---A reader over a string of bytes, as a handler is handed one.\n"
+            "---@param bytes string\n---@return wxl.net.Reader reader\n"
+            "function " + owner + ".Reader(bytes) end\n\n"
+            "---An empty message body, refusing to grow past MaxSend() bytes, or past `limit`.\n"
+            "---@param limit? integer\n---@return wxl.net.Writer writer\n"
+            "function " + owner + ".Writer(limit) end\n\n"
+            "---Reads a message's body, little-endian. A read past the end answers 0 (\"\" for strings) and\n"
+            "---leaves the reader failed: read the whole message, then check Ok().\n"
+            "---@class wxl.net.Reader\nlocal NetReader = {}\n";
+        for (const char* name : {"U8", "U16", "U32", "U64", "I8", "I16", "I32", "I64", "F32", "F64"})
+            text += "---@return number\nfunction NetReader:" + std::string(name) + "() end\n";
+        text +=
+            "---@return boolean\nfunction NetReader:Bool() end\n"
+            "---Eight bytes as a guid, \"0x\" and sixteen hex digits.\n---@return string\nfunction NetReader:Guid() end\n"
+            "---A guid as the server packs one: a mask byte, then the bytes it marks.\n"
+            "---@return string\nfunction NetReader:PackedGuid() end\n"
+            "---Three floats.\n---@return wxl.Vec3\nfunction NetReader:Vec3() end\n"
+            "---A string ended by a zero byte, at most `max` bytes before it (4096).\n"
+            "---@param max? integer\n---@return string\nfunction NetReader:String(max) end\n"
+            "---@param count integer\n---@return string\nfunction NetReader:Bytes(count) end\n"
+            "---@param count integer\n---@return wxl.net.Reader self\nfunction NetReader:Skip(count) end\n"
+            "---@return boolean\nfunction NetReader:Ok() end\n"
+            "---Whether every byte was read, and nothing past.\n---@return boolean\nfunction NetReader:AtEnd() end\n"
+            "---@return integer\nfunction NetReader:Remaining() end\n"
+            "---@return integer\nfunction NetReader:Position() end\n"
+            "---@return integer\nfunction NetReader:Size() end\n"
+            "---The whole body.\n---@return string\nfunction NetReader:Data() end\n\n"
+            "---Writes a message's body, little-endian; each call answers the writer, to chain. A write past\n"
+            "---the limit is dropped and leaves the writer failed: Send refuses it.\n"
+            "---@class wxl.net.Writer\nlocal NetWriter = {}\n";
+        for (const char* name : {"U8", "U16", "U32", "U64", "I8", "I16", "I32", "I64", "F32", "F64"})
+            text += "---@param value number\n---@return wxl.net.Writer self\nfunction NetWriter:" + std::string(name) +
+                    "(value) end\n";
+        text +=
+            "---@param value boolean\n---@return wxl.net.Writer self\nfunction NetWriter:Bool(value) end\n"
+            "---@param guid string|integer\n---@return wxl.net.Writer self\nfunction NetWriter:Guid(guid) end\n"
+            "---@param guid string|integer\n---@return wxl.net.Writer self\nfunction NetWriter:PackedGuid(guid) end\n"
+            "---@param v wxl.Vec3\n---@return wxl.net.Writer self\nfunction NetWriter:Vec3(v) end\n"
+            "---The text and a zero byte.\n---@param text string\n---@return wxl.net.Writer self\n"
+            "function NetWriter:String(text) end\n"
+            "---@param bytes string\n---@return wxl.net.Writer self\nfunction NetWriter:Bytes(bytes) end\n"
+            "---@return boolean\nfunction NetWriter:Ok() end\n"
+            "---@return integer\nfunction NetWriter:Size() end\n"
+            "---@return string\nfunction NetWriter:Data() end\n\n";
+        return text;
     }
 
     /// What a shim row takes and gives, as the shims in sdk/lua/src/Shims.cpp serve it.
@@ -355,6 +422,77 @@ namespace
             return "---Takes back what this mod serves under a name; nil, \"not_found\" for one it does not serve.\n"
                    "---@param path string\n---@return true|nil ok\n---@return string|nil reason\n"
                    "function " + owner + ".Unserve(path) end\n\n";
+        if (name == "HashFile")
+            return "---The content hash of a file as the client would read it, from whichever layer holds it: an\n"
+                   "---archive, the disk, a folder of the search path, a provider, served bytes. The bytes are hashed\n"
+                   "---before any transform, by the system's MD5, and the answer is kept: `fresh` reads it again.\n"
+                   "---Reading a large file takes time on the main thread; HashFileAsync does not.\n"
+                   "---@param path string\n---@param fresh? boolean\n"
+                   "---@return wxl.FileHash|nil hash\n---@return string|nil reason\n"
+                   "function " + owner + ".HashFile(path, fresh) end\n\n";
+        if (name == "HashFileAsync")
+            return "---HashFile on a thread of the runtime's: `fn(hash)` is called later, on the main thread, with the\n"
+                   "---table HashFile answers, or nil and the reason. Answers the request's number. A request of a\n"
+                   "---mod that is disabled, reloads or unloads is dropped.\n"
+                   "---@param path string\n---@param fn fun(hash: wxl.FileHash|nil, reason: string|nil)\n"
+                   "---@param fresh? boolean\n---@return integer|nil request\n---@return string|nil reason\n"
+                   "function " + owner + ".HashFileAsync(path, fn, fresh) end\n\n";
+        if (name == "OverrideFile")
+            return "---Replaces a file of the client with another name, for this mod: every open of `path`, and every\n"
+                   "---check that it exists, gets `with` instead, on every thread, above every layer. The way to\n"
+                   "---put a file of the mod's own in place of the client's file. It stays until RestoreFile,\n"
+                   "---or until the mod is disabled, reloads or unloads; when two mods override one name, the later\n"
+                   "---wins. What the client already loaded stays: ReloadAsset makes it read the file again.\n"
+                   "---@param path string\n---@param with string\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".OverrideFile(path, with) end\n\n";
+        if (name == "RestoreFile")
+            return "---Takes this mod's override of a name back; nil, \"not_found\" for one it did not override.\n"
+                   "---@param path string\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".RestoreFile(path) end\n\n";
+        if (name == "ReloadAsset")
+            return "---Makes the client read again a model or a texture it holds, so a file that changed shows: a\n"
+                   "---texture is read again in place, a model is dropped from the model cache and the units drawn\n"
+                   "---with it made again. Other kinds answer nil, \"unsupported\"; nil, \"pending\" when what the\n"
+                   "---client holds is still loading.\n"
+                   "---@param path string\n---@return wxl.AssetReload|nil done\n---@return string|nil reason\n"
+                   "function " + owner + ".ReloadAsset(path) end\n\n";
+        if (name == "Publish")
+            return "---Publishes a service under a name, for this mod. `fn(request, method, ...)` runs on the main\n"
+                   "---thread for each call: what it returns is the answer; when it returns nothing, it answers later\n"
+                   "---with Answer or Fail. `cancelled(request)`, when given, is told of a request whose caller\n"
+                   "---took it back or went. It stays until Unpublish, or until the mod is disabled, reloads or\n"
+                   "---unloads; its unanswered requests then fail with \"not_found\".\n"
+                   "---@param name string\n---@param fn fun(request: integer, method: string, ...): ...\n"
+                   "---@param cancelled? fun(request: integer)\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Publish(name, fn, cancelled) end\n\n";
+        if (name == "Unpublish")
+            return "---Takes this mod's service back; nil, \"not_found\" for one it does not publish.\n"
+                   "---@param name string\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Unpublish(name) end\n\n";
+        if (name == "Call")
+            return "---Asks a service: `fn(true, ...)` is called later, on the main thread, with the answer, or\n"
+                   "---`fn(false, reason)` (\"not_found\" when nobody publishes it or it went, else the reason the\n"
+                   "---service gave). `args` is a list of numbers, strings and booleans, or nil. Answers the\n"
+                   "---request's number. Dropped, never answered, if this mod is disabled, reloads or unloads.\n"
+                   "---@param name string\n---@param method string\n---@param args? any[]\n"
+                   "---@param fn fun(ok: boolean, ...)\n---@return integer|nil request\n---@return string|nil reason\n"
+                   "function " + owner + ".Call(name, method, args, fn) end\n\n";
+        if (name == "Answer")
+            return "---Answers a request this mod's service received, with values: numbers, strings, booleans, nil.\n"
+                   "---@param request integer\n---@param ... any\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Answer(request, ...) end\n\n";
+        if (name == "Fail")
+            return "---Fails a request this mod's service received: its caller gets false and `reason`.\n"
+                   "---@param request integer\n---@param reason string\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Fail(request, reason) end\n\n";
+        if (name == "Cancel")
+            return "---Takes back a request this mod made: its fn is never called, and the service is told.\n"
+                   "---@param request integer\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Cancel(request) end\n\n";
         if (name == "Snapshot")
             return "---Takes the picture the lists read: Storm's counts, the client's consumers, the address space,\n"
                    "---and the heap of every Lua mod, each shown as its own category. On the main thread.\n"
@@ -372,6 +510,462 @@ namespace
                    "---goes; the highest threshold any mod holds is the one the runtime watches.\n"
                    "---@param bytes integer\n---@return true|nil ok\n---@return string|nil reason\n"
                    "function " + owner + ".WatchPressure(bytes) end\n\n";
+        if (name == "SetView")
+            return "---Places the world camera from now on, for this mod: where it is, the direction it looks, and\n"
+                   "---the field of view in radians, 0 to keep the client's. Set again each frame from OnCameraUpdate\n"
+                   "---to move it with the frame. It stays until ReleaseView, or until the mod is disabled, reloads\n"
+                   "---or unloads; when two mods set one, the later is applied and the earlier comes back after it.\n"
+                   "---@param position wxl.Vec3\n---@param forward wxl.Vec3\n---@param fov number\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".SetView(position, forward, fov) end\n\n";
+        if (name == "SetViewRolled")
+            return "---Places the world camera as SetView does, turned around the direction it looks by `roll`\n"
+                   "---radians, positive to the camera's right (the top of the screen leans right); 0 is SetView's\n"
+                   "---picture. The game's picking under the pointer turns with it; the interface does not.\n"
+                   "---@param position wxl.Vec3\n---@param forward wxl.Vec3\n---@param fov number\n---@param roll number\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".SetViewRolled(position, forward, fov, roll) end\n\n";
+        if (name == "ReleaseView")
+            return "---Gives the world camera this mod placed back to the client; nil, \"not_found\" when it holds none.\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".ReleaseView() end\n\n";
+        if (name == "CaptureCursor")
+            return "---Hides the pointer and holds it at the centre of the window (true), where the game still picks\n"
+                   "---and clicks, or lets this mod's hold go (false). Held while any mod holds it, and let go when\n"
+                   "---the mod is disabled, reloads or unloads. The motion arrives as OnMouseMotion.\n"
+                   "---@param captured boolean\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".CaptureCursor(captured) end\n\n";
+        if (name == "CaptureCursorAt")
+            return "---Hides the pointer and holds it at a point of the window, where the game picks and clicks:\n"
+                   "---x from 0 (left edge) to 1 (right edge), y from 0 (top edge) to 1 (bottom edge), (0.5, 0.5)\n"
+                   "---the centre. A mod holding it already moves its hold there; of several mods, the last to\n"
+                   "---capture or move it has its point. Let go as CaptureCursor(false) does.\n"
+                   "---@param x number\n---@param y number\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".CaptureCursorAt(x, y) end\n\n";
+        if (name == "BlockMouseLook")
+            return "---Keeps the game out of its own mouse look (true): a held mouse button turns nothing and hides\n"
+                   "---nothing, a click still selects or acts; false gives this mod's block back. Kept while any mod\n"
+                   "---blocks it, and given back when the mod is disabled, reloads or unloads.\n"
+                   "---@param blocked boolean\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".BlockMouseLook(blocked) end\n\n";
+        if (name == "Head")
+            return "---Turns a unit's head from where its body faces, in radians (yaw positive to its left, pitch\n"
+                   "---positive up), reached over `smoothing` seconds for half the way, and holds it until\n"
+                   "---ReleaseHead, or until the mod is disabled, reloads or unloads.\n"
+                   "---@param unit wxl.Object\n---@param yaw number\n---@param pitch number\n---@param smoothing number\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Head(unit, yaw, pitch, smoothing) end\n\n";
+        if (name == "ReleaseHead")
+            return "---Gives a unit's head this mod turned back to its animation; nil, \"not_found\" for one it does not hold.\n"
+                   "---@param unit wxl.Object\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".ReleaseHead(unit) end\n\n";
+        if (std::strcmp(row.service, "highlight") == 0 && name == "Set")
+            return "---Highlights an object until cleared, where it is seen and never through a wall: a sharp outline\n"
+                   "---`outline` pixels wide (up to 16) and a glow fading over `glow` pixels (up to 64), `glow_strength`\n"
+                   "---(0 to 1) bright, both in `color` (0xRRGGBB); 0 for none. Pixels of a 1080-line picture, drawn in\n"
+                   "---proportion at any height. Called again, it changes the style.\n"
+                   "---Kept until Clear, ClearAll, the object leaving view, or the mod disabled, reloaded or unloaded;\n"
+                   "---nil, \"unsupported\" where this runtime does not draw highlights (see UnsupportedReason).\n"
+                   "---@param target wxl.Object\n---@param color integer\n---@param outline number\n"
+                   "---@param glow number\n---@param glow_strength number\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Set(target, color, outline, glow, glow_strength) end\n\n";
+        if (std::strcmp(row.service, "highlight") == 0 && name == "Clear")
+            return "---Takes this mod's highlight off an object; nil, \"not_found\" for one it does not hold.\n"
+                   "---@param target wxl.Object\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Clear(target) end\n\n";
+        if (std::strcmp(row.service, "highlight") == 0 && name == "ClearAll")
+            return "---Takes off every highlight of this mod.\n"
+                   "function " + owner + ".ClearAll() end\n\n";
+        if (std::strcmp(row.service, "texture") == 0 && name == "Make")
+            return "---Makes a texture of an SVG or a PNG, which the client loads by the path answered, like its\n"
+                   "---own files (Texture:SetTexture in an add-on, a model's texture). An SVG is drawn at `width` x\n"
+                   "---`height` pixels, sharp, its proportions kept; a PNG is resampled to that size (nil: the\n"
+                   "---source's own). The texture's edges are powers of two, the picture at its top-left corner: show\n"
+                   "---it with SetTexCoord(0, right, 0, bottom) on a region of the picture's size. The same source,\n"
+                   "---size, groups and tint answer the same path, made once; a change to the file makes a new one.\n"
+                   "---`source`: \".\\\\assets\\\\x.svg\" in this mod's folder, \"Mods\\\\<folder>\\\\...\" in another mod's,\n"
+                   "---or a name the client has (\"Interface\\\\AddOns\\\\<add-on>\\\\x.svg\").\n"
+                   "---`groups` (SVG): by the id of a shape or of its nearest group with one, a colour (\"rrggbbaa\",\n"
+                   "---\"rrggbb\" or 0xAARRGGBB: every paint, its alpha their opacity), false to hide it, or a table\n"
+                   "---{color, width = the strokes' width times the SVG's own (2: twice, 0: none), visible}.\n"
+                   "---`tint`: a colour every pixel is multiplied by.\n"
+                   "---@param source string\n---@param width? integer\n---@param height? integer\n"
+                   "---@param groups? table<string, string|integer|boolean|{color: string|integer?, width: number?, visible: boolean?}>\n"
+                   "---@param tint? string|integer\n"
+                   "---@return string|nil path\n---@return number|string right the picture's right texture coordinate, or why there is none\n"
+                   "---@return number bottom\n---@return integer texture_width\n---@return integer texture_height\n"
+                   "function " + owner + ".Make(source, width, height, groups, tint) end\n\n";
+        if (std::strcmp(row.service, "texture") == 0 && name == "Stats")
+            return "---What the service holds: textures (names known), resident (in memory), texture_limit, bytes,\n"
+                   "---byte_limit, made, reused, released.\n"
+                   "---@return {textures: integer, resident: integer, texture_limit: integer, bytes: integer, byte_limit: integer, made: integer, reused: integer, released: integer}|nil stats\n"
+                   "---@return string|nil reason\n"
+                   "function " + owner + ".Stats() end\n\n";
+        if (std::strcmp(row.service, "terrain") == 0)
+        {
+            const std::string point = "{x: number, y: number, z: number}";
+            if (name == "Trace")
+                return "---The first point where the segment from `start` to `finish` meets the loaded ground, holes let\n"
+                       "---through: the point, the unit normal of the triangle met (facing up), its chunk, and how far\n"
+                       "---along the segment (0 to 1). nil when it meets none.\n"
+                       "---@param start " + point + "\n---@param finish " + point + "\n"
+                       "---@return {point: " + point + ", normal: " + point + ", chunk_x: integer, chunk_y: integer, fraction: number}|nil hit\n"
+                       "function " + owner + ".Trace(start, finish) end\n\n";
+            if (name == "Locate")
+                return "---Where a point is on the grid: its chunk (column and row on the map, 0-1023), its cell in the\n"
+                       "---chunk (0-7, the row along world x), the chunk's vertex nearest to it (0-144), and whether the\n"
+                       "---chunk is loaded. nil off the map.\n"
+                       "---@param x number\n---@param y number\n"
+                       "---@return {chunk_x: integer, chunk_y: integer, cell_row: integer, cell_col: integer, nearest: integer, loaded: boolean}|nil place\n"
+                       "function " + owner + ".Locate(x, y) end\n\n";
+            if (name == "Vertices")
+                return "---The world positions of a loaded chunk's 145 vertices, in index order (index i at [i + 1]):\n"
+                       "---rows of 9 outer vertices, each but the last followed by a row of 8 inner ones. nil,\n"
+                       "---\"not_found\" when the chunk is not loaded. `original` true: the heights before any mod's edit.\n"
+                       "---@param chunk_x integer\n---@param chunk_y integer\n---@param original? boolean\n"
+                       "---@return " + point + "[]|nil vertices\n---@return string|nil reason\n"
+                       "function " + owner + ".Vertices(chunk_x, chunk_y, original) end\n\n";
+            if (name == "VerticesIn")
+                return "---Every vertex within `radius` yards (0 to 128) of a point, each once whichever chunks it is on:\n"
+                       "---its chunk and index (ready for SetHeights, which writes a vertex on a chunk's edge into every\n"
+                       "---chunk holding it), its place, its height now and before any edit, whether it is an inner\n"
+                       "---vertex, and whether its chunk is loaded (the heights are 0 when it is not). An empty list\n"
+                       "---off the map or for a radius out of range.\n"
+                       "---@param x number\n---@param y number\n---@param radius number\n"
+                       "---@return {chunk_x: integer, chunk_y: integer, index: integer, x: number, y: number, z: number, original_z: number, inner: boolean, loaded: boolean}[] vertices\n"
+                       "function " + owner + ".VerticesIn(x, y, radius) end\n\n";
+            if (name == "SetHeights")
+                return "---Sets vertices to absolute world heights, all or none: the ground drawn, the walking, the\n"
+                       "---falling, the camera and the client's clicks follow. A vertex on a chunk's edge is set in\n"
+                       "---its neighbour too. Held by this mod until Reset, ResetAll, or until the mod is disabled,\n"
+                       "---reloads or unloads; kept while the chunk is away and put back when it loads; dropped with\n"
+                       "---the map. nil, \"invalid\" for an entry off the grid (logged, nothing set); nil,\n"
+                       "---\"unsupported\" out of the world or on a map without terrain.\n"
+                       "---@param heights {chunk_x: integer, chunk_y: integer, index: integer, height: number}[]\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".SetHeights(heights) end\n\n";
+            if (name == "Reset")
+                return "---Takes this mod's edits off a chunk (and off its edge vertices' copies in its neighbours): the\n"
+                       "---original heights come back, or another mod's edits where it has some. nil, \"not_found\" when\n"
+                       "---this mod has none there.\n"
+                       "---@param chunk_x integer\n---@param chunk_y integer\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Reset(chunk_x, chunk_y) end\n\n";
+            if (name == "ResetAll")
+                return "---Takes every edit of this mod off. nil, \"not_found\" when it has none.\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".ResetAll() end\n\n";
+            if (name == "Stats")
+                return "---What the service holds and what its last edit cost: edited_chunks, edited_vertices, edits,\n"
+                       "---reapplied (chunks given their edits back as they loaded), last_vertices, last_chunks,\n"
+                       "---last_microseconds, max_microseconds.\n"
+                       "---@return {edited_chunks: integer, edited_vertices: integer, edits: integer, reapplied: integer, last_vertices: integer, last_chunks: integer, last_microseconds: integer, max_microseconds: integer}|nil stats\n"
+                       "---@return string|nil reason\n"
+                       "function " + owner + ".Stats() end\n\n";
+        }
+        if (std::strcmp(row.service, "net") == 0)
+        {
+            if (name == "State")
+                return "---Where the client is with the world server: \"offline\", \"connecting\", \"connected\" (the\n"
+                       "---socket is up) or \"authenticated\" (the server accepted the session: messages flow).\n"
+                       "---@return \"offline\"|\"connecting\"|\"connected\"|\"authenticated\"|nil state\n"
+                       "---@return string|nil reason\n"
+                       "function " + owner + ".State() end\n\n";
+            if (name == "Claim")
+                return "---Claims an opcode number for this mod: the server's messages of it stop at the mod (its\n"
+                       "---function, once SetHandler gives one), and the mod may send it. Refused (nil, \"invalid\", and a\n"
+                       "---line in the log saying why) for a number above 0xFFFF, one of the client's own (up to 0x520)\n"
+                       "---unless mod.json says \"net\": { \"stock\": true }, one another mod claimed or declares, or\n"
+                       "---one outside the numbers this mod's mod.json lists in \"net\": { \"opcodes\": [...] }.\n"
+                       "---Given back when the mod is disabled, reloads or unloads.\n"
+                       "---@param opcode integer from 0x521\n---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Claim(opcode) end\n\n";
+            if (name == "Release")
+                return "---Gives a claimed number back, its function and its compressed number with it.\n"
+                       "---@param opcode integer\n---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Release(opcode) end\n\n";
+            if (name == "SetHandler")
+                return "---Sets the function a claimed number's messages are handed to, on the main thread:\n"
+                       "---`fn(reader, opcode)`, the reader over the message's body. A reader left read past its end\n"
+                       "---is logged once per number as malformed. nil takes the function away; the messages still stop.\n"
+                       "---@param opcode integer\n---@param fn? fun(reader: wxl.net.Reader, opcode: integer)\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".SetHandler(opcode, fn) end\n\n";
+            if (name == "SetCompressed")
+                return "---Makes `compressed`, a second number this mod claimed, the compressed form of `opcode`: its\n"
+                       "---messages are a u32 size and a zlib stream, as the client's own compressed opcodes are; the\n"
+                       "---runtime inflates them and hands them to `opcode`'s function as `opcode` messages. 0 undoes it.\n"
+                       "---@param opcode integer\n---@param compressed integer\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".SetCompressed(opcode, compressed) end\n\n";
+            if (name == "Send")
+                return "---Sends a message of a number this mod claimed to the server: `body` is a wxl.net.Writer or a\n"
+                       "---string of bytes, at most MaxSend() bytes. nil, \"failed\" while not authenticated, and until\n"
+                       "---the server has sent this mod one of its numbers on this connection (Heard()): a server that\n"
+                       "---does not know a number closes the connection. nil, \"busy\" past 64 messages of a number in a\n"
+                       "---second.\n"
+                       "---@param opcode integer\n---@param body? wxl.net.Writer|string\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Send(opcode, body) end\n\n";
+            if (name == "Heard")
+                return "---Whether this mod may send on this connection: the server has sent it one of its numbers\n"
+                       "---since the connection came up.\n"
+                       "---@return boolean heard\n"
+                       "function " + owner + ".Heard() end\n\n";
+        }
+        if (std::strcmp(row.service, "cvar") == 0 && name == "Register")
+            return "---Registers a console variable for this mod: the console, the interface's GetCVar and SetCVar\n"
+                   "---and every mod read and set it, and the client saves it with its own. It keeps a value the\n"
+                   "---client saved for it; a new one starts at `default`. Registering it again updates its flags\n"
+                   "---and the default Reset uses. Held by this mod until Release, or until the mod is disabled,\n"
+                   "---reloads or unloads (the variable stays); another mod's name, or the client's own, is refused.\n"
+                   "---`flags`: nil (a variable of the session), or \"saved\" (Config.wtf), \"account\", \"character\",\n"
+                   "---\"read_only\" (the console and the interface cannot set it), \"latched\" (a set waits for the next\n"
+                   "---start, with \"saved\"), \"protected\" (SetCVar only from secure code), \"hidden\" (the interface\n"
+                   "---does not see it), a list of them, or a mask (1, 2, 4, 8, 16, 32, 64).\n"
+                   "---@param name string any name without spaces or quotes, up to 63 characters; start it with your mod's prefix\n"
+                   "---@param default string|number|boolean\n---@param flags? string|string[]|integer\n"
+                   "---@param help? string a line for the console's help\n"
+                   "---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Register(name, default, flags, help) end\n\n";
+        if (std::strcmp(row.service, "cvar") == 0 && name == "Release")
+            return "---Gives up a variable this mod registered: it stays, with its value, until the client ends, and\n"
+                   "---any mod may register it again; nil, \"not_found\" for one this mod does not hold.\n"
+                   "---@param name string\n---@return true|nil ok\n---@return string|nil reason\n"
+                   "function " + owner + ".Release(name) end\n\n";
+        if (std::strcmp(row.service, "selectioncircle") == 0)
+        {
+            const std::string masks =
+                "---`kinds`: nil or \"all\", \"target\", \"pet_target\", \"move_marker\", a list of them, or a mask (1, 2, 4).\n"
+                "---`reactions`, of the unit the circle is drawn for: nil for all, \"hated\" to \"exalted\", \"none\" (no\n"
+                "---unit, or no reaction read), a list of them, or a mask (bit 0 hated ... bit 7 exalted, bit 8 none).\n";
+            const std::string style =
+                "---`style`: a table {texture = path of a BLP added onto the ground like the game's (black is nothing),\n"
+                "---color = 0xAARRGGBB, scale = size against the game's (up to 8)}; each left out keeps the game's.\n";
+            const std::string kept =
+                "---Kept until reset, or until the mod is disabled, reloads or unloads; an object's own look before\n"
+                "---its kind's, the last set winning among mods.\n";
+            const std::string answers = "---@return true|nil ok\n---@return string|nil reason\n";
+            if (name == "Hide")
+                return "---Hides the game's circles of these kinds drawn for units of these reactions.\n" + masks + kept +
+                       "---@param kinds? string|string[]|integer\n---@param reactions? string|string[]|integer\n" + answers +
+                       "function " + owner + ".Hide(kinds, reactions) end\n\n";
+            if (name == "SetStyle")
+                return "---Draws the game's circles of these kinds, for units of these reactions, in another look.\n" + masks +
+                       style + kept +
+                       "---@param kinds? string|string[]|integer\n---@param reactions? string|string[]|integer\n"
+                       "---@param style {texture: string?, color: integer?, scale: number?}\n" + answers +
+                       "function " + owner + ".SetStyle(kinds, reactions, style) end\n\n";
+            if (name == "Reset")
+                return "---Gives the circles of these kinds and reactions back the game's look, as far as this mod changed it.\n" +
+                       masks + "---@param kinds? string|string[]|integer\n---@param reactions? string|string[]|integer\n" +
+                       answers + "function " + owner + ".Reset(kinds, reactions) end\n\n";
+            if (name == "HideObject")
+                return "---Hides every circle the game draws for an object: as the target, as the pet's target, or the\n"
+                       "---move marker of the unit moving.\n" + kept + "---@param target wxl.Object\n" + answers +
+                       "function " + owner + ".HideObject(target) end\n\n";
+            if (name == "SetObjectStyle")
+                return "---Draws every circle the game draws for an object in another look.\n" + style + kept +
+                       "---@param target wxl.Object\n---@param style {texture: string?, color: integer?, scale: number?}\n" +
+                       answers + "function " + owner + ".SetObjectStyle(target, style) end\n\n";
+            if (name == "ResetObject")
+                return "---Gives an object's circles back the look of their kind; nil, \"not_found\" for one this mod did\n"
+                       "---not change.\n---@param target wxl.Object\n" + answers +
+                       "function " + owner + ".ResetObject(target) end\n\n";
+            if (name == "ResetAll")
+                return "---Gives back everything this mod changed on the game's circles.\n"
+                       "function " + owner + ".ResetAll() end\n\n";
+        }
+        if (std::strcmp(row.service, "animation") == 0)
+        {
+            if (name == "Play")
+                return "---Plays an AnimationData animation on a unit as the game plays an emote, seen on this client only:\n"
+                       "---the whole body standing, the upper body over the legs' run while it moves. `flags`: loop 1 (again\n"
+                       "---at each end until Stop), no_blend 2 (no blend from the pose it leaves), override 4 (a loop played\n"
+                       "---again whenever the game replaced it, death excepted; a one-shot ignores it), exact 8 (no fallback to the model's nearest\n"
+                       "---animation); 0 or nil plays it once, blended, yielding to the game. `speed`: 1 (or nil) its own.\n"
+                       "---Kept until it ends (OnUnitAnimationEnded), Stop, or the mod disabled, reloaded or unloaded; nil,\n"
+                       "---\"failed\" when the client did not play it (its model loading, the unit dead).\n"
+                       "---@param unit wxl.Object\n---@param anim_id integer\n---@param flags? integer\n---@param speed? number\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Play(unit, anim_id, flags, speed) end\n\n";
+            if (name == "Stop")
+                return "---Ends this mod's animation on a unit; the game chooses the unit's animation again at once. nil,\n"
+                       "---\"not_found\" when this mod plays none on it.\n"
+                       "---@param unit wxl.Object\n---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Stop(unit) end\n\n";
+        }
+        if (std::strcmp(row.service, "draw") == 0)
+        {
+            const std::string shape =
+                "{kind: \"line\"|\"circle\"|\"ring\"|\"sector\"|\"rectangle\"|\"polygon\"|\"grid\"|\"box\"|\"sphere\"|\"cylinder\"|\"beam\", widths: number|number[]?, "
+                "center: wxl.Vec3?, radius: number?, inner: number?, angle: number?, facing: number?, pitch: number?, roll: number?, "
+                "size: wxl.Vec3?, spacing: number?, points: wxl.Vec3[]?, alphas: number[]?, flat: boolean?, on_ground: boolean?, closed: boolean?}";
+            const std::string style =
+                "{color: integer?, alpha: number?, fill_alpha: number?, width: number?, depth: \"tested\"|\"on_top\"?, pulse: number?, "
+                "fade_in: number?, fade_out: number?, fill_color: integer?, softness: number?, alpha_start: number?, alpha_end: number?, "
+                "shadow_color: integer?, shadow_alpha: number?, shadow_offset: {x: number, y: number}?, shadow_softness: number?, "
+                "texture: string|table?, texture_right: number?, texture_bottom: number?, uv: \"fit\"|\"tile\"|\"world\"?, "
+                "uv_size: number|{x: number, y: number}?, uv_rotation: number?, uv_offset: {x: number, y: number}?, "
+                "blend: \"alpha\"|\"add\"|\"modulate\"?, feather: number?, radial_fade: number?, occluded_alpha: number?, mask: boolean?, texture_blur: number?}";
+            const std::string about =
+                "---`shape.kind` says which fields it reads: line `points` (`closed`, `on_ground`); circle `center`, `radius`;\n"
+                "---ring and `inner`; sector and `facing`, `angle` (radians), `inner`; rectangle `center`, `size` (x along\n"
+                "---`facing`, y across); polygon `points`; grid `center`, `size`, `spacing`, `facing`; box `center`, `size`,\n"
+                "---`facing`, `pitch`, `roll`; sphere `center`, `radius`; cylinder `center`, `radius`, `size.z` (its height).\n"
+                "---Points are offsets from `center` (nil: world coordinates). Ground shapes follow the ground; `flat` keeps\n"
+                "---them at `center.z`. `style.color` 0xRRGGBB; `alpha` the lines' opacity, `fill_alpha` the inside's;\n"
+                "---`width` pixels at 1080 lines; `depth` \"tested\" (hidden behind walls) or \"on_top\"; `pulse` seconds a beat.\n"
+                "---Since abi 0.1.38: `softness` fades the lines' edges (pixels); `alpha_start`, `alpha_end` (and the shape's\n"
+                "---`alphas`, one per point) fade a line along its length; `shadow_alpha` draws a shadow under the lines\n"
+                "---(`shadow_color`, `shadow_offset` {x, y} pixels right and down, 1.5 by default, `shadow_softness`).\n"
+                "---A ground shape's inside takes a `texture` (a BLP path, or {path, right, bottom} as wxl.texture.Make\n"
+                "---answers), laid by `uv` \"fit\", \"tile\" or \"world\" (`uv_size`, `uv_rotation`, `uv_offset`), tinted by\n"
+                "---`fill_color` (or `color`) and `fill_alpha`, put on the ground by `blend` \"alpha\", \"add\" or \"modulate\",\n"
+                "---faded at its border over `feather` yards and from its centre by `radial_fade` (0 to 1).\n"
+                "---Since abi 0.1.39: a box's faces and a cylinder's side and ends take the same look, each face in its own\n"
+                "---frame; `occluded_alpha` (0 to 1) draws what the scene hides of the shape at that part of its opacity.\n"
+                "---Since abi 0.1.40: `mask = true` takes only the texture's opacity, the colour being the style's;\n"
+                "---`texture_blur` blurs the picture, a step halving its detail. A \"beam\" (its 2 `points`, `widths` at\n"
+                "---each end, `alphas` its opacity at each end) faces the camera around its axis, drawn with `fill_alpha`.\n";
+            if (name == "Draw")
+                return "---Draws a shape in the next frame of the world only: call it each frame for what follows the\n"
+                       "---frame. nil, \"invalid\" for a shape refused (logged under `draw`, saying why).\n" + about +
+                       "---@param shape " + shape + "\n---@param style? " + style + "\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Draw(shape, style) end\n\n";
+            if (name == "Add")
+                return "---Keeps a shape until removed (shape:Remove()), or for `duration` seconds; it goes when this mod\n"
+                       "---unloads. `style.fade_in` and `fade_out` bring it in and take it out over the end of its duration.\n" +
+                       about + "---@param shape " + shape + "\n---@param style? " + style + "\n---@param duration? number\n"
+                       "---@return wxl.Shape|nil shape\n---@return string|nil reason\n"
+                       "function " + owner + ".Add(shape, style, duration) end\n\n";
+            if (name == "Update")
+                return "---The kept shape becomes another, from a table as Draw's; it stays attached when it is.\n"
+                       "---@param self wxl.Shape\n---@param shape " + shape + "\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Update(self, shape) end\n\n";
+            if (name == "SetStyle")
+                return "---The kept shape's look, from a table as Draw's.\n"
+                       "---@param self wxl.Shape\n---@param style " + style + "\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".SetStyle(self, style) end\n\n";
+            const std::string emitter =
+                "{spawn: \"point\"|\"disc\"|\"box\"|\"segment\"?, center: wxl.Vec3?, extent: wxl.Vec3?, facing: number?, direction: wxl.Vec3?, "
+                "spread: number?, burst: integer?, rate: number?, duration: number?, speed: number|number[]?, life: number|number[]?, "
+                "size: number|number[]?, spin: number|number[]?, gravity: number?, drag: number?, ground: \"none\"|\"bounce\"|\"settle\"?, "
+                "restitution: number?, friction: number?, attractor: wxl.Vec3?, attraction: number?, attract_radius: number?, seed: integer?}";
+            const std::string particles =
+                "{mode: \"camera\"|\"ground\"|\"stretched\"?, texture: string|table?, frames: number|{x: integer, y: integer}?, "
+                "frame_rate: number?, blend: \"alpha\"|\"add\"|\"modulate\"?, depth: \"tested\"|\"on_top\"?, occluded_alpha: number?, "
+                "stretch: number?, softness: number?, mask: boolean?, texture_blur: number?, keys: {t: number, size: number?, color: integer?, alpha: number?}[]?}";
+            const std::string particleAbout =
+                "---Since abi 0.1.40. The emitter: `spawn` (\"point\", \"disc\" of extent.x yards, \"box\" of extent, \"segment\"\n"
+                "---to center + extent), a cone along `direction` (up by default) of half angle `spread`; `speed`, `life`, `size`\n"
+                "---(yards across) and `spin` a number or {min, max}; `gravity` (yards/s^2 down), `drag`, `ground` \"bounce\"\n"
+                "---(once, `restitution`, `friction`) or \"settle\"; `attraction` towards `attractor` (taking them out within\n"
+                "---`attract_radius`). The look: `mode`, a `texture` (none: a soft round blot), sprite sheet `frames` and\n"
+                "---`frame_rate`, `blend`, `softness` (yards over which they fade near the ground), up to 4 `keys` of their life.\n";
+            if (name == "Emit")
+                return "---Throws one burst of `emitter.burst` particles and forgets them.\n" + particleAbout +
+                       "---@param emitter " + emitter + "\n---@param look? " + particles + "\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".Emit(emitter, look) end\n\n";
+            if (name == "AddEmitter")
+                return "---Keeps an emitter: its burst now, then `rate` particles a second for `duration` seconds (nil: until\n"
+                       "---stopped); it goes when this mod unloads.\n" + particleAbout +
+                       "---@param emitter " + emitter + "\n---@param look? " + particles + "\n"
+                       "---@return wxl.Emitter|nil emitter\n---@return string|nil reason\n"
+                       "function " + owner + ".AddEmitter(emitter, look) end\n\n";
+            if (name == "UpdateEmitter")
+                return "---The emitter becomes another, from a table as Emit's; its particles keep how they move.\n"
+                       "---@param self wxl.Emitter\n---@param emitter " + emitter + "\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".UpdateEmitter(self, emitter) end\n\n";
+            if (name == "SetEmitterStyle")
+                return "---Its particles' look, those alive included, from a table as Emit's.\n"
+                       "---@param self wxl.Emitter\n---@param look " + particles + "\n"
+                       "---@return true|nil ok\n---@return string|nil reason\n"
+                       "function " + owner + ".SetEmitterStyle(self, look) end\n\n";
+            if (name == "Clear")
+                return "---Every shape and emitter this mod keeps goes.\n"
+                       "function " + owner + ".Clear() end\n\n";
+            if (name == "Stats")
+                return "---What the last frame of the world drew and what it cost (every mod's shapes).\n"
+                       "---@return {shapes: integer, immediate: integer, drawn: integer, vertices: integer, left_out: integer, rebuilt: integer, build_microseconds: number, max_build_microseconds: number, immediate_microseconds: number, frames: integer, textured: integer, textures: integer, textures_loading: integer, shadows: integer, occluded: integer, reused: integer, particles: integer, particles_emitted: integer, particles_culled: integer, particle_draws: integer, emitters: integer, particle_microseconds: number}|nil stats\n"
+                       "---@return string|nil reason\n"
+                       "function " + owner + ".Stats() end\n\n";
+        }
+        if (std::strcmp(row.service, "render") == 0)
+        {
+            const std::string answers = "---@return true|nil ok\n---@return string|nil reason\n";
+            const std::string push =
+                "---`push`: a table of numbers (each a 32-bit float) or a string of bytes, up to 128 bytes; nil for none.\n";
+            if (name == "CreatePipeline")
+                return "---A pipeline of the mod's SPIR-V and the state it draws with, compiled now; nil and why when the\n"
+                       "---device refuses it. `vertex`/`fragment`: SPIR-V bytes, or the path of a .spv file of the mod's\n"
+                       "---folder. `kind`: \"graphics\" (vertex and fragment, vertices read from buffers), \"fullscreen\"\n"
+                       "---(fragment over the pass, `uv` at location 0), \"batch\" (fragment behind a client batch),\n"
+                       "---\"compute\" (`compute` alone, run by Dispatch; abi 0.1.34).\n"
+                       "---`colors`: formats (\"rgba8\", \"bgra8\" the frame's, \"r8\", \"rg8\", \"r16f\", \"rg16f\",\n"
+                       "---\"rgba16f\", \"r32f\", \"rgba32f\"), the frame's by default. `depth`: \"depth32f\" or nil.\n"
+                       "---`samples`: 0 the frame's, 1, 2, 4, 8. `blend`: \"none\", \"alpha\", \"add\", \"premultiplied\",\n"
+                       "---\"multiply\", one or one per colour. `depth_test`: \"off\", \"less\", \"less_equal\", \"equal\",\n"
+                       "---\"greater\", \"greater_equal\", \"always\". `cull`: \"none\", \"back\", \"front\", \"batch\".\n"
+                       "---`topology`: \"triangles\", \"triangle_strip\", \"lines\", \"points\".\n"
+                       "---@param desc {kind: string?, name: string?, vertex: string?, fragment: string?, compute: string?, colors: string|string[]?, depth: string?, samples: integer?, blend: string|string[]?, depth_test: string?, depth_write: boolean?, cull: string?, topology: string?}\n"
+                       "---@return wxl.Pipeline|nil pipeline\n---@return string|nil reason\n"
+                       "function " + owner + ".CreatePipeline(desc) end\n\n";
+            if (name == "Begin")
+                return "---Opens a pass inside OnRenderPoint: what the draws until End go into. `colors`: Images,\n"
+                       "---\"scene_color\" (the frame's colour), or {image, clear = {r, g, b, a}}; `depth`: an Image,\n"
+                       "---\"scene_depth\" (the frame's depth), or {image, clear = z}. Every attachment has one size.\n"
+                       "---@param pass {colors: (wxl.Image|string|table)[]?, depth: wxl.Image|string|table|nil}\n" + answers +
+                       "function " + owner + ".Begin(pass) end\n\n";
+            if (name == "Draw")
+                return "---Draws `vertex_count` vertices `instance_count` times (1 when nil) with a graphics pipeline.\n" + push +
+                       "---@param pipeline wxl.Pipeline\n---@param vertex_count integer\n---@param instance_count? integer\n"
+                       "---@param push? number[]|string\n" + answers +
+                       "function " + owner + ".Draw(pipeline, vertex_count, instance_count, push) end\n\n";
+            if (name == "DrawIndexed")
+                return "---Draws `index_count` 32-bit indices of a buffer from `first_index`, `instance_count` times.\n" + push +
+                       "---@param pipeline wxl.Pipeline\n---@param indices wxl.Buffer\n---@param first_index integer\n"
+                       "---@param index_count integer\n---@param instance_count? integer\n---@param push? number[]|string\n" + answers +
+                       "function " + owner + ".DrawIndexed(pipeline, indices, first_index, index_count, instance_count, push) end\n\n";
+            if (name == "Fullscreen")
+                return "---Draws a fullscreen pipeline over the pass.\n" + push +
+                       "---@param pipeline wxl.Pipeline\n---@param push? number[]|string\n" + answers +
+                       "function " + owner + ".Fullscreen(pipeline, push) end\n\n";
+            if (name == "DrawBatch")
+                return "---Draws a client batch (OnModelBatchDrawn's `batch`, or one KeepBatch answered) again with a batch\n"
+                       "---pipeline, into the open pass. `constants`: as Draw's push, up to 4096 bytes, read at pc.pixelRegs.\n"
+                       "---@param batch lightuserdata\n---@param pipeline wxl.Pipeline\n---@param constants? number[]|string\n" +
+                       answers + "function " + owner + ".DrawBatch(batch, pipeline, constants) end\n\n";
+            if (name == "ReplaceShader")
+                return "---Gives the client's shaders named `name` (or starting with it) the mod's SPIR-V for `stage` (0 vertex,\n"
+                       "---1 pixel): bytes, or a .spv file of the mod's folder. Kept until RestoreShader, or until the mod is\n"
+                       "---disabled, reloads or unloads; the last Lua mod to replace a name holds it.\n"
+                       "---@param name string\n---@param stage integer\n---@param spirv string\n" + answers +
+                       "function " + owner + ".ReplaceShader(name, stage, spirv) end\n\n";
+            if (name == "RestoreShader")
+                return "---Gives a shader this mod replaced its own program back; nil, \"not_found\" for one it did not replace.\n"
+                       "---@param name string\n---@param stage integer\n" + answers +
+                       "function " + owner + ".RestoreShader(name, stage) end\n\n";
+            if (name == "Dispatch")
+                return "---Runs a compute pipeline over x * y * z workgroups inside OnRenderPoint, outside a pass: the\n"
+                       "---frame's drawing stops for it. What it writes through buffer addresses is seen after it.\n" + push +
+                       "---@param pipeline wxl.Pipeline\n---@param x integer\n---@param y integer\n---@param z integer\n"
+                       "---@param push? number[]|string\n" + answers +
+                       "function " + owner + ".Dispatch(pipeline, x, y, z, push) end\n\n";
+            if (name == "BonePalette")
+                return "---Writes matrices into the open frame and answers their address on the GPU, read until the frame\n"
+                       "---ends: a table of numbers, 12 a matrix (three rows of four), or a string of bytes, 48 a matrix.\n"
+                       "---No bound on their count but 16 MiB at once. The address goes into a program's push constants\n"
+                       "---as two 32-bit words, low first (a string of bytes).\n"
+                       "---@param matrices number[]|string\n---@return number|nil address\n---@return string|nil reason\n"
+                       "function " + owner + ".BonePalette(matrices) end\n\n";
+        }
         if (name == "Begin")
             return "---Opens a zone named `name` on the profiler's timeline, inside the handler or callback running\n"
                    "---now; End closes it. Zones nest. Whatever this call left open is closed when it returns or\n"
@@ -472,7 +1066,8 @@ namespace
                 const wxl::api::Row& row = rows[i];
                 if (std::strcmp(row.service, services[s].id) != 0 || row.lua == wxl::api::Lua::native) continue;
                 const std::vector<Parameter> parameters = ParametersOf(row.params);
-                if (!parameters.empty() && IsResourceKind(parameters[0].kind)) continue;
+                // A generated row taking a resource first is the resource's method; a shim row is the module's.
+                if (!parameters.empty() && IsResourceKind(parameters[0].kind) && row.lua == wxl::api::Lua::generated) continue;
                 any = true;
             }
             if (!any) continue;
@@ -487,7 +1082,8 @@ namespace
                 const wxl::api::Row& row = rows[i];
                 if (std::strcmp(row.service, services[s].id) != 0 || row.lua == wxl::api::Lua::native) continue;
                 const std::vector<Parameter> parameters = ParametersOf(row.params);
-                if (!parameters.empty() && IsResourceKind(parameters[0].kind)) continue;
+                // A generated row taking a resource first is the resource's method; a shim row is the module's.
+                if (!parameters.empty() && IsResourceKind(parameters[0].kind) && row.lua == wxl::api::Lua::generated) continue;
                 const wxl::api::Version since = wxl::api::SinceOf(row);
                 if (wxl::api::AtLeast(since, services[s].since) && !wxl::api::AtLeast(services[s].since, since))
                     out << "---" << CameWith(since) << "\n";
@@ -500,6 +1096,7 @@ namespace
                 else
                     writeRow(row, services[s].id, ".");
             }
+            if (std::strcmp(services[s].id, "net") == 0) out << NetExtras(services[s].id);
         }
         return out.str();
     }
@@ -538,6 +1135,16 @@ namespace
                "---An event's bytes, copied into a string.\n"
                "---@alias wxl.Bytes string\n\n"
                "---@class wxl.Vec3\n---@field x number\n---@field y number\n---@field z number\n\n"
+               "---A file's content hash, as wxl.storage.HashFile answers it.\n"
+               "---@class wxl.FileHash\n---@field md5 string thirty-two lower-case hex digits\n"
+               "---@field size integer bytes\n"
+               "---@field layer \"archive\"|\"disk\"|\"folder\"|\"provider\"|\"served\" where the bytes came from\n"
+               "---@field source string the archive, the file on the disk, or the mod that serves it\n\n"
+               "---What wxl.storage.ReloadAsset did.\n"
+               "---@class wxl.AssetReload\n---@field textures integer textures read again in place\n"
+               "---@field models integer model files dropped from the model cache\n"
+               "---@field objects integer units and players whose model was made again\n"
+               "---@field busy integer textures still loading, left alone\n\n"
                "---An element of an update field: a number, a guid's string for a guid or another\n"
                "---64-bit value, a table of numbers for the bytes or the two halves of a dword.\n"
                "---@alias wxl.FieldValue number|string|number[]\n\n";

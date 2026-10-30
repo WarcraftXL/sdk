@@ -478,6 +478,8 @@ The events that can be answered, as the SDK stands:
 | Event | Answers through | What answering does |
 |---|---|---|
 | `WorldScript:OnInput` | `handled` | the client never sees the input |
+| `WorldScript:OnMouseWheel` | `handled` | the game never sees the turn of the wheel (abi `0.1.24`) |
+| `WorldScript:OnWorldClickRequest` | `refused` | the game does nothing for the click: no target, no talk, no loot, no walk (abi `0.1.26`) |
 | `WorldScript:OnSoundPlay` | `suppressed` | the sound does not play |
 | `AssetScript:OnFileOpen` | `redirect` | the client opens the path you return instead, for an open on the main thread; on any thread, use `wxl.storage.Redirect` |
 | `NetScript:OnMessageReceived` | `suppressed` | the client never sees the server's message |
@@ -488,6 +490,8 @@ The events that can be answered, as the SDK stands:
 | `GroupScript:OnGroupInvite` | `accept`, `decline` | `return true` joins the group, `return nil, true` turns it down, as the dialog's buttons do; the dialog never shows (abi `0.1.17`) |
 | `SocialScript:OnDuelRequested` | `accept`, `decline` | the same for a duel challenge (abi `0.1.17`) |
 | `SocialScript:OnResurrectRequest` | `accept`, `decline` | the same for an offer to resurrect you (abi `0.1.17`) |
+| `LuaScript:OnInterfaceSignature` | `accepted` | the client takes the interface as signed: a changed GlueXML, FrameXML or Blizzard add-on loads; see [A changed interface](#a-changed-interface-signatures) (abi `0.1.32`) |
+| `LuaScript:OnInterfaceCleanupRequest` | `refused` | loose interface folders stay on disk instead of being renamed to `.old` (abi `0.1.32`) |
 
 ### Loading and updates
 
@@ -655,8 +659,10 @@ item:Use()             -- uses an item, on what it picks itself; item:Use(unit) 
 `wxl.action` has the same and what needs no object: `wxl.action.ClearTarget()`,
 `wxl.action.StopCasting()`, `wxl.action.CastSpell(id)` at your current target, and
 `wxl.action.MoveTo({ x = ..., y = ..., z = ... })`, which walks your player there as a
-click-to-move click does. An action runs on the thread that runs the game, where your handlers
-of world events run.
+click-to-move click does, and `wxl.action.Face(radians)` (abi `0.1.24`), which turns your player
+the way steering with the mouse does and tells the server: 0 faces north, the angle grows towards
+the west. An action runs on the thread that runs the game, where your handlers of world events
+run.
 
 ### One object, one value
 
@@ -1049,6 +1055,364 @@ end
 the bytes the client is about to parse, transforms applied. These events came with `0.1.19`: a mod
 using them, or `Serve`, asks for `"abi": "0.1.19"`.
 
+### Assets on demand: missing names, hashes, paths of your own, overrides, reloads
+
+A mod that fetches assets while the game runs -- from a server, a cache, another mod -- needs five
+things from the platform, and each is a small call.
+
+**Knowing what the client did not find.** `AssetScript`'s `OnFileMissing` comes whenever the
+client looks for a file and no layer has it: not its archives, not its folder, no search folder,
+no provider, nothing served.
+
+```lua
+function AssetScript:OnFileMissing(path, kind, open, pending, loader)
+    -- kind: "model", "skin", "texture", "terrain", "sound", "interface", ... (by the extension)
+    -- open: the client wanted to read it; false: it only asked whether it exists
+    -- pending: a provider said "not yet" for it
+    print("missing " .. path .. " (" .. kind .. ")")
+end
+```
+
+It may come on one of the client's loading threads; a Lua mod gets it at the next update, as
+every event raised elsewhere. Your own `wxl.storage` calls never raise it. The client probes many
+optional files (a texture's other format, an item's texture for each sex), so expect names it can
+live without, and the same name more than once.
+
+**Knowing what a file holds.** `wxl.storage.HashFile(name)` answers the MD5 of a file as the client
+would read it, from whichever layer holds it, with its length:
+
+```lua
+local hash = wxl.storage.HashFile("Interface\\FrameXML\\FrameXML.toc")
+print(hash.md5, hash.size, hash.layer, hash.source) -- 32 hex digits, bytes, "archive", "Data\\...MPQ"
+```
+
+`layer` is `"archive"`, `"disk"`, `"folder"`, `"provider"` or `"served"`; `source` names the
+archive, the file on the disk or the mod that serves it. The MD5 is the one a content
+distribution network keys a file by, so a mod can tell whether its copy differs from the client's.
+The answer is kept, so asking twice is cheap; `HashFile(name, true)` reads the file again. Reading
+a large file takes as long as reading it: `wxl.storage.HashFileAsync(name, fn)` hashes on a thread
+of the runtime's and calls `fn(hash)` (or `fn(nil, reason)`) at a later update.
+
+**A path of your own.** Many paths are the same in this client and in later ones, with other
+contents. A file you bring in goes under the path you choose: a new path lives beside the client's
+files, and only taking the same path as one of the client's replaces it -- which you do on purpose,
+below.
+
+```lua
+local mine = "Creature\\Murloc\\MurlocModern.m2" -- a new path: beside the client's Murloc.m2
+wxl.storage.Serve(mine, bytes, 0)
+```
+
+Hand that path to the client -- a model you make, a texture you set -- and it reads your copy.
+The client keeps its models by file name alone, without the folder, so give a model of your own a
+file name of its own.
+
+**Replacing a file, when you mean it.** `wxl.storage.OverrideFile(name, other)` makes every open of
+`name`, and every check that it exists, get `other` instead, on every thread, above every layer:
+
+```lua
+wxl.storage.OverrideFile("Creature\\Murloc\\Murloc.m2", mine)
+-- ...
+wxl.storage.RestoreFile("Creature\\Murloc\\Murloc.m2")
+```
+
+It is logged, it lasts until `RestoreFile` or until your mod is disabled, reloads or unloads, and
+the latest of two mods' wins. One file at a time: that is the only way to replace a file of the
+client with one you serve at priority 0.
+
+**Making the client read again.** What the client loaded stays loaded. `wxl.storage.ReloadAsset(name)`
+makes it read a model or a texture again:
+
+```lua
+local done = wxl.storage.ReloadAsset("Creature\\Murloc\\Murloc.m2")
+print(done.textures, done.models, done.objects, done.busy)
+```
+
+A texture (`.blp`) is read again in place: everything drawing it shows the new pixels. A model
+(`.m2`, `.mdx`, or one of its `.skin` files) is dropped from the client's model cache, so its next
+use reads the file again, and the units and players in view drawn with it are made again at once.
+Other kinds answer `nil, "unsupported"`: map tiles and buildings are read again when their area
+loads again, sounds when they play. Two things are not painted again: a character's skin, baked
+from the textures of its parts (it is, at its next change of appearance), and a texture of the
+client's atlas -- a square interface texture of 64 pixels or less, an icon, most buttons --, which
+answers `nil, "unsupported"`. `nil, "pending"` means the texture is still loading: ask again in a
+moment.
+
+Put together, a fetch on demand reads: `OnFileMissing` (or a request from another mod) says what is
+needed; the file is fetched and served under the path you chose; `HashFile` compares it with the client's when
+both exist; `OverrideFile` puts it in place if it should replace the client's; `ReloadAsset` shows
+it. All of this came with abi `0.1.23`.
+
+### Services between mods: `wxl.relay`
+
+A mod can offer a service to the others, and answer when it is ready rather than at once.
+
+```lua
+-- The mod that serves.
+wxl.relay.Publish("my.fetcher.fetch", function(request, method, path)
+    if method == "has" then return wxl.storage.Exists(path) end -- answered at once
+    pending[#pending + 1] = request                             -- answered later
+end)
+-- ... later, maybe many updates later:
+wxl.relay.Answer(request, localPath, md5)   -- or wxl.relay.Fail(request, "no such file")
+```
+
+```lua
+-- The mod that asks.
+wxl.relay.Call("my.fetcher.fetch", "get", { "Creature\\Murloc\\Murloc.m2" }, function(ok, name, md5)
+    if not ok then print("not fetched: " .. tostring(name)) return end
+    print("ready as " .. name)
+end)
+```
+
+Everything is handed over at an update, on the main thread, never inside the call that caused it:
+a request reaches the service at the next update, an answer reaches the caller at the update after
+it is given. Values are numbers, strings, booleans and `nil`. A C++ mod publishes and calls the same
+services. Either side may go with requests in flight: a service that goes fails what it had not
+answered (`false, "not_found"`), a caller that goes has its requests cancelled -- the service's
+optional `cancelled(request)` function is told -- and nothing is handed to a mod that went.
+`wxl.relay.Cancel(request)` takes one back by hand. The module came with abi `0.1.23`.
+
+### Messages of your own: `wxl.net`
+
+A mod that talks to a module of the server gives each of its actions an opcode number of its own,
+as the game does (`CMSG_CAST_SPELL` one way, `SMSG_CAST_FAILED` the other), and the client carries
+the messages like any other. The client's own numbers end at `0x520`: a mod's start at `0x521`.
+List yours in `mod.json`, so that two mods cannot take the same ones:
+
+```json
+"net": { "opcodes": [ "0x521-0x52A" ] }
+```
+
+```lua
+local net = wxl.net
+net.Claim(0x521)                 -- what we send: a ping
+net.Claim(0x522)                 -- what the server sends: its echo
+net.SetHandler(0x522, function(r, opcode)
+    local seq, text = r:U32(), r:String()
+    if not r:Ok() then return end                    -- the message was shorter than expected
+    print("echo " .. seq .. ": " .. text)
+end)
+
+-- Later, once the server has spoken:
+local ok, why = net.Send(0x521, net.Writer():U32(seq):String("hello"))
+```
+
+**Readers and writers.** A handler is handed a reader over the message's body: `U8`, `U16`,
+`U32`, `U64`, `I8` to `I64`, `F32`, `F64` (all little-endian, as the game's), `Bool`, `Guid` and
+`PackedGuid` (a guid as the server packs one, answered as `"0x..."` text), `Vec3`, `String` (ended
+by a zero byte), `Bytes(n)`, `Skip(n)`. A read past the end answers 0 and leaves the reader failed:
+read the whole message, then check `r:Ok()` once. A handler that leaves it failed is logged once per
+number as `malformed 0x522 from the server`. `net.Writer()` writes the same kinds, each call
+answering the writer; it refuses to grow past `net.MaxSend()` (10000 bytes) and `Send` refuses a
+failed writer. `net.Reader(bytes)` reads any string.
+
+**The send gate.** A world server closes the connection when it receives a number it has no
+handler for, so `Send` answers `nil, "failed"` until the server has sent this mod one of the
+numbers it claimed, on this connection. The server's module announces itself by its first message
+(rules, a hello); `net.Heard()` says whether it has. The gate closes when the connection goes and
+stays closed on the next one until the server speaks again. `Send` also answers `"failed"` while
+the session is not `"authenticated"` (`net.State()`), `"invalid"` for a number the mod has not
+claimed, and `"busy"` past 64 messages of one number in a second.
+
+**Compressed messages.** A large message can come compressed under a second number, as the
+game's `SMSG_COMPRESSED_UPDATE_OBJECT` does: a u32 size, then a zlib stream. Claim both and pair
+them: `net.SetCompressed(0x529, 0x52A)`; a `0x52A` is inflated and handed to `0x529`'s function as
+a `0x529`. `net.Deflate(bytes)` and `net.Inflate(stream)` are zlib for anything else.
+
+**Refusals.** `Claim` refuses, with a line in the log saying why: a number past 0xFFFF; one of
+the client's own unless `mod.json` says `"net": { "stock": true }` (for tools); a number another
+mod claimed, or another mod's `mod.json` declares (the log names it); a number outside the ones
+this mod's `mod.json` lists, when it lists some. Of two mods whose `mod.json` declare the same
+number, the second does not load. A server project keeps one table of its numbers, and each mod
+declares its own in its manifest. `MessageReceived` of `NetScript` still sees every message first,
+claimed or not. The numbers go back when the mod is disabled, reloads or unloads. See the
+[net-echo example](../examples/net-echo/). The module came with abi `0.1.41`.
+
+### Textures from SVG and PNG: `wxl.texture`
+
+The game's interface reads BLP and TGA files only. `wxl.texture` (abi `0.1.30`) makes a texture of
+an SVG or a PNG and hands back a path the client loads like any of its files: give it to
+`Texture:SetTexture` in an add-on, to a model, to `wxl.selectioncircle`. An SVG is drawn at the
+size you ask, so a reticle or an icon stays sharp at any size, and its groups can be recoloured,
+outlined more or less, or hidden.
+
+```lua
+-- The reticle of this mod's assets folder, 32 pixels wide: its fill red, its outline a darker
+-- black and twice as wide as the SVG draws it.
+local path, right, bottom = wxl.texture.Make(".\\assets\\reticle.svg", 32, nil, {
+    fill    = "ff4040ff",
+    outline = { color = "000000cc", width = 2 },
+})
+if not path then print("no reticle: " .. right) return end
+-- path: "Interface\\WXL\\my-mod\\reticle_32x20_<hash>.blp"
+```
+
+**The source.** `".\\assets\\reticle.svg"` is a file of your mod's own folder;
+`"Mods\\<folder>\\..."` one of another mod's; any other name is a file the client has, found as
+it finds its own: `"Interface\\AddOns\\<add-on>\\reticle.svg"` for an add-on's, a file in an
+archive, one a mod serves. The kind is read from the bytes, not the name.
+
+**The size.** In pixels, up to 2048. `nil` for both is the source's own size; `nil` for one keeps
+the proportions. An SVG keeps its proportions in any case: it is fitted and centred, as a browser
+draws it. A PNG is resampled, with a filter that averages what it shrinks.
+
+**What comes back.** The path, then `right` and `bottom`, then the texture's width and height. The
+client's device takes only textures whose edges are powers of two (8 to 2048), so the picture sits
+at the top-left corner of the smallest one that holds it, the rest transparent: a 32 x 20 picture
+is in a 32 x 32 texture, `right` 1 and `bottom` 0.625. Show the picture alone with
+`SetTexCoord(0, right, 0, bottom)` on a region of the picture's size in pixels, and it is drawn
+pixel for pixel. On a failure `Make` answers `nil` and why: `"make: no file 'Mods\\my-mod\\assets\\reticle.svg'"`.
+
+**Groups (SVG).** A key of the table is the `id` of an element of the SVG: a shape, or a group
+(`<g id="outline">`) whose shapes it then reaches all of. Its value is a colour, `false` to hide
+the shapes, or a table of any of `color`, `width` and `visible`:
+
+- a colour is `"rrggbbaa"` or `"rrggbb"` (the order CSS writes, an optional `#`), or a number
+  `0xAARRGGBB`. It paints every fill and stroke of the shapes, gradients too, and its alpha takes
+  the place of their opacities;
+- `width` multiplies the strokes' width the SVG gives each shape: `1` as drawn, `2` twice as wide,
+  `0` takes them off. Each shape keeps its proportion to the others; a shape with no stroke gets
+  none;
+- `visible = false` leaves the shapes out.
+
+A reticle drawn for this is two groups: `<g id="outline">`, the shapes filled and stroked dark,
+under `<g id="fill">`, the same shapes filled light.
+
+**The tint.** A fifth argument, a colour, multiplies every pixel once the picture is drawn: the
+way to colour a PNG, which has no groups (a group on a PNG is refused).
+
+**Made once.** The path is named after everything the texture is made of: the source file's
+bytes, the size, the groups, the tint. The same request answers the same path at once, without
+drawing again; a change to any of them, an edited file included, gives a new path, and the old
+one keeps answering what it was. The textures are kept in memory up to a budget, past which the
+least used are let go and drawn again if the client asks for them. `wxl.texture.Stats()` says how
+many there are and how much they hold.
+
+**In an add-on.** The game's interface has the same call, `WxlTexture`, in both its script
+contexts (the login screens and the game). It takes the same arguments, but an add-on has no
+folder of its own to name with `".\\"`: it names its files under `Interface\\AddOns\\`. An add-on
+written for clients without WarcraftXL tests that `WxlTexture` exists.
+
+A reticle at the screen's pixel size, drawn again when the window or the interface's scale
+changes. The client of 3.3.5a signals `DISPLAY_SIZE_CHANGED` when its window changes size, and
+has no event for the interface's scale: a change of scale resizes `UIParent`, which a script on
+its size sees.
+
+```lua
+-- Interface\AddOns\MyReticle\MyReticle.lua, with reticle.svg beside it.
+local frame = CreateFrame("Frame", nil, UIParent)
+frame:SetPoint("CENTER")
+local texture = frame:CreateTexture(nil, "OVERLAY")
+texture:SetAllPoints(frame)
+
+-- Screen pixels per unit of the frame's own coordinates.
+local function PixelsPerUnit()
+    local _, height = GetCVar("gxResolution"):match("(%d+)x(%d+)")
+    return tonumber(height) / 768 * frame:GetEffectiveScale()
+end
+
+local function Draw()
+    if not WxlTexture then return end -- not running on WarcraftXL
+    local perUnit = PixelsPerUnit()
+    local pixels  = math.floor(24 * perUnit + 0.5) -- 24 units wide, as many pixels as that covers
+    local path, right, bottom, width, height = WxlTexture("Interface\\AddOns\\MyReticle\\reticle.svg", pixels, nil,
+        { fill = "ff4040ff", outline = { color = "000000cc", width = 1.5 } })
+    if not path then print("MyReticle: " .. right) return end
+    texture:SetTexture(path)
+    texture:SetTexCoord(0, right, 0, bottom)
+    frame:SetSize(width * right / perUnit, height * bottom / perUnit)
+end
+
+frame:RegisterEvent("PLAYER_LOGIN")
+frame:RegisterEvent("DISPLAY_SIZE_CHANGED")
+frame:SetScript("OnEvent", Draw)
+UIParent:HookScript("OnSizeChanged", Draw)
+```
+
+A Lua mod draws its own reticle the same way, with `wxl.texture.Make` and a frame it makes through
+`wxl.script.Run`, or hands the path to an add-on of its own.
+
+### Settings: `wxl.cvar`
+
+`wxl.cvar` (abi `0.1.31`) registers console variables: settings the console reads and sets
+(`/console myMod_scale 2`, `cvarlist`), that the game's interface reads and sets with `GetCVar`,
+`GetCVarBool`, `GetCVarDefault` and `SetCVar`, and that the client saves with its own. The same
+calls read and set the client's own variables.
+
+```lua
+-- A size kept in Config.wtf, from 0.5 to 3, and a switch for each character.
+wxl.cvar.Register("myMod_scale", 1, "saved", "Size of my mod's frame")
+wxl.cvar.SetRange("myMod_scale", 0.5, 3)
+wxl.cvar.Register("myMod_autoLoot", false, "character")
+
+local scale = wxl.cvar.GetNumber("myMod_scale")
+wxl.cvar.SetNumber("myMod_scale", 2)
+print(wxl.cvar.Get("farclip"))            -- the client's own
+
+Observe("WorldScript", "OnCVarChanged", function(name, previous, value)
+    if name == "myMod_scale" then print("scale is now " .. value) end
+end)
+```
+
+`OnCVarChanged` is raised for every change, whoever made it -- your mod, the console, an add-on's
+`SetCVar`, a reset -- and not for a set that leaves the value as it is.
+
+The default may be a string, a number or a boolean (`"1"` or `"0"`). The flags are nil (a variable
+of the session), a name or a list of names: `"saved"` (Config.wtf, the installation's), `"account"`
+or `"character"` (their own settings, also on the server when it keeps account data),
+`"read_only"` (the console and the interface cannot set it, your mod can), `"latched"` (with
+`"saved"`: a set waits for the next start), `"protected"` (the interface's `SetCVar` only from the
+game's secure code), `"hidden"` (the interface does not see it). A value equal to the default is
+not written.
+
+**Names.** Up to 63 characters, no space, quote, comma or semicolon, compared without case. The
+client, the interface and every mod share one namespace: start yours with your mod's prefix. A
+name the client registered, or another mod holds, answers `nil, "invalid"`, the reason in the log.
+
+**When the saved value arrives.** The client reads Config.wtf early and keeps the lines nobody has
+registered: whenever your mod registers, it finds its saved value. An account's values are read
+when the account enters the world, a character's when the character does.
+
+A name is your mod's until `Release(name)`, or until the mod is disabled, reloads or unloads; the
+variable stays, with its value. The game's interface registers its own with
+`WxlRegisterCVar(name, default[, flags[, help]])` (flags: a number or names apart by spaces,
+`"saved latched"`); 3.3.5's `RegisterCVar(name[, default])` exists in the game's interface only,
+and its variables are never saved.
+
+### A changed interface: signatures
+
+The client loads its interface only when it is signed: the login screens' `GlueXML.toc`, the game's
+`FrameXML.toc` and each add-on's `.toc` carry a `.sig` beside them, and a file a patch archive
+changed no longer matches it. A changed GlueXML leaves the login screens empty, a changed FrameXML
+closes the client as the world loads, a changed Blizzard add-on is refused as corrupt.
+
+`LuaScript`'s `OnInterfaceSignature(file, extra, verdict, accepted)` (abi `0.1.32`) is raised for
+every check, before the client acts on it, with the `.toc`, the file hashed with it (`""` for
+GlueXML) and the client's verdict: `"missing"` (no `.sig`), `"corrupt"` (a `.sig` the key does not
+verify), `"modified"` (the files differ from what it signed) or `"signed"`. An `Override` that
+returns `true` has the file taken as signed: the client loads it as its own, and an add-on runs as
+secure code.
+
+```lua
+-- Our patch archive changes the game's interface: let the client load it.
+Override("LuaScript", "OnInterfaceSignature", function(file, extra, verdict)
+    return file == "Interface\\FrameXML\\FrameXML.toc" and verdict ~= "signed"
+end)
+
+-- Why did an interface not load? Print every verdict.
+Observe("LuaScript", "OnInterfaceSignature", function(file, extra, verdict)
+    print(file .. ": " .. verdict)
+end)
+```
+
+Take as signed only what you ship: a secure add-on can call what the client keeps from add-ons.
+When the login screens start, the client also renames loose `Interface\GlueXML`,
+`Interface\FrameXML` and `Interface\AddOns\Blizzard*` folders on disk to `<name>.old`, so that
+only the archives' copies load; an `Override` of `OnInterfaceCleanupRequest(refused)` that returns
+`true` keeps them. The runtime ships `wxl.glue-unlock`, a mod that does both for every file the
+client would refuse; remove it and the client checks as it always has.
+
 ### Models: `wxl.m2`
 
 What a character wears comes as an event, and a model of your own can be hung on any model the
@@ -1121,6 +1485,47 @@ The model loader's stages (`AssetScript:OnModelParsed`, `OnSkinProfileParsed`,
 with their numbers, but reshaping a model file or drawing with the device is a C++ mod's work:
 the C++ guide (`building-a-mod.md`, "Models") shows it. `OnModelBatchDrawn` comes thousands of
 times a frame: listen to it only while you need it. All of this came with abi `0.1.20`.
+
+**A model in the world.** `wxl.m2.CreateWorldModel(path)` makes a `wxl.Model` in the world's own
+scene, the one units and spell effects are in. It shows nowhere until you place it:
+`model:Place(placement)` puts it at a point of the world, and moves it there again each time you
+call it. A placement is a table: `position`, a point, and if you want them `yaw`, `pitch` and
+`roll` in radians (yaw as a unit's facing) and `scale` (1 when left out).
+
+```lua
+local fire
+
+function ObjectScript:OnSpellCastGo(caster, caster_guid, target, target_guid, cast_item, spell_id,
+                                    cast_count, cast_flags, target_flags, cast_time, hit_count,
+                                    hits, misses, miss_reasons, has_source, source, has_dest, dest)
+    if not has_dest then return end                  -- no ground point: not a ground spell
+    local ground = wxl.m2.GroundHeight(dest, 5, 20) or dest.z
+    if fire then fire:Release() end
+    fire = wxl.m2.CreateWorldModel("Spells\\FireNova_Area.m2")
+    fire:Place({ position = { x = dest.x, y = dest.y, z = ground } })
+    fire:PlayAnimation(158, 1)                       -- its birth, then what the file chains
+end
+```
+
+`has_dest` and `dest` say where a ground spell lands, `has_source` and `source` where it starts,
+in world coordinates unless the `dest_transport` (or `source_transport`) after them names the ship
+or elevator they were measured on.
+
+| Function or method | What it does |
+|---|---|
+| `wxl.m2.CreateWorldModel(path)` | a `wxl.Model` of your mod's in the world's scene; it shows once placed |
+| `model:Place({ position = {x, y, z}, yaw, pitch, roll, scale })` | puts it in the world there, or moves it there |
+| `model:SetTransform(placement)` | how it sits on the point it hangs on, for one you `Attach` |
+| `model:PlayAnimation(id, speed)` | plays an animation (`AnimationData.dbc` id) from its start, once loaded |
+| `model:SetAlpha(alpha)`, `model:SetEmitting(on)` | a fade, 0 to 1; whether its particles start new ones |
+| `wxl.m2.ModelLoaded(model)`, `wxl.m2.AnimationLength(model, id)` | whether a model has loaded; how long one play of an animation lasts, in milliseconds |
+| `wxl.m2.AttachmentWorld(model, point)` | where a point of a loaded model is in the world now, as `{ x, y, z }` |
+| `wxl.m2.GroundHeight(at, up, down)` | the height of the ground under a point, looked for from `up` yards above to `down` below |
+
+Leaving the world (a logout, a teleport to another map) takes your placed models out of it, with
+the client's own spell effects: place them again in `WorldScript:OnWorldEnter`. The bones the
+client poses every frame can be watched and moved too (a cape, a chain), but only by a C++ mod:
+it happens on the client's animate threads, where no script runs. These came with abi `0.1.21`.
 
 ### The client's databases: `wxl.data`
 
@@ -1237,6 +1642,583 @@ Bytes are written as a Lua string, `"\204"` being the byte 204 (0xCC). `Apply` a
 or `nil` and why; `patch:Restore()` puts the old bytes back. Your mod's patches are put back,
 newest first, when it reloads or stops, so a reload starts from the client as it was. `Matches`
 checks bytes without writing, `Find(bytes, after)` searches the program's constant data for them.
+
+### The camera, the mouse and the world: `wxl.camera`, `wxl.input`, `wxl.world`
+
+Three modules (abi `0.1.24`) let a mod take the camera and steer it with the mouse. The client
+places its world camera once a frame, and `RenderScript`'s `OnCameraUpdate` comes right after,
+before anything is drawn: a view set there is the one the frame is drawn from.
+
+```lua
+local yaw, pitch = 0, -0.3
+
+Observe("WorldScript", "OnMouseMotion", function(dx, dy)
+    yaw, pitch = yaw - dx * 0.004, pitch - dy * 0.004
+end)
+
+Observe("RenderScript", "OnCameraUpdate", function(index, delta)
+    local head = wxl.camera.Pivot()                 -- the character, at the height it looks from
+    if not head or wxl.camera.Cinematic() then return end
+    local forward = { x = math.cos(pitch) * math.cos(yaw), y = math.cos(pitch) * math.sin(yaw), z = math.sin(pitch) }
+    local eye = { x = head.x - forward.x * 4, y = head.y - forward.y * 4, z = head.z - forward.z * 4 }
+    eye = wxl.world.Trace(head, eye) or eye         -- in front of a wall, never through it
+    wxl.camera.SetView(eye, forward, 0)             -- 0 keeps the client's field of view
+end)
+
+wxl.input.CaptureCursor(true)                       -- hidden, held at the centre of the window
+```
+
+| Function | Answers |
+|---|---|
+| `wxl.camera.Position()`, `.Forward()`, `.Up()` | where the camera is this frame, as `{ x, y, z }`; where it looks; the top of the screen |
+| `wxl.camera.Fov()`, `.Pivot()`, `.Cinematic()` | its field of view in radians; the point the client's camera turns around (the character at its eye height); whether a cinematic has the view |
+| `wxl.camera.SetView(position, forward, fov)` | `true`: the camera is placed there from now on, until `ReleaseView()` or the mod goes; `fov` 0 keeps the client's. Of two mods' views the later is drawn, and the earlier comes back when it lets go |
+| `wxl.camera.ReleaseView()` | `true`: the client has its camera again, as the player left it |
+| `wxl.input.CaptureCursor(captured)` | `true`: the pointer is hidden and held at the centre (`true`), or the mod's hold is let go (`false`). The game still picks and clicks at the centre: what is there is the mouseover, a left click targets it, a right click talks to it |
+| `wxl.input.CursorCaptured()`, `.PointerOverWorld()` | whether some mod holds the pointer; whether it is over the world rather than the interface |
+| `wxl.world.Trace(start, finish, flags)` | the first point of the ground, a building or a placed object between the two, or `nil` when the way is clear; `flags` (left out: the camera's) is the client's hit-test mask, `0x100111` the line of sight of spells |
+
+The mouse's motion arrives as `WorldScript`'s `OnMouseMotion(dx, dy)`, in the mouse's own counts
+(right and towards you positive), whether the pointer is held or not; the wheel as
+`OnMouseWheel(delta)`, in notches (away from you positive), which an `Override` answering `true`
+keeps from the game. The pointer is let go while the game's window is not in front. A mod's view
+and its hold on the pointer go when it reloads, is disabled or unloads. Whether a unit stands
+indoors is `unit:IsOutdoors()`. Everything here runs on the game's thread, where your handlers run.
+
+**Leaning the camera, and a reticle off the centre** (abi `0.1.29`). `wxl.camera.SetViewRolled`
+places the camera as `SetView` does, turned around the direction it looks: a roll in radians,
+positive to the camera's right, as an aircraft banking right (the top of the screen leans right,
+the world turns the other way). `0` is `SetView`'s picture. The game's picking under the pointer
+turns with the world, so a click still lands on what is drawn under it; the interface does not
+turn. `wxl.camera.Roll()` reads the roll the camera draws with. `wxl.input.CaptureCursorAt(x, y)`
+holds the pointer at another point of the window than its centre, `x` from the left edge and `y`
+from the top, from `0` to `1`: the game then picks and clicks there, so a reticle drawn at that
+point is what a click acts on. Look along the line through that point, not the centre, to aim at
+something.
+
+```lua
+local lean = 0
+
+Observe("RenderScript", "OnCameraUpdate", function(index, delta)
+    local head = wxl.camera.Pivot()
+    if not head or wxl.camera.Cinematic() then return end
+    local forward = { x = 1, y = 0, z = -0.2 }
+    lean = lean + (0.08 - lean) * math.min(1, delta * 4)   -- eases to a light lean to the right
+    wxl.camera.SetViewRolled({ x = head.x - 4, y = head.y, z = head.z + 1 }, forward, 0, lean)
+end)
+
+wxl.input.CaptureCursorAt(0.5, 0.4)                 -- held a tenth of the screen above the centre
+```
+
+| Function | Answers |
+|---|---|
+| `wxl.camera.SetViewRolled(position, forward, fov, roll)` | `true`: as `SetView`, turned by `roll` radians around `forward` |
+| `wxl.camera.Roll()` | the roll the camera draws with this frame, from `-pi` to `pi` |
+| `wxl.input.CaptureCursorAt(x, y)` | `true`: the pointer hidden and held at that point; a mod already holding it moves it there. Of several mods, the last to capture or move it has its point; `CaptureCursor(true)` is the centre |
+| `wxl.input.CapturePoint()` | where the pointer is held, `{ x, y, z = 0 }`; `nil, "not_found"` when nobody holds it |
+
+A click in the world arrives first as `WorldScript`'s `OnWorldClickRequest(button, hit, object,
+object_guid, point, targeting)` (abi `0.1.26`), before the game acts on it: the left button selects
+or attacks, the right one talks, loots or uses, either aims a spell waiting for its target
+(`targeting`) or walks with click-to-move. An `Override` answering `true` refuses it, and the game
+does nothing. A game where the reticle decides what you aim at refuses the clicks on models and
+name plates and leaves the ground to the game, so that a spell's circle is still placed:
+
+```lua
+Override("WorldScript", "OnWorldClickRequest", function(button, hit, object, guid, point, targeting)
+    return not targeting and (hit == "object" or hit == "name_plate")
+end)
+```
+
+What the player can do with what is there is the client's own answer: `unit:CanAttack()`,
+`unit:CanInteract()` (an NPC offering something, alive, out of combat, friendly enough) and a game
+object's `CanUse()` (its quest in the log, its lock open), each true out of reach too.
+
+`wxl.input.BlockMouseLook(true)` (abi `0.1.25`) keeps the game out of its own mouse look: a held
+mouse button turns no camera and no character, hides no pointer, and a click let go within 0.8 s
+still selects (left) or talks, loots, attacks (right). `wxl.pose.Head(unit, yaw, pitch, smoothing)`
+turns a unit's head from where its body faces (radians: yaw positive to its left, pitch up;
+`smoothing` the seconds to cover half the way), held until `wxl.pose.ReleaseHead(unit)`; the
+runtime holds the angles to 100 degrees of yaw and 80 of pitch. Both are let go when the mod
+reloads, is disabled or unloads. Dear ImGui windows (`wxl.imgui`, `OnImGuiFrame`) are a C++ mod's:
+see "Windows of your own" in [Building a mod](building-a-mod.md).
+
+`wxl.highlight.Set(target, color, outline, glow, glow_strength)` (abi `0.1.27`) outlines an object
+and lights it with a soft glow, where it is seen and never through a wall: `color` is `0xRRGGBB`,
+`outline` the sharp edge's width in pixels (up to 16), `glow` how far the glow fades out (up to
+64), `glow_strength` how bright it is (0 to 1); 0 leaves either out. Widths are pixels of a picture
+1080 lines high, drawn in proportion at any resolution; parts the game cuts out by their texture
+(hair, leaves) are outlined as shown. Called again it changes the style; it holds until
+`wxl.highlight.Clear(target)`, `ClearAll()`, the object leaving view, or the mod reloading, being
+disabled or unloading. To keep a far object's outline from swallowing it, scale the widths by its
+distance yourself. Both clients draw
+them on the Vulkan renderer (`[gx] api = vulkan`), and the stock client on Direct3D 9 too; where a
+runtime does not (the recompiled client on Direct3D 9), `wxl.highlight.Supported()` is `false`,
+`UnsupportedReason()` says why and `Set` answers `nil, "unsupported"`: say so once and leave the
+feature off.
+
+```lua
+local hostile, red = nil, 0xE03030
+Observe("ObjectScript", "OnTargetChanged", function()
+    if hostile then wxl.highlight.Clear(hostile) end
+    hostile = wxl.object.LocalPlayer():Target()
+    if hostile then wxl.highlight.Set(hostile, red, 2, 10, 0.5) end
+end)
+```
+
+`wxl.selectioncircle` (abi `0.1.28`) hides the circles the game draws on the ground, or draws them
+in a texture, colour or size of your own. A circle has a kind: `"target"` (under the player's
+target, a unit or a corpse, with the ring that closes on it when the player starts attacking it),
+`"pet_target"` (the ring closing on the pet's new target) or `"move_marker"` (where click-to-move
+goes); and the reaction of the unit it is under: `"hated"` to `"exalted"`, or `"none"` for a
+corpse or the move marker. Each takes a name, a list of names, or nil for all of them.
+
+```lua
+-- No circle under the target: the mod shows it its own way.
+wxl.selectioncircle.Hide("target")
+
+-- Or hostile and unfriendly targets in a texture of the mod, orange and a quarter larger.
+wxl.selectioncircle.SetStyle("target", { "hostile", "unfriendly" },
+    { texture = "Interface\\MyMod\\Circle.blp", color = 0xFFFF8000, scale = 1.25 })
+
+-- One unit of its own, whatever its kind.
+wxl.selectioncircle.HideObject(boss)
+```
+
+A style table may leave out any of its three keys, which then keep the game's. The texture is a
+BLP added onto the ground as the game adds its own: black is nothing, white the colour at full.
+The colour is `0xAARRGGBB`, its alpha scaling the brightness, the game's own fades (the closing
+rings, the marker's pulse) still playing over it; the scale is the size against the game's, up to
+8. An object's own look wins over its kind's; among mods the last set wins.
+`wxl.selectioncircle.Reset(kinds, reactions)`, `ResetObject(target)` and `ResetAll()` give back
+what this mod changed, and it all goes when the mod reloads, is disabled or unloads. `Drawn()` and
+`Hidden()` count the circles the last world frame drew and left out.
+
+### The ground: `wxl.terrain`
+
+`wxl.terrain` (abi `0.1.35`) reads the ground of the map you are on and reshapes it while the game
+runs. The ground is the client's own grid: chunks of 145 vertices, one about every 4.17 yards (2.08
+counting the vertices in the middle of each square). A chunk is named by its column and row on the
+map (`chunk_x`, `chunk_y`, 0 to 1023), a vertex by its index in the chunk (0 to 144).
+
+```lua
+-- Dig where the camera looks: every vertex within three yards of the point, half a yard lower.
+local function dig(from, to)
+    local hit = wxl.terrain.Trace(from, to)
+    if not hit then return end
+    local edits = {}
+    for _, v in ipairs(wxl.terrain.VerticesIn(hit.point.x, hit.point.y, 3)) do
+        if v.loaded then
+            edits[#edits + 1] = { chunk_x = v.chunk_x, chunk_y = v.chunk_y, index = v.index, height = v.z - 0.5 }
+        end
+    end
+    return wxl.terrain.SetHeights(edits)
+end
+
+print(wxl.terrain.Height(x, y))          -- the ground under a point, as edited
+print(wxl.terrain.Height(x, y, true))    -- the map's own
+print(wxl.terrain.Presence(x, y))        -- "ground", "hole", "not_loaded" or "none"
+```
+
+`VerticesIn(x, y, radius)` lists every vertex within a radius (up to 128 yards) of a point, each
+once whichever chunks the circle crosses, as `{ chunk_x, chunk_y, index, x, y, z, original_z, inner,
+loaded }`: the brush is that list, nothing to split by chunk. `Vertices(chunk_x, chunk_y)` lists
+one chunk's vertices from index 0, so vertex `i` is at `[i + 1]`: rows of 9, each but the last
+followed by a row of 8 in the middle of the squares.
+
+**What follows an edit.** `SetHeights` takes absolute heights, all or none: an entry off the grid
+answers `nil, "invalid"` and sets nothing, with a line in the log under `terrain`. Before it returns,
+the ground is drawn anew (its light on the slopes, its grass grown again), you walk on it and fall
+into it, the camera bumps into it and your clicks land on it (`wxl.world.Trace` meets it too). If
+you stand still on ground that goes down, you fall; ground raised over your feet puts you on top,
+standing or walking, at once for a step's rise and at 8 yards a second for more, landing as the
+game lands you (the server sees a landing, never a teleport), unless a roof or a floor is above you. Water keeps its surface, and trees and rocks the map placed stay where they are. A vertex on a
+chunk's edge belongs to both chunks: setting it through either sets both.
+
+**Whose edits.** Your edits are your mod's: `Reset(chunk_x, chunk_y)` takes them off one chunk,
+`ResetAll()` off everywhere, and they come off when your mod is disabled, reloads or unloads. Where
+two mods set one vertex, the latest edit shows, and the other comes back when it is reset.
+
+**When chunks come and go.** The game loads the ground around you and frees it behind you. Your
+edits stay with the runtime and are back on a chunk when it loads again:
+
+```lua
+Observe("WorldScript", "OnTerrainChunkLoaded", function(map, chunk_x, chunk_y, edited) end)
+Observe("WorldScript", "OnTerrainChunkUnloaded", function(map, chunk_x, chunk_y, edited) end)
+Observe("WorldScript", "OnTerrainEditsCleared", function(map, chunks)
+    -- the map is going (another map, a logout): every edit was dropped
+end)
+```
+
+A teleport within the map keeps them. `Stats()` answers what the service holds and what the last
+edit cost (`last_microseconds`): a few microseconds for a brush, so an edit every 100 ms while a
+button is held is no trouble. The server keeps its own ground: a mod that digs where a server checks
+movement must tell its server.
+
+**Drawing a grid over the ground.** `wxl.draw` does it on every device: a `"grid"` shape with
+`spacing = 4.1666665` and its centre on a vertex follows the terrain's own cells, and lies on the
+ground as you edit it. See [Shapes in the world](#shapes-in-the-world-wxldraw).
+
+### Shapes in the world: `wxl.draw`
+
+`wxl.draw` (abi `0.1.36`) draws simple shapes in the 3D world: lines, shapes lying on the ground,
+volumes. It draws them the same on the stock client and the recompiled one, under Direct3D 9 and
+the Vulkan renderer alike, so a mod never asks which device it runs on.
+
+```lua
+-- Every frame, a grid under the point the camera looks at: drawn by the next frame only.
+Observe("RenderScript", "OnFrameBegin", function()
+    wxl.draw.Draw({ kind = "grid", center = aim, length = 10, width = 10, spacing = 1 },
+                  { color = 0x60D0FF, alpha = 0.6, width = 1 })
+end)
+
+-- A cone in front of a boss for three seconds, fading out over the last half second.
+local cone = wxl.draw.Add({ kind = "sector", radius = 15, angle = math.rad(70) },
+                          { color = 0xFF3020, fill_alpha = 0.3, width = 2, fade_out = 0.5 }, 3)
+cone:Attach(boss, 1)    -- it follows the boss and turns with it
+```
+
+**The shapes.** A shape is a table whose `kind` says what it reads:
+
+| `kind` | reads |
+|---|---|
+| `"line"` | `points` (2 or more); `closed = true` joins the last to the first, `on_ground = true` lays it on the ground |
+| `"circle"` | `center`, `radius` |
+| `"ring"` | `center`, `radius`, `inner` |
+| `"sector"` | `center`, `radius`, `facing` (the middle of the arc), `angle` (its width, up to `2 * math.pi`), `inner` (0 for a cone) |
+| `"rectangle"` | `center`, `length` (along `facing`), `width`, `facing` |
+| `"polygon"` | `points` (3 or more; concave is fine, crossing itself is not) |
+| `"grid"` | `center`, `length`, `width`, `spacing` (yards between the lines), `facing` |
+| `"box"` | `center`, `size` (`{ x = length, y = width, z = height }`), `facing`, `pitch`, `roll` |
+| `"sphere"` | `center`, `radius` |
+| `"cylinder"` | `center` (its middle), `radius`, `height`, `facing`, `pitch`, `roll` |
+
+Angles are radians, `facing` as an object's (0 towards +x, north). Points are offsets from
+`center`: leave `center` out to give them in world coordinates. Circles, rings, sectors,
+rectangles, polygons and grids lie on the ground: on its slopes, on the very triangles the client
+walks on, and on every edit `wxl.terrain` makes. Where there is no ground (a hole, a chunk not
+loaded, an instance made of buildings, a bridge, a floor), they lie flat at `center.z`; `flat =
+true` keeps them flat at `center.z` everywhere, for a floor whose height you know
+(`wxl.world.Trace` finds it).
+
+**The look.** The second table: `color` (`0xRRGGBB`), `alpha` (the lines' opacity, 0 for no
+lines), `fill_alpha` (the inside's, 0 for none), `width` (the lines' width in pixels of a picture
+1080 lines high, 0.5 to 31, the same at any distance), `depth` (`"tested"`: walls, units and the
+ground hide it; `"on_top"`: seen through them), `pulse` (seconds a beat of the opacity), and for a
+kept shape `fade_in` and `fade_out` (seconds). Leave it out for white lines 2 pixels wide.
+
+**Soft lines, fades along them, shadows** (abi `0.1.38`). `softness` (pixels) fades a line's edges
+over that many pixels. `alpha_start` and `alpha_end` take a line's opacity from its first point to
+its last along its length, and a line's `alphas` (one opacity per point, in the shape) set it point
+by point. `shadow_alpha` draws a shadow under the lines: black unless `shadow_color` says, moved by
+`shadow_offset` (`{ x, y }` pixels right and down, `{ 1.5, 1.5 }` when left out), a stroke
+`shadow_softness` pixels wider than the line (1 when left out) whose edges fade as much. A shadow
+costs the shape's lines drawn once more.
+
+```lua
+-- A digging grid: soft gold lines over a light shadow, its cells darkening the dirt.
+wxl.draw.Draw({ kind = "grid", center = at, length = 6, width = 6, spacing = 1 },
+              { color = 0xE8C060, alpha = 0.85, width = 1.5, softness = 1, shadow_alpha = 0.45,
+                fill_alpha = 0.25, fill_color = 0x605040, blend = "modulate", feather = 0.5 })
+```
+
+**Pictures on the ground** (abi `0.1.38`). The inside of a circle, a ring, a sector, a rectangle,
+a polygon or a grid takes a `texture`: any picture the game loads (a `.blp` of its archives, as
+`"SPELLS\\CrackedGround.blp"`), or what `wxl.texture.Make` answers (`texture = { wxl.texture.Make(...) }`
+keeps its path and the part of the texture its picture fills). The inside is drawn once the picture
+has loaded, nothing before. The picture is multiplied by `fill_color` (by `color` when left out)
+and by `fill_alpha`. How it lies:
+
+| | |
+|---|---|
+| `uv = "fit"` (the default) | once over the shape's bounds, its top towards the shape's `facing`; `uv_size` 0.5 makes it half as big |
+| `uv = "tile"` | the same frame, repeated: `uv_size` 0.25 repeats it four times across |
+| `uv = "world"` | in the world's own frame, its top to the north, `uv_size` yards a picture: shapes side by side join, and the picture stays still as a shape moves |
+| `uv_rotation`, `uv_offset` | the picture turned (radians, counter-clockwise from above) and moved (`{ x, y }` in pictures) |
+
+`blend` puts the inside on the ground: `"alpha"` over it (the default), `"add"` as light (a glowing
+spell circle), `"modulate"` multiplied into it: white leaves the ground as it is and the picture's
+colour darkens it, as a stain, a scorch or a mark scored into the dirt (`fill_alpha` says how much).
+`feather` (yards) fades the inside out towards its border, `radial_fade` (0 to 1) from its centre
+outwards over that part of the radius (1: from the centre itself). They work with or without a
+picture.
+
+**Pictures on boxes and cylinders** (abi `0.1.39`). A box's faces and a cylinder's side and ends
+take the same look, each face in its own frame: the picture stands up each side (on the top and
+bottom faces its top points along `facing`), and goes once around a cylinder, its seam behind it.
+`"fit"` and `"tile"` lay it on each face; `"world"` lays `uv_size` yards a picture along each face
+from the world's origin, so that boxes side by side join. `feather` fades each face towards its
+edges, `radial_fade` from its middle. A sphere's inside stays plain.
+
+To scroll a picture, keep the shape and change only its look each frame: `wxl.draw.SetStyle(shape,
+style)` with a new `uv_offset` builds nothing again, only the numbers the picture is drawn with.
+An immediate shape given each frame exactly as the frame before (same shape, same place) is not
+built again either; `Stats().reused` counts them.
+
+**Seeing what is hidden** (abi `0.1.39`). `occluded_alpha` (0 to 1) draws the part of a shape the
+scene hides (under the ground, behind a wall) at that part of its opacity, and the part that is seen
+as usual: a selection box sunk in the ground shows its buried half faintly. It works on lines,
+ground shapes and volumes, for a shape tested against the depth (not `"on_top"`), and draws the
+shape twice. `Stats().occluded` counts them.
+
+```lua
+-- A digging selection: a box between the ground and the level to dig to, its faces scrolling.
+local look = { color = 0xE8C060, width = 1.5, fill_alpha = 0.35, texture = "SPELLS\\T_VFX_RING_FF.BLP",
+               uv = "tile", uv_size = 0.5, blend = "add", occluded_alpha = 0.35 }
+local sel = wxl.draw.Add({ kind = "box", center = mid, size = { x = 3, y = 3, z = depth } }, look)
+local scroll = 0
+Observe("RenderScript", "OnFrameBegin", function()
+    scroll = (scroll + 0.004) % 1
+    look.uv_offset = { scroll, 0 }
+    wxl.draw.SetStyle(sel, look)
+end)
+```
+
+**A picture's shape only, and a blur** (abi `0.1.40`). `mask = true` takes only the opacity of
+the picture and draws it in the style's colour (`fill_color`, or `color`): the game's dark cracks
+glow white or gold. `texture_blur` (0 to 8) blurs the picture, each step halving its detail; with
+`feather` and `radial_fade` a textured halo is soft all round. The same on every device.
+
+**Beams** (abi `0.1.40`). A `"beam"` is a shaft of light, a spell's ray, a laser: a strip from its
+first point to its second, turned around its own axis to face the camera each frame so that it reads
+as a volume from any side. `widths = { start, end }` (yards), `alphas = { start, end }` (its opacity
+along it; none: 1 to 0). It is drawn with the inside's look: `fill_alpha`, `fill_color`, `blend`
+(`"add"` for light), `feather` the part of its half width over which it fades to its sides (1: soft
+all across), a `texture` along it (`"fit"` once from start to end, `"tile"` repeated, `uv_size` a part
+of its length; `"world"` `uv_size` yards a picture) whose `uv_offset` scrolls it, `mask`,
+`occluded_alpha`. It fades where it nears the camera and as it is seen end-on, never flashing.
+
+```lua
+-- A golden ray rising out of the ground, soft, a shimmer scrolling up it.
+local ray = wxl.draw.Add({ kind = "beam", points = { foot, top }, widths = { 0.8, 2.2 }, alphas = { 0.9, 0 } },
+                         { alpha = 0, fill_alpha = 1, fill_color = 0xFFD070, blend = "add", feather = 1,
+                           texture = "SPELLS\\TEXTURES\\Beam_WebGlowWhite.blp", mask = true, uv = "tile", uv_size = { 1, 0.3 } })
+```
+
+**Particles** (abi `0.1.40`). Dust, debris, sparks, glows: an emitter throws soft sprites that the
+runtime moves each frame.
+
+```lua
+-- Clods of earth thrown up where a pickaxe hits: they fall, bounce once and settle (forgotten).
+wxl.draw.Emit({ center = hit, burst = 14, spread = 0.7, speed = { 3, 6 }, life = { 1.0, 1.6 },
+                size = { 0.12, 0.28 }, spin = { -6, 6 }, gravity = 19.29,
+                ground = "bounce", restitution = 0.35, friction = 0.6 },
+              { texture = "SPELLS\\CrackedGround.blp", mask = true, softness = 0.15,
+                keys = { { t = 0, color = 0x6B5235, alpha = 1 }, { t = 1, size = 0.6, color = 0x5A4430, alpha = 0 } } })
+
+-- Sparks streaming from the player while it lasts.
+local sparks = wxl.draw.AddEmitter({ center = { x = 0, y = 0, z = 1 }, rate = 40, spread = 0.5, speed = { 1, 2 },
+                                     life = 0.8, size = { 0.08, 0.15 }, gravity = 4 },
+                                   { blend = "add", mode = "stretched", stretch = 0.05,
+                                     keys = { { t = 0, color = 0xFFD070 }, { t = 1, size = 0.3, color = 0xFF6020, alpha = 0 } } })
+sparks:Follow(wxl.object.LocalPlayer(), 1)
+```
+
+The emitter (first table) says where particles come from and how they move:
+
+| | |
+|---|---|
+| `spawn`, `center`, `extent`, `facing` | `"point"` (the default), `"disc"` (`extent.x` yards across its radius), `"box"` (`extent` its sides), `"segment"` (from `center` to `center + extent`) |
+| `direction`, `spread` | the cone they leave along: up by default; `spread` its half angle (0 straight, `math.pi` every way) |
+| `burst`, `rate`, `duration` | particles at once; a kept emitter's particles a second, for `duration` seconds (0: until stopped) |
+| `speed`, `life`, `size`, `spin` | each a number or `{ min, max }`: yards a second, seconds, yards across, radians a second |
+| `gravity`, `drag` | yards/s² down (the game's falls: 19.29); the part of their speed lost a second |
+| `ground`, `restitution`, `friction` | `"bounce"` once (giving back `restitution` of the fall, losing `friction` of the speed along the ground) then rest; `"settle"` rest where they land, sliding to a stop; the ground is the terrain's (`center.z` where there is none) |
+| `attractor`, `attraction`, `attract_radius` | pulled towards a point at `attraction` yards/s² (negative: pushed away), going within `attract_radius`: grains converging into a hole |
+| `seed` | the same seed throws the same particles |
+
+The look (second table, nil for soft white blots fading out): `mode` (`"camera"`: facing it, the
+default; `"ground"`: lying flat; `"stretched"`: drawn along their speed, `stretch` seconds of it
+long), a `texture` (none: a soft round blot; `{ wxl.texture.Make(...) }` too) with `frames = { x, y }`
+of a sprite sheet played at `frame_rate` (0: once over a life), `mask`, `texture_blur`, `blend`
+(`"alpha"`: sorted far to near; `"add"` for light; `"modulate"`), `depth`, `occluded_alpha`,
+`softness` (yards: they fade as they near the ground, the same on every device), and up to 4 `keys`
+of their life `{ t, size, color, alpha }`, in lines between them.
+
+`wxl.draw.Emit` throws one burst and forgets it. `wxl.draw.AddEmitter` keeps an emitter and answers
+an `Emitter`: `emitter:Burst(count)`, `emitter:Place(center, facing)`, `emitter:Follow(object, flags)`
+(it throws from the object, turned with it when `flags` is 1; it pauses when the object leaves view),
+`wxl.draw.UpdateEmitter(emitter, t)`, `wxl.draw.SetEmitterStyle(emitter, t)`, and `emitter:Stop()`
+(its particles live out their lives). A mod holds up to 256 emitters and 16384 particles, all mods
+65536; what is past them is not thrown (`Stats().particles_culled`). `Stats()` answers `particles`,
+`particles_emitted`, `particle_draws`, `emitters` and `particle_microseconds`. The example
+`dig-dust` throws clods, dust and grains where the camera looks.
+
+Pictures that suit the ground among the game's own:
+
+| Picture | What it is |
+|---|---|
+| `SPELLS\CrackedGround.blp` | cracked earth |
+| `TILESET\BURNINGSTEPPS\BurningSteppsAshCracks.blp`, `TILESET\Ashenvale\AshenvaleRockCracked.blp` | cracks in ash, in rock (tiling) |
+| `TILESET\AlteracMtns\AlteracDirtBase.blp`, `TILESET\Ashenvale\AshenvaleDirt.blp` | dirt (tiling) |
+| `DUNGEONS\TEXTURES\UNDEAD_SHIP\BURNMARK.BLP`, `TILESET\BURNINGSTEPPS\BurningSteppsCharcoal01.blp` | a burn mark, charred ground |
+| `textures\BloodSplats\BloodSplatRed01.blp`, `textures\ShadowBlob.blp`, `textures\Footsteps\BaseFootprint.blp` | a splat, a soft shadow, a footprint |
+| `SPELLS\T_VFX_HERO_CIRCLE.BLP`, `SPELLS\T_VFX_RING_FF.BLP`, `SPELLS\CIRCLE.BLP` | spell targeting circles and rings |
+| `SPELLS\Reticle_128.blp`, `SPELLS\TEXTURES\Reticle_BrightGround.blp`, `textures\UnitSelectTexture.blp` | the game's reticles, its selection circle |
+| `SPELLS\AURARUNE256.BLP`, `SPELLS\Holy_Rune_128.blp`, `SPELLS\TELEPORTTARGET.BLP` | runes on the ground |
+
+**For a frame, or kept.** `Draw` draws the shape in the next frame of the world only: call it each
+frame for what follows the frame, there is nothing to remove. `Add(shape, style, duration)` keeps
+it and answers a `wxl.Shape`, for `duration` seconds or until removed:
+
+| | |
+|---|---|
+| `shape:Move(center, facing)` | where it stands |
+| `wxl.draw.Update(shape, t)`, `wxl.draw.SetStyle(shape, t)` | another shape, another look |
+| `shape:SetDuration(seconds)` | it goes in that many seconds (0: when removed) |
+| `shape:Attach(object, flags)`, `shape:Detach()` | it follows an object (its offsets turn with it when `flags` is 1), and goes when the object leaves view |
+| `shape:Remove()`, `wxl.draw.Clear()` | it goes now; every shape of your mod goes |
+
+Your shapes go when your mod unloads or reloads.
+
+**When it is drawn.** After the world's opaque geometry and its water, before its translucent
+models, its spell effects and the interface: a telegraph on a lake's bed shows through the water,
+and the spell's own effects play over it.
+
+**Budgets.** A mod keeps up to 4096 shapes and draws up to 4096 a frame; a shape reaches up to
+250 yards from its centre and takes up to 4096 points; a grid draws up to 1024 lines. Past these the
+call answers `nil, "invalid"` with a line in the log under `draw` saying which. All mods together
+draw up to 524288 vertices a frame; past that, shapes are left out of the frame and the log says so
+once a second. `wxl.draw.Stats()` answers what the last frame drew and what it cost on the CPU
+(`build_microseconds`): a few tens of microseconds for a grid, a cone and a ring; since abi
+`0.1.38` also `textured` (insides drawn with a picture, a feather, a fade or a blend),
+`textures` and `textures_loading` (pictures held, still loading) and `shadows`; since `0.1.39`
+`occluded` and `reused`.
+
+The interface's own Lua (an add-on, a FrameXML file) has `WxlDraw(shape, style)`, the same tables
+as `Draw`, for the next frame of the world: call it from an `OnUpdate`.
+
+### Animations on units: `wxl.animation`
+
+`wxl.animation` (abi `0.1.37`) plays an animation of the game on a unit (you, a creature, another
+player in view), once or looped, the way the game plays an emote. Nothing goes to the server: it is
+seen on this client only.
+
+```lua
+local me = wxl.object.LocalPlayer()
+wxl.animation.Play(me, 62)                 -- one swing, as the game swings when you mine
+wxl.animation.Play(me, 62, 1 + 4, 1.2)     -- loop (1) + override (4), a little faster
+wxl.animation.Stop(me)                     -- the game chooses your animation again
+
+Observe("ObjectScript", "OnUnitAnimationEnded", function(unit, anim_id, reason, looped)
+    -- reason: "finished", "interrupted", "stopped", "replaced" or "gone"
+end)
+```
+
+`Play(unit, anim_id, flags, speed)`: `flags` adds up loop 1 (again at each end until `Stop`),
+no_blend 2 (no blend from the pose it leaves), override 4 (a loop played again whenever the game
+replaced it, death excepted; a one-shot ignores it) and exact 8 (no fallback to the model's nearest animation); `nil` or 0 plays it
+once, blended. `speed` 1 (or `nil`) is the animation's own, 0.05 to 20. It answers `true`, or
+`nil, "failed"` when the game did not play it (your model still loading, the unit dead), `nil,
+"invalid"` for an id past 505 or a flag it does not know.
+
+The game decides how: the whole body standing still, the upper body alone over your legs while you
+run, the model's nearest animation when it has not that one, weapons sheathed or drawn as the
+animation wants. And the game comes first: moving, fighting, casting, an emote or dying replace
+yours. A one-shot so replaced has ended (`"interrupted"`); a loop comes back by itself once the unit
+is idle, or at once with override. `wxl.animation.Playing(unit)` answers the id a mod plays on it,
+`wxl.animation.Current(unit)` what its model shows now. Your animations end when your mod is
+disabled, reloads or unloads.
+
+Ids are `AnimationData.dbc`'s. For a tool swung at the ground:
+
+| Id | Name | What it is |
+|---|---|---|
+| 0 | Stand | the idle stance the game falls back to |
+| 16 | AttackUnarmed | a punch |
+| 17 | Attack1H | a swing of a one-handed weapon: a pickaxe held in one hand |
+| 18 | Attack2H | an overhead swing of a two-handed weapon |
+| 19 | Attack2HL | a large two-handed swing (polearms, staves) |
+| 32 | SpellCast | a short release of a spell, both hands |
+| 53 | SpellCastDirected | a cast thrown forward with one hand, at a point |
+| 54 | SpellCastOmni | a cast released all around |
+| 62 | EmoteWork | the work swing: what the client plays while you mine, weapons sheathed |
+| 136 | EmoteWorkNoSheathe | the same swing with the weapon kept in hand (models without it fall back to 62) |
+| 69 | EmoteDance | a dance |
+| 123 | UseStandingLoop | hands busy at waist height: herbs, skins, opening a chest |
+
+The game's own mining is a spell whose cast plays 62 (EmoteWork) again and again while it lasts, with
+a pickaxe model in the right hand: 62 gives that look, 136 keeps a tool you hold in hand, 17 or 18
+strike like a weapon.
+
+### Drawing into the frame: `wxl.render`
+
+On the Vulkan renderer (either client with `[gx] api = vulkan`, the stock 32-bit one too), `wxl.render` (abi
+`0.1.33`) lets a mod draw into the game's frame with images, buffers and pipelines of its own.
+`wxl.gx.Api()` names the device the client runs on (`"d3d9"`, `"vulkan"`, ...); on Direct3D 9
+`wxl.render.Supported()` is `false` and `UnsupportedReason()` says why.
+
+A mod draws in `RenderScript`'s `OnRenderPoint(point, frame, width, height, samples)`, raised at four
+points of each frame while it listens: `"after_opaque_world"`, `"after_liquids"`, `"after_world"` (the
+world drawn, not the interface) and `"after_ui"`. There it opens a pass with `wxl.render.Begin`,
+draws, and closes it with `wxl.render.End()`; the frame goes on after it.
+
+Its programs are SPIR-V, compiled from GLSL with the Vulkan SDK's `glslangValidator -V --target-env
+vulkan1.3 -I<sdk>/include` against the SDK's `include/wxl/render/render.glsl` (and `batch.glsl`
+for a batch program), and shipped in the mod's folder as `.spv` files. `CreatePipeline` takes a
+table:
+
+```lua
+-- shaders/tint.frag, compiled to shaders/tint.spv:
+--   #version 460
+--   #extension GL_GOOGLE_include_directive : require
+--   #include "wxl/render/render.glsl"
+--   layout(push_constant) uniform Push { vec4 color; } pc;
+--   layout(location = 0) in vec2 uv;
+--   layout(location = 0) out vec4 outColor;
+--   void main() { outColor = pc.color; }
+local tint = wxl.render.CreatePipeline({
+    kind = "fullscreen", name = "tint", fragment = "shaders/tint.spv",
+    colors = { "bgra8" }, blend = "alpha",
+})
+
+Observe("RenderScript", "OnRenderPoint", function(point)
+    if point ~= "after_world" or not tint then return end
+    if wxl.render.Begin({ colors = { "scene_color" } }) then
+        wxl.render.Fullscreen(tint, { 1.0, 0.6, 0.2, 0.15 }) -- the push constants, as 32-bit floats
+        wxl.render.End()
+    end
+end)
+```
+
+The table's keys: `kind` (`"graphics"`, `"fullscreen"`, `"batch"`), `vertex` and `fragment` (a
+`.spv` file of the mod's folder, or the bytes themselves), `colors` (formats: `"bgra8"` is the
+frame's own, `"rgba8"`, `"r8"`, `"rg8"`, `"r16f"`, `"rg16f"`, `"rgba16f"`, `"r32f"`, `"rgba32f"`),
+`depth` (`"depth32f"`), `samples` (0 for the frame's), `blend` (`"none"`, `"alpha"`, `"add"`,
+`"premultiplied"`, `"multiply"`, one or one per colour), `depth_test` (`"off"`, `"less"`,
+`"less_equal"`, ... `"always"`), `depth_write`, `cull` and `topology`. A pass's table names its
+`colors` (an image, `"scene_color"`, or `{ image, clear = { r, g, b, a } }`) and its `depth` (an
+image, `"scene_depth"`, or `{ image, clear = 1 }`). Push constants are a table of numbers or a
+string of bytes, up to 128 bytes.
+
+`CreateImage(width, height, format, samples)` and `CreateScreenImage(divisor, format, samples)` make
+images (formats by number: 1 rgba8, 2 bgra8, ... 10 depth32f); `image:ImageSlot()`,
+`wxl.render.SceneColorSlot()` and `wxl.render.Sampler(flags)` give the indices a program samples by.
+`OnModelBatchDrawn`'s last argument, `batch`, is the batch the game just drew: `wxl.render.KeepBatch`
+keeps it until the frame ends, `wxl.render.DrawBatch(batch, pipeline, constants)` draws it again
+with a batch program. A Lua handler for every batch costs time: keep the batches of the objects
+you want, not all of them. `wxl.render.ReplaceShader(name, stage, spirv)` gives the game's shaders
+of that name a program of the mod's until `RestoreShader`, or until the mod goes.
+`wxl.profile.GpuZoneBegin(name)` and `GpuZoneEnd()` time a mod's passes on the GPU.
+
+Since abi `0.1.34`, `kind = "compute"` makes a compute pipeline of one program (`compute`, a `.spv`
+file or the bytes), which `wxl.render.Dispatch(pipeline, x, y, z, push)` runs inside
+`OnRenderPoint`, between passes: what it writes into a buffer (through `buffer:BufferAddress()`) is
+read by the passes after it. `wxl.render.BonePalette(matrices)` writes matrices of the mod's (a
+table of numbers, twelve a matrix: three rows of four, or a string of bytes) into the frame and
+answers their address, as many as the mod likes, read until the frame ends. A program takes an
+address in its push constants as two 32-bit words, low first, which a Lua mod writes as a string:
+
+```lua
+local function u32(n)
+    return string.char(n % 256, math.floor(n / 256) % 256, math.floor(n / 65536) % 256, math.floor(n / 16777216) % 256)
+end
+local at = wxl.render.BonePalette(bones)       -- bones: 12 numbers a matrix
+local push = u32(at % 4294967296) .. u32(math.floor(at / 4294967296)) .. u32(17)
+```
+
+The raw device (`wxl.vk`) is a C++ mod's: see "Drawing into the frame" in
+[Building a mod](building-a-mod.md).
 
 ### Where the memory goes: `wxl.footprint`
 
@@ -1485,6 +2467,7 @@ built with, so it describes the events your `wxl.lua` knows.
 | `requires` | no | services the mod cannot run without, `{ "service": "wxl.object", "version": 1 }`. A runtime without one refuses the mod |
 | `optional` | no | services the mod uses when they are there; informational |
 | `loadAfter` | no | ids of mods to load before this one when they are present; a missing one is ignored |
+| `net` | no | `{ "opcodes": [ "0x521-0x52A", ... ], "stock": false }`: the opcode numbers the mod claims through `wxl.net` (numbers, `"0x521"`, ranges). A mod that lists numbers claims only those; a mod listing a number an earlier mod lists does not load. `stock` lets it claim the client's own numbers (up to `0x520`), for tools |
 | `description`, `authors`, `homepage` | no | for people reading the folder |
 
 A folder with an `init.lua` and no `mod.json` is a mod named after the folder, version `0.0.0`,
@@ -1570,6 +2553,12 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.storage.Unredirect(name)` | `true`: the mod's redirect of `name` is taken back; `nil, "not_found"` for one it did not make (abi `0.1.15`) |
 | `wxl.storage.Serve(name, data, priority)` | `true`: the client reads `data` as the file `name`, on every thread, until the mod takes it back or goes; the higher priority of two mods' wins, then the later (abi `0.1.19`) |
 | `wxl.storage.Unserve(name)` | `true`: what the mod serves under `name` is taken back; `nil, "not_found"` for a name it does not serve (abi `0.1.19`) |
+| `wxl.storage.HashFile(name, fresh)`, `.HashFileAsync(name, fn, fresh)` | `{ md5, size, layer, source }` of a file as the client would read it; the same later, to `fn` (abi `0.1.23`) |
+| `wxl.storage.OverrideFile(name, other)`, `.RestoreFile(name)` | `true`: `other` replaces the client's `name` for opens and existence checks, on every thread, until restored or the mod goes |
+| `wxl.storage.ReloadAsset(name)` | `{ textures, models, objects, busy }`: a texture or a model the client holds, read again |
+| `wxl.relay.Publish(name, fn, cancelled)`, `.Unpublish(name)`, `.Published(name)` | a service of the mod's, its requests to `fn(request, method, ...)`; taken back; whether one is published (abi `0.1.23`) |
+| `wxl.relay.Call(name, method, args, fn)` | the request's number; `fn(true, ...)` or `fn(false, reason)` at a later update |
+| `wxl.relay.Answer(request, ...)`, `.Fail(request, reason)`, `.Cancel(request)` | `true`: a request the mod's service received answered, or failed; one the mod made taken back |
 | `wxl.data.ServeTable(table, path)`, `.RestoreTable(table)` | `true`: the client reads the table from `path`, or its own again |
 | `wxl.data.ServedFrom(table)`, `.IsLoaded(table)` | where a table comes from, `""` for the client's own; whether the client read it already |
 | `wxl.script.RegisterFunction(name, fn, context)` | `true`: `name` calls `fn` from the client's Lua, in every context or in `"glue"` or `"game"` |
@@ -1591,7 +2580,54 @@ them in `include/wxl/services/<service>.def`.
 | `wxl.action.Follow(unit)`, `.Assist(unit)`, `.MoveTo(point)` | follows a unit; targets what it targets; walks to a point (`{ x, y, z }`) as click-to-move does |
 | `wxl.m2.ObjectModel(object)`, `.RacePrefix(race)`, `.AttachmentPoint(model, point)` | the model an object draws with; a race's prefix in file names; a point of a model as `{ x, y, z }` (abi `0.1.20`; the module needs `wxl.m2` in `mod.json`) |
 | `wxl.m2.CreateModel(model, path)` | a `Model` of your mod's in that model's scene: `:Attach`, `:AttachToBone`, `:Detach`, `:Parent`, `:SetGeosets`, `:ReplaceTexture`, `:Release` (see [Models](#models-wxlm2)) |
+| `wxl.m2.CreateWorldModel(path)`, `.ModelLoaded(model)`, `.AnimationLength(model, id)`, `.AttachmentWorld(model, point)`, `.GroundHeight(at, up, down)` | a `Model` in the world's scene: `:Place`, `:SetTransform`, `:PlayAnimation`, `:SetAlpha`, `:SetEmitting`; whether a model loaded; an animation's length; a point in the world; the ground under a point (abi `0.1.21`) |
 | `wxl.point.Points()`, `.Find(name)` | the engine functions a C++ mod can run code before, instead of or after (name, signature, thread, flags, and `absent`: why this runtime lacks one); the id of one this runtime has (abi `0.1.16`). Attaching from Lua is to come; see "Changing the engine: points" in [Building a mod](building-a-mod.md) |
+| `wxl.engine.Layout(name)` | the layout hash of an engine structure (`"CM2Shared"`) as this runtime lays it out, for a tool comparing it with the SDK's engine headers (abi `0.1.22`); `nil, "not_found"` for a type it does not describe |
+| `wxl.camera.Position()`, `.Forward()`, `.Up()`, `.Fov()`, `.Pivot()`, `.Cinematic()` | where the world camera is and looks, its field of view, the point the client's camera turns around, whether a cinematic has the view (abi `0.1.24`) |
+| `wxl.camera.SetView(position, forward, fov)`, `.ReleaseView()` | `true`: the camera is placed from now on, until the mod releases it or goes; see [The camera, the mouse and the world](#the-camera-the-mouse-and-the-world-wxlcamera-wxlinput-wxlworld) |
+| `wxl.input.CaptureCursor(captured)`, `.CursorCaptured()`, `.PointerOverWorld()` | `true`: the pointer held at the centre, or let go; whether some mod holds it; whether it is over the world (abi `0.1.24`) |
+| `wxl.world.Trace(start, finish, flags)` | the first point of the world's geometry between two points, or `nil` (abi `0.1.24`) |
+| `wxl.action.Face(radians)` | `true`: your player turns that way and the server is told, as mouse look does (abi `0.1.24`) |
+| `wxl.input.BlockMouseLook(blocked)`, `.MouseLookBlocked()` | `true`: the game kept out of its own mouse look, clicks still act; whether some mod keeps it out (abi `0.1.25`) |
+| `wxl.pose.Head(unit, yaw, pitch, smoothing)`, `.ReleaseHead(unit)` | `true`: a unit's head turned from where its body faces and held, or given back (abi `0.1.25`) |
+| `wxl.camera.SetViewRolled(position, forward, fov, roll)`, `.Roll()` | `true`: the camera placed and turned around the direction it looks; the roll it draws with (abi `0.1.29`) |
+| `wxl.input.CaptureCursorAt(x, y)`, `.CapturePoint()` | `true`: the pointer held at a point of the window, where the game picks and clicks; where it is held (abi `0.1.29`) |
+| `wxl.highlight.Set(target, color, outline, glow, glow_strength)`, `.Clear(target)`, `.ClearAll()` | `true`: an object outlined and lit by a glow where it is seen, or taken off; see [The camera, the mouse and the world](#the-camera-the-mouse-and-the-world-wxlcamera-wxlinput-wxlworld) (abi `0.1.27`) |
+| `wxl.highlight.Supported()`, `.UnsupportedReason()`, `.Drawn()` | whether this runtime draws highlights, why not, and the batches the last highlighted frame drew again (abi `0.1.27`) |
+| `wxl.selectioncircle.Hide(kinds, reactions)`, `.SetStyle(kinds, reactions, style)`, `.Reset(kinds, reactions)` | `true`: the game's circles of those kinds and reactions hidden, drawn in another look, or given back (abi `0.1.28`) |
+| `wxl.selectioncircle.HideObject(target)`, `.SetObjectStyle(target, style)`, `.ResetObject(target)`, `.ResetAll()` | `true`: every circle of one object hidden, restyled or given back; everything this mod changed given back (abi `0.1.28`) |
+| `wxl.selectioncircle.Drawn()`, `.Hidden()` | the circles the last world frame drew, and left out (abi `0.1.28`) |
+| `wxl.texture.Make(source, width, height, groups, tint)` | the path of a texture made of an SVG or a PNG, then `right`, `bottom` (the picture's texture coordinates) and the texture's width and height; see [Textures from SVG and PNG](#textures-from-svg-and-png-wxltexture) (abi `0.1.30`) |
+| `wxl.texture.Stats()` | `{ textures, resident, texture_limit, bytes, byte_limit, made, reused, released }`: what the service holds (abi `0.1.30`) |
+| `wxl.cvar.Register(name, default, flags, help)`, `.Release(name)` | `true`: a console variable of this mod, kept where the game keeps its own; see [Settings](#settings-wxlcvar) (abi `0.1.31`) |
+| `wxl.cvar.SetRange(name, min, max)` | `true`: the numbers a variable of this mod accepts, from everywhere (abi `0.1.31`) |
+| `wxl.cvar.Exists(name)`, `.Get(name)`, `.GetNumber(name)`, `.GetBool(name)`, `.GetDefault(name)`, `.Flags(name)` | whether a variable is registered; its value as text, a number or a switch; its default; what it is (abi `0.1.31`) |
+| `wxl.cvar.Set(name, value)`, `.SetNumber(name, value)`, `.SetBool(name, value)`, `.Reset(name)` | `true`: a variable given a value, or its default (abi `0.1.31`) |
+| `wxl.gx.Api()` | the device the client draws with: `"none"`, `"d3d9"`, `"d3d9ex"`, `"opengl"`, `"vulkan"` (abi `0.1.33`) |
+| `wxl.terrain.Height(x, y, original)`, `.Presence(x, y)` | the ground's height under a point, or `nil`; `"ground"`, `"hole"`, `"not_loaded"` or `"none"` (abi `0.1.35`) |
+| `wxl.terrain.VerticesIn(x, y, radius)` | every vertex within a radius, each once: `{ chunk_x, chunk_y, index, x, y, z, original_z, inner, loaded }` (abi `0.1.35`) |
+| `wxl.terrain.Trace(start, finish)`, `.Locate(x, y)`, `.Vertices(chunk_x, chunk_y, original)` | `{ point, normal, chunk_x, chunk_y, fraction }` where a segment meets the ground; `{ chunk_x, chunk_y, cell_row, cell_col, nearest, loaded }`; a chunk's 145 vertices; see [The ground](#the-ground-wxlterrain) (abi `0.1.35`) |
+| `wxl.terrain.SetHeights(heights)`, `.Reset(chunk_x, chunk_y)`, `.ResetAll()`, `.Stats()` | `true`: vertices set to heights, all or none (`{ chunk_x, chunk_y, index, height }` each), or this mod's edits taken off; what the service holds (abi `0.1.35`) |
+| `wxl.draw.Draw(shape, style)` | `true`: a shape drawn by the next frame only: a line, a circle, a ring, a sector, a rectangle, a polygon or a grid on the ground, a box, a sphere or a cylinder; see [Shapes in the world](#shapes-in-the-world-wxldraw) (abi `0.1.36`) |
+| `wxl.draw.Add(shape, style, duration)`, `.Update(shape, t)`, `.SetStyle(shape, t)`, `.Clear()`, `.Stats()` | a kept `wxl.Shape` (`shape:Move(center, facing)`, `:SetDuration(seconds)`, `:Attach(object, flags)`, `:Detach()`, `:Remove()`); what the last frame drew (abi `0.1.36`) |
+| `wxl.draw` style `texture`, `uv`, `blend`, `feather`, `radial_fade`, `softness`, `alpha_start`, `shadow_alpha`, shape `alphas` | pictures on the ground, soft and shadowed lines; see [Shapes in the world](#shapes-in-the-world-wxldraw) (abi `0.1.38`) |
+| `wxl.draw` style `occluded_alpha`; pictures on boxes and cylinders | what the scene hides of a shape, seen faintly; textured volumes (abi `0.1.39`) |
+| `wxl.draw.Emit(emitter, look)`, `.AddEmitter(emitter, look)`, `.UpdateEmitter(e, t)`, `.SetEmitterStyle(e, t)`; style `mask`, `texture_blur` | particles thrown once or kept (`e:Burst(n)`, `:Place(center, facing)`, `:Follow(object, flags)`, `:Stop()`); a picture's shape in the style's colour, blurred (abi `0.1.40`) |
+| `wxl.animation.Play(unit, anim_id, flags, speed)`, `.Stop(unit)` | `true`: an AnimationData animation played on a unit as the game plays an emote, once or looped, or this mod's stopped; see [Animations on units](#animations-on-units-wxlanimation) (abi `0.1.37`) |
+| `wxl.animation.Playing(unit)`, `.Current(unit)` | the id a mod plays on a unit, or `nil`; the id its model shows now (abi `0.1.37`) |
+| `wxl.render.Supported()`, `.UnsupportedReason()` | whether the render service drives the client's device, and why not (abi `0.1.33`) |
+| `wxl.render.CreateImage(width, height, format, samples)`, `.CreateScreenImage(divisor, format, samples)`, `.CreateBuffer(size)` | an image or a buffer of the mod's: `image:ImageSlot()`, `:ImageWidth()`, `:ImageHeight()`, `buffer:WriteBuffer(offset, bytes)`, `:BufferAddress()`; see [Drawing into the frame](#drawing-into-the-frame-wxlrender) (abi `0.1.33`) |
+| `wxl.render.CreatePipeline(desc)`, `.Sampler(flags)` | a pipeline of the mod's SPIR-V (`pipeline:PipelineReady()`); a sampler's index (abi `0.1.33`) |
+| `wxl.render.Begin(pass)`, `.End()`, `.Draw(pipeline, vertex_count, instance_count, push)`, `.DrawIndexed(...)`, `.Fullscreen(pipeline, push)` | a pass inside `OnRenderPoint`, and the mod's draws into it (abi `0.1.33`) |
+| `wxl.render.KeepBatch(batch)`, `.DrawBatch(batch, pipeline, constants)` | a model batch of the game kept until the frame ends, drawn again with a batch program (abi `0.1.33`) |
+| `wxl.render.SceneColorSlot()`, `.SceneDepthSlot()` | the frame as drawn so far, copied into textures: their indices (abi `0.1.33`) |
+| `wxl.render.ReplaceShader(name, stage, spirv)`, `.RestoreShader(name, stage)` | `true`: the game's shaders of that name drawn with the mod's program, or given theirs back (abi `0.1.33`) |
+| `wxl.render.Dispatch(pipeline, x, y, z, push)` | `true`: a compute pipeline run over x * y * z workgroups inside `OnRenderPoint`, between passes (abi `0.1.34`) |
+| `wxl.render.BonePalette(matrices)` | the address of matrices written into the frame, 12 numbers a matrix, read until the frame ends (abi `0.1.34`) |
+| `wxl.profile.GpuZoneBegin(name)`, `.GpuZoneEnd()` | a zone of the GPU's time around the mod's passes (abi `0.1.33`) |
+| `wxl.net.Claim(op)`, `.Release(op)`, `.SetHandler(op, fn)`, `.SetCompressed(op, compressed)` | `true`: an opcode number of the mod's, its messages handed to `fn(reader, opcode)`; see [Messages of your own](#messages-of-your-own-wxlnet) (abi `0.1.41`) |
+| `wxl.net.Send(op, body)`, `.Heard()`, `.State()`, `.Connection()` | `true`: a message sent, once the server spoke to the mod on this connection; whether it has; `"offline"` ... `"authenticated"`; the connection's number (abi `0.1.41`) |
+| `wxl.net.Writer([limit])`, `.Reader(bytes)`, `.Deflate(bytes)`, `.Inflate(stream)`, `.MaxSend()`, `.ReservedOpcodeLimit()` | a message body to write, one to read; zlib both ways; 10000; `0x520` (abi `0.1.41`) |
 
 ### Object methods
 
@@ -1692,6 +2728,9 @@ method, a container every item method. The tables are made from the runtime's ta
 | `IsSwimming()` | `boolean` | Whether it swims, as the client's IsSwimming reads it. Came with abi 0.1.18. |
 | `IsFlying()` | `boolean` | Whether it flies, as the client's IsFlying reads it. Came with abi 0.1.18. |
 | `IsFalling()` | `boolean` | Whether it is falling, as the client's IsFalling reads it. Came with abi 0.1.18. |
+| `IsOutdoors()` | `boolean` | Whether it stands outdoors, as the client's IsOutdoors reads it: false in a building or a cave the world marks indoors, where a mount is refused. Came with abi 0.1.24. |
+| `CanAttack()` | `boolean` | Whether the active player may attack it, by the client's own reckoning (faction, duel, PvP, sanctuary): what turns the cursor into a sword. Came with abi 0.1.26. |
+| `CanInteract()` | `boolean` | Whether the active player can interact with it now: an NPC offering something (gossip, quests, trade, training, a flight), alive, out of combat, of a reaction that lets it; out of reach counts. Came with abi 0.1.26. |
 
 **Players**
 
@@ -1764,6 +2803,7 @@ method, a container every item method. The tables are made from the runtime's ta
 | `State()` | `integer` | 0 active, 1 ready, 2 destroyed. |
 | `GameObjectType()` | `integer` | The game-object type, in the server's numbering (door 0, button 1, chest 3, ...). |
 | `ArtKit()` | `integer` | The art kit it shows. |
+| `CanUse()` | `boolean` | Whether the active player can use it now, as the client decides the cursor over it: its kind lets it be used, its quest is in the log, its lock opens; out of reach counts. Came with abi 0.1.26. |
 
 **Dynamic objects**
 
@@ -1822,7 +2862,17 @@ A few to start from:
 | `AssetScript` | `OnTerrainTileLoad`, `OnMapObjectGroupLoad`, `OnSkinProfileLoad`, `OnTextureDecode`, `OnShaderLoad`, `OnSoundFileLoad` | see [Serving and converting assets](#serving-and-converting-assets) | the engine read a tile, a building's group, a skin, a texture, a shader, a sound (abi `0.1.19`) |
 | `ObjectScript` | `OnAppearanceChanged` | `change`, `wearer`, `model`, `race_id`, `sex_id`, `item_slot`, `display_id`, `npc` | a character's appearance put an item on, is taking one off (`"worn"`, `"removed"`), or goes away (`"freed"`) (abi `0.1.20`) |
 | `AssetScript` | `OnModelParsed`, `OnSkinProfileParsed`, `OnModelSequenceLoad` | `path`, `file`, then the header, the skin or the sequence | the model loader's stages; see [Models](#models-wxlm2) (abi `0.1.20`) |
-| `RenderScript` | `OnModelBatchDrawn` | `model`, `root_model`, then the numbers of the draw | the device drew one batch of a model (abi `0.1.20`) |
+| `AssetScript` | `OnFileMissing` | `path`, `kind`, `open`, `pending`, `loader` | the client looked for a file no layer has; see [Assets on demand](#assets-on-demand-missing-names-hashes-paths-of-your-own-overrides-reloads) (abi `0.1.23`) |
+| `RenderScript` | `OnModelBatchDrawn` | `model`, `root_model`, then the numbers of the draw, then `batch` (abi `0.1.33`) | the device drew one batch of a model (abi `0.1.20`); `batch` is what `wxl.render` draws again |
+| `WorldScript` | `OnMouseMotion`, `OnMouseWheel` | `dx`, `dy`; `delta`, `handled` | the mouse moved, in its own counts; the wheel turned, in notches, which an `Override` keeps from the game (abi `0.1.24`) |
+| `RenderScript` | `OnCameraUpdate` | `index`, `delta` | the client placed the world camera for the frame: set a view with `wxl.camera.SetView` here (abi `0.1.24`) |
+| `RenderScript` | `OnImGuiFrame` | `index`, `delta` | a frame of the runtime's Dear ImGui is open, for a C++ mod's windows (abi `0.1.25`) |
+| `RenderScript` | `OnRenderPoint` | `point` (`"after_opaque_world"`, `"after_liquids"`, `"after_world"`, `"after_ui"`), `frame`, `width`, `height`, `samples` | a point of the frame where a mod draws, through `wxl.render` (abi `0.1.33`) |
+| `WorldScript` | `OnWorldClickRequest` | `button`, `hit`, `object`, `object_guid`, `point`, `targeting`, `refused` | a click in the world the game is about to act on (`hit`: `"none"`, `"ground"`, `"object"`, `"world_object"`, `"name_plate"`; `targeting` while a spell waits for its target), which an `Override` refuses (abi `0.1.26`) |
+| `LuaScript` | `OnInterfaceSignature` | `file`, `extra`, `verdict`, `accepted` | the client judged an interface's signature (`verdict`: `"missing"`, `"corrupt"`, `"modified"`, `"signed"`), which an `Override` has taken as signed (abi `0.1.32`) |
+| | `OnInterfaceCleanupRequest` | `refused` | the login screens start and the client is about to move loose interface folders aside, which an `Override` refuses (abi `0.1.32`) |
+| `WorldScript` | `OnTerrainChunkLoaded`, `OnTerrainChunkUnloaded` | `map`, `chunk_x`, `chunk_y`, `edited` | a chunk of the ground loaded (its edits back already) or is being freed (abi `0.1.35`) |
+| | `OnTerrainEditsCleared` | `map`, `chunks` | the map is unloading and every edit of its ground was dropped (abi `0.1.35`) |
 
 The families `PlayerScript`, `GlueScript` and `ChatScript`, and `WorldScript`'s `OnZoneChanged`,
 `OnMouseoverChanged` and `OnCVarChanged`, came with `0.1.6`: a mod that uses one asks for
@@ -1847,7 +2897,24 @@ The [gameplay events](#gameplay-events), with the families `LootScript`, `ItemSc
 `wxl.storage.Serve` and `wxl.storage.Unserve`, and the reason `"pending"`, came with `0.1.19`.
 `ObjectScript`'s `OnAppearanceChanged`, `AssetScript`'s `OnModelParsed`, `OnSkinProfileParsed` and
 `OnModelSequenceLoad`, `RenderScript`'s `OnModelBatchDrawn` and the `wxl.m2` module came with
-`0.1.20`.
+`0.1.20`. `wxl.m2`'s models of the world (`CreateWorldModel`, `Place` and the rest) and the cast's
+points (`has_source`, `source`, `has_dest`, `dest` and their transports) came with `0.1.21`, and the
+`wxl.engine` module with `0.1.22`.
+`AssetScript`'s `OnFileMissing`, `wxl.storage`'s `HashFile`, `HashFileAsync`, `OverrideFile`,
+`RestoreFile` and `ReloadAsset`, and the `wxl.relay` module came with `0.1.23`.
+`WorldScript`'s `OnMouseMotion` and `OnMouseWheel`, `RenderScript`'s `OnCameraUpdate`,
+the `wxl.camera`, `wxl.input` and `wxl.world` modules, `wxl.action.Face` and `IsOutdoors` came with
+`0.1.24`. `wxl.input.BlockMouseLook` and `MouseLookBlocked`, the `wxl.pose` module and
+`RenderScript`'s `OnImGuiFrame` came with `0.1.25`. `WorldScript`'s `OnWorldClickRequest` and
+`CanAttack`, `CanInteract` and `CanUse` came with `0.1.26`. The `wxl.highlight`
+module came with `0.1.27`, the `wxl.selectioncircle` module with `0.1.28`.
+`wxl.camera.SetViewRolled` and `Roll`, `wxl.input.CaptureCursorAt` and `CapturePoint` came with
+`0.1.29`, the `wxl.texture` module with `0.1.30`, the `wxl.cvar` module with `0.1.31`.
+`LuaScript`'s `OnInterfaceSignature` and `OnInterfaceCleanupRequest` came with `0.1.32`.
+
+`RenderScript`'s `OnRenderPoint`, the `wxl.render` module, `wxl.gx.Api`, `wxl.profile.GpuZoneBegin`
+and `GpuZoneEnd`, and `OnModelBatchDrawn`'s `batch` came with `0.1.33`; `wxl.render.Dispatch` and
+`BonePalette` with `0.1.34`.
 
 ### Gameplay events
 
@@ -1887,6 +2954,7 @@ and one `OnGroupMember` per other member follows. The full parameter lists are i
 | | `OnUnitAuraRefreshed` | the same | an aura still on a unit gained or lost stacks (`previous_stacks` says how many it had), or its duration was renewed |
 | | `OnUnitAuraChanged` | `unit`, `spell_id`, `removed` | the coarse one, older than these: something about this unit's auras changed, an aura put on (`removed` false) or taken off; use it when you only need to know that, the three above when you need what |
 | | `OnUnitMountChanged` | `unit`, `unit_guid`, `previous_display_id`, `display_id` | a unit got on a mount (`display_id` not 0), off one (`0`) or changed mounts |
+| | `OnUnitAnimationEnded` | `unit`, `anim_id`, `reason`, `looped` | an animation a mod played with `wxl.animation` ended (`reason`: `"finished"`, `"interrupted"`, `"stopped"`, `"replaced"`, `"gone"`) (abi `0.1.37`) |
 | `LootScript` | `OnLootOpened` | `source`, `source_guid`, `kind`, `money`, `count` | the loot window opened on a corpse, a chest, a fish... (`kind`: `"corpse"`, `"fishing"`, `"skinning"`...) |
 | | `OnLootSlot` | `index`, `slot`, `item_id`, `quantity`, `display_id`, `random_suffix`, `random_property_id`, `slot_type` | one item of that window (`slot_type`: `"take"`, `"roll"`, `"master"`, `"locked"`, `"owner"`) |
 | | `OnLootSlotCleared` | the same | an item left the window: someone took it |
