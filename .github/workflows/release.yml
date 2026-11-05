@@ -1,0 +1,86 @@
+# Builds and tests the SDK for Win32 (the examples load in the fake host), then publishes the
+# installed package as a Release on every push to main; the patch number is the commit count.
+name: Build and Release
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: pwsh
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Work out the version
+        id: v
+        run: |
+          $h       = Get-Content include/wxl/abi/Version.h -Raw
+          $major   = [regex]::Match($h, 'WXL_SDK_VERSION_MAJOR\s+(\d+)').Groups[1].Value
+          $minor   = [regex]::Match($h, 'WXL_SDK_VERSION_MINOR\s+(\d+)').Groups[1].Value
+          $count   = [int](git rev-list --count HEAD)
+          $release = $env:GITHUB_EVENT_NAME -eq 'push' -and $env:GITHUB_REF -eq 'refs/heads/main'
+          $version = if ($release) { "$major.$minor.$count" } else { 'dev-' + $env:GITHUB_SHA.Substring(0, 7) }
+          "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "patch=$count" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          Write-Host $version
+
+      - name: Configure (Win32)
+        run: cmake -S . -B build -A Win32 "-DWXL_SDK_PATCH=${{ steps.v.outputs.patch }}"
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package
+        run: |
+          cmake --install build --config Release --prefix dist/wxl-sdk
+          Compress-Archive -Path dist/wxl-sdk/* -DestinationPath "dist/wxl-sdk-${{ steps.v.outputs.version }}.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wxl-sdk-${{ steps.v.outputs.version }}
+          path: dist/wxl-sdk-${{ steps.v.outputs.version }}.zip
+          if-no-files-found: error
+
+  release:
+    needs: build
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wxl-sdk-*
+          merge-multiple: true
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ needs.build.outputs.version }}
+          name: WarcraftXL SDK v${{ needs.build.outputs.version }}
+          body: Built from ${{ github.sha }}
+          files: wxl-sdk-${{ needs.build.outputs.version }}.zip
+          generate_release_notes: true
+          prerelease: false

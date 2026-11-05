@@ -1,0 +1,10 @@
+{
+  "manifest": 1,
+  "extension": {
+    "id": "wxl-hello",
+    "version": "1.0.0",
+    "abi": "1.3",
+    "entry": "wxl-hello.dll"
+  },
+  "license": "GPL-3.0-or-later"
+}

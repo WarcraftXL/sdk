@@ -1,0 +1,102 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// WXL_OVERRIDE(Tag, (params), (args unpacking `a`)): one row per event, the On<Tag> event and the OnTag virtual of Extension.
+
+#ifndef WXL_OVERRIDE
+#error "define WXL_OVERRIDE(Tag, (params), (args unpacking `a`)) before including this table"
+#endif
+
+/// Once per frame, before Present; device is the IDirect3DDevice9.
+WXL_OVERRIDE(Frame, (void* device), (a.device))
+
+/// End of the frame, before Present: draw overlays here.
+WXL_OVERRIDE(EndScene, (void* device), (a.device))
+
+/// Before Reset: release every D3DPOOL_DEFAULT resource. params is the D3DPRESENT_PARAMETERS.
+WXL_OVERRIDE(DeviceLost, (void* device, void* params), (a.device, a.params))
+
+/// After a successful Reset: recreate the D3DPOOL_DEFAULT resources.
+WXL_OVERRIDE(DeviceReset, (void* device, void* params), (a.device, a.params))
+
+/// Once per frame, the logic tick; dt in seconds, timeMs in milliseconds.
+WXL_OVERRIDE(Update, (float dt, uint32_t timeMs), (a.dt, a.timeMs))
+
+/// The world draw pass starts.
+WXL_OVERRIDE(WorldRender, (void* device), (a.device))
+
+/// The world is drawn, the interface not yet: screen-space post-processing goes here.
+WXL_OVERRIDE(WorldRenderEnd, (void* device), (a.device))
+
+/// The world is drawn and its camera matrices are still set; sceneDepth may be null.
+WXL_OVERRIDE(WorldSceneEnd, (void* device, void* sceneDepth), (a.device, a.sceneDepth))
+
+/// A liquid render pass is about to draw; read-only. passType 0 is main, 1 secondary.
+WXL_OVERRIDE(LiquidRender, (const LiquidRenderArgs& pass), (a))
+
+/// A window message arrived; set handled to swallow it before the game sees it.
+WXL_OVERRIDE(Input, (uint32_t message, uintptr_t wparam, uintptr_t lparam, bool& handled), (a.message, a.wparam, a.lparam, *a.handled))
+
+/// A click resolved to a world point or object, unless the UI took it; hitType 2 M2/doodad, 3 terrain/WMO.
+WXL_OVERRIDE(WorldClick, (const WorldClickArgs& click), (a))
+
+/// A WMO root buffer was read, before its chunks are walked; reshape it through game::wmo.
+WXL_OVERRIDE(WmoRootLoad, (void* root), (a.root))
+
+/// A WMO group buffer was read, before its sub-chunks are walked; reshape it through game::wmo.
+WXL_OVERRIDE(WmoGroupLoad, (void* group), (a.group))
+
+/// A texture is about to upload to the device.
+WXL_OVERRIDE(TextureUpload, (void* texture, uint32_t width, uint32_t height), (a.texture, a.width, a.height))
+
+/// A BLP was requested by virtual path, cached or not; read-only. handle is null on failure.
+WXL_OVERRIDE(BlpLoad, (const char* name, void* handle), (a.name, a.handle))
+
+/// A server object create/update batch was parsed; read-only. packet's cursor is already consumed.
+WXL_OVERRIDE(ObjectUpdate, (void* packet, int opcode), (a.packet, a.opcode))
+
+/// An object is about to despawn and is still resident; read-only. packet holds its GUID.
+WXL_OVERRIDE(ObjectDestroy, (void* packet, int opcode), (a.packet, a.opcode))
+
+/// A new target was set; read it through Game().Target().
+WXL_OVERRIDE(TargetChanged, (void* scriptState), (a.scriptState))
+
+/// A UI or world sound is about to play; its id or name is on the script stack.
+WXL_OVERRIDE(SoundPlay, (void* scriptState), (a.scriptState))
+
+/// A placed map doodad was built; read its transform through game::doodad.
+WXL_OVERRIDE(DoodadSpawn, (void* doodad), (a.doodad))
+
+/// A character model slot received an item; modelSlot is internal, one per equipment category.
+WXL_OVERRIDE(ItemSlotChange, (void* charModelObj, uint32_t modelSlot, void* itemDataPtr), (a.charModelObj, a.modelSlot, a.itemDataPtr))
+
+/// A character equipment slot was cleared; equipSlotWow is EQUIPMENT_SLOT_* (0..18).
+WXL_OVERRIDE(ItemSlotClear, (void* charModelObj, uint32_t equipSlotWow), (a.charModelObj, a.equipSlotWow))
+
+/// The world finished loading; the player is in the world.
+WXL_OVERRIDE(WorldEnter, (MapId map), (a.mapId))
+
+/// The world is being torn down; the map being left is still loaded.
+WXL_OVERRIDE(WorldLeave, (MapId map), (a.mapId))
+
+/// A setting of any extension changed; `change.extension` says whose.
+WXL_OVERRIDE(SettingChanged, (const SettingChangedArgs& change), (a))
+
+/// Every extension has loaded and published its services. Once, before the first frame.
+WXL_OVERRIDE(ExtensionsLoaded, (uint32_t loaded), (a.loaded))
+
+/// An object joined the object manager (created, or back in view); `object.object` is its new handle.
+WXL_OVERRIDE(ObjectAdded, (const ObjectLifeArgs& object), (a))
+
+/// An object leaves the object manager; its handle still resolves here and expires right after.
+WXL_OVERRIDE(ObjectRemoved, (const ObjectLifeArgs& object), (a))
+
+/// A damage entry reached the combat log; read-only.
+WXL_OVERRIDE(UnitDamage, (const UnitDamageArgs& damage), (a))
+
+/// A unit died (or feigned death); it is still resident.
+WXL_OVERRIDE(UnitDeath, (const UnitDeathArgs& death), (a))
+
+/// The name the client shows for a unit changed; `name.name` is valid during the call.
+WXL_OVERRIDE(UnitNameChanged, (const UnitNameArgs& name), (a))
+
+/// A server chat line passed the client's filters and is about to be shown; read-only.
+WXL_OVERRIDE(ChatMessage, (const ChatMessageArgs& message), (a))

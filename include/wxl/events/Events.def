@@ -1,0 +1,71 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+// The event table, WXL_EVENT(name, id, args): ids 0..Count-1 are the ABI, rows are only appended (args in wxl/events/).
+
+#ifndef WXL_EVENT
+#error "define WXL_EVENT(name, id, args) before including Events.def"
+#endif
+
+/// Once per frame, before Present.
+WXL_EVENT(OnFrame,              0, FrameArgs)
+/// End of the frame, before Present.
+WXL_EVENT(OnEndScene,           1, EndSceneArgs)
+/// Before IDirect3DDevice9::Reset frees the D3DPOOL_DEFAULT resources.
+WXL_EVENT(OnDeviceLost,         2, DeviceResetArgs)
+/// After a successful IDirect3DDevice9::Reset.
+WXL_EVENT(OnDeviceReset,        3, DeviceResetArgs)
+/// Once per frame, the logic tick, with the frame delta.
+WXL_EVENT(OnUpdate,             4, UpdateArgs)
+/// The world draw pass starts.
+WXL_EVENT(OnWorldRender,        5, WorldRenderArgs)
+/// The world is drawn and the interface is not yet: the post-process slot, in screen space.
+WXL_EVENT(OnWorldRenderEnd,     6, WorldRenderEndArgs)
+/// The world is drawn and the camera matrices that drew it are still on the device.
+WXL_EVENT(OnWorldSceneEnd,      7, WorldSceneEndArgs)
+/// A liquid render pass is about to draw.
+WXL_EVENT(OnLiquidRender,       8, LiquidRenderArgs)
+/// A window message arrived; a handler may swallow it.
+WXL_EVENT(OnInput,              9, InputArgs)
+/// A mouse click resolved to a point or an object in the world.
+WXL_EVENT(OnWorldClick,        10, WorldClickArgs)
+/// A WMO root buffer is read, before the native chunk walk.
+WXL_EVENT(OnWmoRootLoad,       11, WmoRootLoadArgs)
+/// A WMO group buffer is read, before the native sub-chunk walk.
+WXL_EVENT(OnWmoGroupLoad,      12, WmoGroupLoadArgs)
+/// A texture is about to upload to the device.
+WXL_EVENT(OnTextureUpload,     13, TextureUploadArgs)
+/// A BLP texture was requested by name; fires on every reference, cached or not.
+WXL_EVENT(OnBlpLoad,           14, BlpLoadArgs)
+/// A server object create/update batch was parsed.
+WXL_EVENT(OnObjectUpdate,      15, ObjectUpdateArgs)
+/// An object is about to despawn; it is still resident.
+WXL_EVENT(OnObjectDestroy,     16, ObjectDestroyArgs)
+/// The target-set API applied a new target.
+WXL_EVENT(OnTargetChanged,     17, TargetChangedArgs)
+/// A UI or world sound is about to play.
+WXL_EVENT(OnSoundPlay,         18, SoundPlayArgs)
+/// A placed map doodad was built.
+WXL_EVENT(OnDoodadSpawn,       19, DoodadSpawnArgs)
+/// A character model slot received an item.
+WXL_EVENT(OnItemSlotChange,    20, ItemSlotChangeArgs)
+/// A character model equipment slot was cleared.
+WXL_EVENT(OnItemSlotClear,     21, ItemSlotClearArgs)
+/// The world finished loading; the player is in-world.
+WXL_EVENT(OnWorldEnter,        22, WorldEnterArgs)
+/// The world is being torn down; the map being left is still loaded.
+WXL_EVENT(OnWorldLeave,        23, WorldLeaveArgs)
+/// A setting changed: from /wxl set, the settings panel, a profile, or Set (wxl/Settings.hpp).
+WXL_EVENT(OnSettingChanged,    24, SettingChangedArgs)
+/// Every extension has loaded: look up other extensions' services here. Once, before the first frame.
+WXL_EVENT(OnExtensionsLoaded,  25, ExtensionsLoadedArgs)
+/// An object joined the client's object manager: created, or back in view. Its handle is new.
+WXL_EVENT(OnObjectAdded,       26, ObjectLifeArgs)
+/// An object left the object manager (out of view, destroyed, world torn down); its handle expires after.
+WXL_EVENT(OnObjectRemoved,     27, ObjectLifeArgs)
+/// The combat log took a damage entry: melee, spell, periodic, split, damage shield or environment.
+WXL_EVENT(OnUnitDamage,        28, UnitDamageArgs)
+/// The client ran a unit's death: its health reached zero, the dead flag was set, or it was removed dead.
+WXL_EVENT(OnUnitDeath,         29, UnitDeathArgs)
+/// The name the client shows for a resident unit changed (the server answered a name query, a title...).
+WXL_EVENT(OnUnitNameChanged,   30, UnitNameArgs)
+/// A server chat line passed the client's filters and is about to be shown.
+WXL_EVENT(OnChatMessage,       31, ChatMessageArgs)

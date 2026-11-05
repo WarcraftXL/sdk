@@ -1,0 +1,323 @@
+# The C ABI these headers publish; checked by ctest. Do not edit: regenerate with cmake --build <tree> --target abi-lock-update.
+enum DamageKind::Environment 5
+enum DamageKind::Melee 0
+enum DamageKind::Periodic 2
+enum DamageKind::Shield 4
+enum DamageKind::Spell 1
+enum DamageKind::Split 3
+define WXL_API_VERSION 2
+define WXL_ARCH_X86 1
+define WXL_CLIENT_BUILD 12340
+define WXL_COMPILER_CLANG 0
+define WXL_COMPILER_GCC 0
+define WXL_COMPILER_MSVC 1
+define WXL_COMPILER_NAME "gcc"
+define WXL_E_DENIED 10
+define WXL_E_EXPIRED 1
+define WXL_E_INVALID_ARGUMENT 7
+define WXL_E_MISMATCH 9
+define WXL_E_NOT_FOUND 6
+define WXL_E_NOT_IN_WORLD 5
+define WXL_E_NULL_HANDLE 2
+define WXL_E_TIMEOUT 8
+define WXL_E_UNSUPPORTED 3
+define WXL_E_WRONG_KIND 4
+define WXL_GRAPHICS_DEVICE_API_NAME "wxl.graphics.device"
+define WXL_GRAPHICS_DEVICE_API_VERSION 2
+define WXL_HOOK_DEFAULT_PRIORITY 0
+define WXL_HOOK_RESIDENT 1
+define WXL_LOG_DEBUG 1
+define WXL_LOG_ERROR 4
+define WXL_LOG_INFO 2
+define WXL_LOG_TRACE 0
+define WXL_LOG_WARN 3
+define WXL_LUA_API_NAME "wxl.lua"
+define WXL_LUA_API_VERSION 1
+define WXL_MINGW 0
+define WXL_MSVC_FRONTEND 0
+define WXL_OBJECTS_API_NAME "wxl.objects"
+define WXL_OBJECTS_API_VERSION 1
+define WXL_OK 0
+define WXL_PLATFORM_WINDOWS 1
+define WXL_PRIORITY_DEFAULT 0
+define WXL_PRIORITY_FIRST -1000
+define WXL_PRIORITY_LAST 1000
+define WXL_PROFILES_API_NAME "wxl.profiles"
+define WXL_PROFILES_API_VERSION 1
+define WXL_SDK_VERSION_MAJOR 1
+define WXL_SDK_VERSION_MINOR 3
+define WXL_SETTINGS_API_NAME "wxl.settings"
+define WXL_SETTINGS_API_VERSION 1
+define WXL_SETTING_KIND_BOOL 0
+define WXL_SETTING_KIND_INTEGER 1
+define WXL_SETTING_KIND_NUMBER 2
+define WXL_SETTING_KIND_TEXT 3
+define WXL_STORAGE_API_VERSION 1
+event 0 OnFrame FrameArgs
+event 1 OnEndScene EndSceneArgs
+event 2 OnDeviceLost DeviceResetArgs
+event 3 OnDeviceReset DeviceResetArgs
+event 4 OnUpdate UpdateArgs
+event 5 OnWorldRender WorldRenderArgs
+event 6 OnWorldRenderEnd WorldRenderEndArgs
+event 7 OnWorldSceneEnd WorldSceneEndArgs
+event 8 OnLiquidRender LiquidRenderArgs
+event 9 OnInput InputArgs
+event 10 OnWorldClick WorldClickArgs
+event 11 OnWmoRootLoad WmoRootLoadArgs
+event 12 OnWmoGroupLoad WmoGroupLoadArgs
+event 13 OnTextureUpload TextureUploadArgs
+event 14 OnBlpLoad BlpLoadArgs
+event 15 OnObjectUpdate ObjectUpdateArgs
+event 16 OnObjectDestroy ObjectDestroyArgs
+event 17 OnTargetChanged TargetChangedArgs
+event 18 OnSoundPlay SoundPlayArgs
+event 19 OnDoodadSpawn DoodadSpawnArgs
+event 20 OnItemSlotChange ItemSlotChangeArgs
+event 21 OnItemSlotClear ItemSlotClearArgs
+event 22 OnWorldEnter WorldEnterArgs
+event 23 OnWorldLeave WorldLeaveArgs
+event 24 OnSettingChanged SettingChangedArgs
+event 25 OnExtensionsLoaded ExtensionsLoadedArgs
+event 26 OnObjectAdded ObjectLifeArgs
+event 27 OnObjectRemoved ObjectLifeArgs
+event 28 OnUnitDamage UnitDamageArgs
+event 29 OnUnitDeath UnitDeathArgs
+event 30 OnUnitNameChanged UnitNameArgs
+event 31 OnChatMessage ChatMessageArgs
+struct WXL_Api size=64 align=4
+  0 | uint32_t structSize
+  4 | uint32_t apiVersion
+  8 | void (*)(int, const char *, const char *, ...) __attribute__((cdecl)) Log
+  12 | int (*)(uint32_t, WXL_Handle, int32_t, WXL_EventFn, void *, WXL_ReleaseFn, WXL_Connection *) __attribute__((cdecl)) Connect
+  16 | int (*)(WXL_Connection) __attribute__((cdecl)) Disconnect
+  20 | int (*)(WXL_Connection) __attribute__((cdecl)) Connected
+  24 | void (*)(uint32_t, const void *) __attribute__((cdecl)) Emit
+  28 | int (*)(const char *, uintptr_t, void *, void **, int) __attribute__((cdecl)) HookAttach
+  32 | int (*)(const char *, void *, void **, int) __attribute__((cdecl)) HookAttachByName
+  36 | int (*)(const char *, uintptr_t, void *, void **) __attribute__((cdecl)) InterceptAttach
+  40 | uint32_t (*)(void) __attribute__((cdecl)) Self
+  44 | int (*)(uint32_t, void (*)(void *) __attribute__((cdecl)), void *) __attribute__((cdecl)) Run
+  48 | void (*)(const char *, uint32_t, void *) __attribute__((cdecl)) PublishInterface
+  52 | void *(*)(const char *, uint32_t) __attribute__((cdecl)) GetInterface
+  56 | int (*)(const char *, uintptr_t, const void *, const void *, uint32_t) __attribute__((cdecl)) Patch
+  60 | int (*)(const char *, uintptr_t, void *, void **, int, uint32_t) __attribute__((cdecl)) HookAttachEx
+struct WXL_ByteSink size=8 align=4
+  0 | void * ctx
+  4 | void (*)(void *, const void *, unsigned int) __attribute__((cdecl)) Write
+struct WXL_GraphicsDeviceApi size=24 align=4
+  0 | uint32_t structSize
+  4 | uint32_t apiVersion
+  8 | int (*)(WXL_DeviceCreateFn, const char *) __attribute__((cdecl)) RegisterFactory
+  12 | void (*)(WXL_DeviceCreateFn) __attribute__((cdecl)) UnregisterFactory
+  16 | void (*)(void *) __attribute__((cdecl)) InitBaseDevice
+  20 | const void *const *(*)(void) __attribute__((cdecl)) GetBaseVTable
+struct WXL_Handle size=8 align=4
+  0 | uint32_t index
+  4 | uint32_t generation
+struct WXL_LuaApi size=72 align=4
+  0 | uint32_t structSize
+  4 | uint32_t apiVersion
+  8 | int (*)(const char *, WXL_LuaFunction) __attribute__((cdecl)) RegisterFunction
+  12 | int (*)(const WXL_SettingsSet *) __attribute__((cdecl)) RegisterSettings
+  16 | int (*)(void *) __attribute__((cdecl)) ArgCount
+  20 | int (*)(void *, int) __attribute__((cdecl)) Type
+  24 | double (*)(void *, int) __attribute__((cdecl)) ToNumber
+  28 | const char *(*)(void *, int) __attribute__((cdecl)) ToString
+  32 | int (*)(void *, int) __attribute__((cdecl)) ToBoolean
+  36 | void (*)(void *) __attribute__((cdecl)) PushNil
+  40 | void (*)(void *, double) __attribute__((cdecl)) PushNumber
+  44 | void (*)(void *, const char *) __attribute__((cdecl)) PushString
+  48 | void (*)(void *, int) __attribute__((cdecl)) PushBoolean
+  52 | void (*)(void *) __attribute__((cdecl)) NewTable
+  56 | void (*)(void *, const char *, double) __attribute__((cdecl)) SetFieldNumber
+  60 | void (*)(void *, const char *, const char *) __attribute__((cdecl)) SetFieldString
+  64 | void (*)(void *, const char *, int) __attribute__((cdecl)) SetFieldBoolean
+  68 | void (*)(void *, const char *) __attribute__((cdecl)) Error
+struct WXL_ObjectsApi size=24 align=4
+  0 | uint32_t structSize
+  4 | uint32_t apiVersion
+  8 | int (*)(uint64_t, WXL_Handle *) __attribute__((cdecl)) FromGuid
+  12 | int (*)(void *, WXL_Handle *) __attribute__((cdecl)) FromPointer
+  16 | int (*)(WXL_Handle, uint32_t, void **) __attribute__((cdecl)) Resolve
+  20 | int (*)(WXL_Handle, uint64_t *) __attribute__((cdecl)) Guid
+struct WXL_PluginInfo size=24 align=4
+  0 | uint32_t structSize
+  4 | uint32_t apiVersion
+  8 | const char * name
+  12 | uint32_t pluginVersion
+  16 | uint32_t clientBuild
+  20 | uint32_t sdkVersion
+struct WXL_ProfilesApi size=32 align=4
+  0 | uint32_t structSize
+  4 | uint32_t apiVersion
+  8 | int (*)(const char *) __attribute__((cdecl)) ValidName
+  12 | int (*)(const char *) __attribute__((cdecl)) Save
+  16 | int (*)(const char *) __attribute__((cdecl)) Load
+  20 | int (*)(const char *) __attribute__((cdecl)) Delete
+  24 | int (*)(WXL_ProfileVisitFn, void *) __attribute__((cdecl)) List
+  28 | const char *(*)(void) __attribute__((cdecl)) Current
+struct WXL_SettingDecl size=56 align=8
+  0 | uint32_t structSize
+  4 | const char * section
+  8 | const char * key
+  12 | uint32_t kind
+  16 | const char * value
+  20 | const char * doc
+  24 | double min
+  32 | double max
+  40 | double step
+  48 | const char * ui
+struct WXL_SettingValue size=24 align=8
+  0 | int32_t type
+  4 | int32_t boolean
+  8 | double number
+  16 | const char * string
+struct WXL_SettingsApi size=28 align=4
+  0 | uint32_t structSize
+  4 | uint32_t apiVersion
+  8 | int (*)(const WXL_SettingDecl *, uint32_t) __attribute__((cdecl)) Declare
+  12 | int (*)(const char *, char *, uint32_t, uint32_t *) __attribute__((cdecl)) Get
+  16 | int (*)(const char *, const char *) __attribute__((cdecl)) Set
+  20 | int (*)(WXL_SettingVisitFn, void *) __attribute__((cdecl)) Visit
+  24 | int (*)(const char *, const char *, const char *) __attribute__((cdecl)) SetOf
+struct WXL_SettingsSet size=40 align=4
+  0 | uint32_t structSize
+  4 | const char * name
+  8 | void * user
+  12 | const char *const * keys
+  16 | uint32_t keyCount
+  20 | int (*)(void *, const char *, WXL_SettingValue *) __attribute__((cdecl)) Get
+  24 | int (*)(void *, const char *, const WXL_SettingValue *) __attribute__((cdecl)) Set
+  28 | int (*)(void *, const char *) __attribute__((cdecl)) ApplyPreset
+  32 | int (*)(void *) __attribute__((cdecl)) Save
+  36 | int (*)(void *) __attribute__((cdecl)) IsAvailable
+struct WXL_StorageApi size=20 align=4
+  0 | uint32_t structSize
+  4 | uint32_t apiVersion
+  8 | void (*)(WXL_ProvideFn) __attribute__((cdecl)) RegisterClientProvider
+  12 | void (*)(const char *, WXL_TransformFn) __attribute__((cdecl)) RegisterClientTransform
+  16 | void (*)(WXL_RedirectFn) __attribute__((cdecl)) RegisterClientRedirect
+struct wxl::events::BlpLoadArgs size=8 align=4
+  0 | const char * name
+  4 | void * handle
+struct wxl::events::ChatMessageArgs size=48 align=8
+  0 | int32_t type
+  4 | const char * text
+  8 | const char * senderName
+  16 | uint64_t senderGuid
+  24 | struct WXL_Handle sender
+  24 |   uint32_t index
+  28 |   uint32_t generation
+  32 | const char * channelName
+  36 | uint32_t zoneChannelId
+  40 | uint32_t lineId
+struct wxl::events::DeviceResetArgs size=8 align=4
+  0 | void * device
+  4 | void * params
+struct wxl::events::DoodadSpawnArgs size=4 align=4
+  0 | void * doodad
+struct wxl::events::EndSceneArgs size=4 align=4
+  0 | void * device
+struct wxl::events::ExtensionsLoadedArgs size=4 align=4
+  0 | uint32_t loaded
+struct wxl::events::FrameArgs size=4 align=4
+  0 | void * device
+struct wxl::events::InputArgs size=16 align=4
+  0 | uint32_t message
+  4 | uintptr_t wparam
+  8 | uintptr_t lparam
+  12 | _Bool * handled
+struct wxl::events::ItemSlotChangeArgs size=12 align=4
+  0 | void * charModelObj
+  4 | uint32_t modelSlot
+  8 | void * itemDataPtr
+struct wxl::events::ItemSlotClearArgs size=8 align=4
+  0 | void * charModelObj
+  4 | uint32_t equipSlotWow
+struct wxl::events::LiquidRenderArgs size=16 align=4
+  0 | void * bank
+  4 | void * transform
+  8 | int passType
+  12 | uint32_t instanceCount
+struct wxl::events::ObjectDestroyArgs size=8 align=4
+  0 | void * packet
+  4 | int opcode
+struct wxl::events::ObjectLifeArgs size=24 align=8
+  0 | struct WXL_Handle object
+  0 |   uint32_t index
+  4 |   uint32_t generation
+  8 | uint64_t guid
+  16 | uint32_t typeMask
+  20 | void * pointer
+struct wxl::events::ObjectUpdateArgs size=8 align=4
+  0 | void * packet
+  4 | int opcode
+struct wxl::events::SettingChangedArgs size=12 align=4
+  0 | const char * extension
+  4 | const char * key
+  8 | const char * value
+struct wxl::events::SoundPlayArgs size=4 align=4
+  0 | void * scriptState
+struct wxl::events::TargetChangedArgs size=4 align=4
+  0 | void * scriptState
+struct wxl::events::TextureUploadArgs size=12 align=4
+  0 | void * texture
+  4 | uint32_t width
+  8 | uint32_t height
+struct wxl::events::UnitDamageArgs size=72 align=8
+  0 | struct WXL_Handle source
+  0 |   uint32_t index
+  4 |   uint32_t generation
+  8 | struct WXL_Handle target
+  8 |   uint32_t index
+  12 |   uint32_t generation
+  16 | uint64_t sourceGuid
+  24 | uint64_t targetGuid
+  32 | DamageKind kind
+  36 | int32_t spellId
+  40 | int32_t amount
+  44 | int32_t overkill
+  48 | uint32_t schoolMask
+  52 | int32_t absorbed
+  56 | int32_t resisted
+  60 | int32_t blocked
+  64 | uint32_t environment
+  68 | _Bool critical
+struct wxl::events::UnitDeathArgs size=16 align=8
+  0 | struct WXL_Handle unit
+  0 |   uint32_t index
+  4 |   uint32_t generation
+  8 | uint64_t guid
+struct wxl::events::UnitNameArgs size=24 align=8
+  0 | struct WXL_Handle unit
+  0 |   uint32_t index
+  4 |   uint32_t generation
+  8 | uint64_t guid
+  16 | const char * name
+struct wxl::events::UpdateArgs size=8 align=4
+  0 | float dt
+  4 | uint32_t timeMs
+struct wxl::events::WmoGroupLoadArgs size=4 align=4
+  0 | void * group
+struct wxl::events::WmoRootLoadArgs size=4 align=4
+  0 | void * root
+struct wxl::events::WorldClickArgs size=28 align=4
+  0 | uint32_t message
+  4 | int hitType
+  8 | float x
+  12 | float y
+  16 | float z
+  20 | void * objLo
+  24 | void * objHi
+struct wxl::events::WorldEnterArgs size=4 align=4
+  0 | uint32_t mapId
+struct wxl::events::WorldLeaveArgs size=4 align=4
+  0 | uint32_t mapId
+struct wxl::events::WorldRenderArgs size=4 align=4
+  0 | void * device
+struct wxl::events::WorldRenderEndArgs size=4 align=4
+  0 | void * device
+struct wxl::events::WorldSceneEndArgs size=8 align=4
+  0 | void * device
+  4 | void * sceneDepth

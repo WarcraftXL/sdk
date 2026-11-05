@@ -1,0 +1,11 @@
+{
+  "manifest": 1,
+  "permissions": { "low_level": true },
+  "extension": {
+    "id": "wxl-file-sizes",
+    "version": "1.0.0",
+    "abi": "1.3",
+    "entry": "wxl-file-sizes.dll"
+  },
+  "license": "GPL-3.0-or-later"
+}

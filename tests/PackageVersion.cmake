@@ -1,0 +1,28 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# cmake -DPREFIX=<installed package> -P PackageVersion.cmake: checks the package's version rule.
+include("${PREFIX}/lib/cmake/WarcraftXL/WarcraftXLConfigVersion.cmake" OPTIONAL RESULT_VARIABLE found)
+if(NOT found)
+    message(FATAL_ERROR "no WarcraftXLConfigVersion.cmake under ${PREFIX}")
+endif()
+
+function(expect requested compatible)
+    set(PACKAGE_FIND_VERSION "${requested}")
+    string(REPLACE "." ";" parts "${requested}")
+    list(GET parts 0 PACKAGE_FIND_VERSION_MAJOR)
+    include("${PREFIX}/lib/cmake/WarcraftXL/WarcraftXLConfigVersion.cmake")
+    if(NOT PACKAGE_VERSION_COMPATIBLE STREQUAL compatible)
+        message(FATAL_ERROR "requesting ${requested} from ${PACKAGE_VERSION}: compatible=${PACKAGE_VERSION_COMPATIBLE}, expected ${compatible}")
+    endif()
+endfunction()
+
+include("${PREFIX}/lib/cmake/WarcraftXL/WarcraftXLConfigVersion.cmake")
+string(REPLACE "." ";" have "${PACKAGE_VERSION}")
+list(GET have 0 major)
+list(GET have 1 minor)
+math(EXPR next_major "${major} + 1")
+math(EXPR next_minor "${minor} + 1")
+expect("${major}.0" TRUE)
+expect("${major}.${minor}" TRUE)
+expect("${major}.${next_minor}" FALSE)
+expect("${next_major}.0" FALSE)
+message(STATUS "WarcraftXL ${PACKAGE_VERSION}: SameMajorVersion holds")
