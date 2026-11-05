@@ -515,6 +515,18 @@ namespace wxl::offsets::WowClientDB_ItemRec
     inline constexpr uintptr_t dtor = 0x00665260;
 }
 
+namespace wxl::offsets::WowClientDB_ItemRec::fields
+{
+    inline constexpr size_t kSize = 0x24;
+    inline constexpr size_t m_loaded = 0x4;
+    inline constexpr size_t m_numRecords = 0x8;
+    inline constexpr size_t m_maxID = 0xC;
+    inline constexpr size_t m_minID = 0x10;
+    inline constexpr size_t m_strings = 0x14;
+    inline constexpr size_t m_records = 0x1C;
+    inline constexpr size_t m_recordsById = 0x20;
+}
+
 namespace wxl::offsets::WowClientDB_ItemSetRec
 {
     inline constexpr uintptr_t LoadRecords = 0x0065D0D0;

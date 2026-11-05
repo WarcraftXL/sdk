@@ -455,6 +455,7 @@ namespace wxl::offsets::WowClientDB_Common_ItemRandomSuffixRec
 namespace wxl::offsets::WowClientDB_Common_ItemRec
 {
     inline constexpr uintptr_t Load = 0x00644190;
+    using LoadFn = void(__fastcall*)(void* self, void* edx, const char* file, int32_t line);
 }
 
 namespace wxl::offsets::WowClientDB_Common_ItemSetRec

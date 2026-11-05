@@ -128,7 +128,7 @@ From Linux, use `-G Ninja -DCMAKE_TOOLCHAIN_FILE=<an x86 Windows toolchain file>
 | Path | What |
 |---|---|
 | `include/wxl/` | the C++ layer: `wxl.hpp` (all of it), `Extension.hpp` and `Overrides.def`, `Export.hpp`, `Listener.hpp`, `Log.hpp`, `Events.hpp` and `events/`, `Signal.hpp`, `Hook.hpp`, `Intercept.hpp`, `Patch.hpp`, `Service.hpp` and the core's services (`Storage.hpp`, `Profiles.hpp`, `AllSettings.hpp`), `Settings.hpp`, `Result.hpp`, `Task.hpp`, `Game.hpp`, the hook-point names (`HookPoints.def`) |
-| `include/wxl/abi/` | the C ABI: `Plugin.h`, `Common.h`, `Version.h`, and the tables of the core's services (`Storage.h`, `Objects.h`, `Settings.h`, `Profiles.h`, `Lua.h`, `GraphicsDevice.h`) |
+| `include/wxl/abi/` | the C ABI: `Plugin.h`, `Common.h`, `Version.h`, and the tables of the core's services (`Storage.h`, `Objects.h`, `Settings.h`, `Profiles.h`, `Lua.h`, `GraphicsDevice.h`, `Net.h`) |
 | `include/wxl/offsets/` | the stock client's addresses, signatures and layouts, one header per class, classes named alike but for case sharing the first's (generated) |
 | `include/wxl/game/`, `include/wxl/objects/` | typed bindings over the client's functions and state, and the object handles |
 | `include/wxl/formats/` | file records as the client reads them |

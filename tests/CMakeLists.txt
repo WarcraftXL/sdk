@@ -84,7 +84,7 @@ add_test(NAME package-version
 set_tests_properties(package-version PROPERTIES FIXTURES_REQUIRED sdk_package)
 
 # --- the examples loaded by the installed fake host (wxl_add_load_test) -------------------------
-add_test(NAME examples-load COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${hello}" --output-on-failure)
+add_test(NAME examples-load COMMAND ${CMAKE_CTEST_COMMAND} --test-dir "${hello}" -C $<CONFIG> --output-on-failure)
 set_tests_properties(examples-load PROPERTIES FIXTURES_REQUIRED hello_built)
 
 # --- the code the docs quote is the examples' code ----------------------------------------------

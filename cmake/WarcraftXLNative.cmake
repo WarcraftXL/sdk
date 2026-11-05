@@ -39,7 +39,7 @@ function(wxl_add_stock_test name)
     set_target_properties(${name} PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     # Linked low and fixed: its .bss room then covers Wow.exe's own addresses.
-    target_link_options(${name} PRIVATE /BASE:0x10000 /DYNAMICBASE:NO /FIXED /ALIGN:0x10000)
+    target_link_options(${name} PRIVATE /BASE:0x10000 /DYNAMICBASE:NO /FIXED /ALIGN:65536)
     add_test(NAME ${name} COMMAND ${name} "${WXL_WOW_EXE}")
     set_tests_properties(${name} PROPERTIES SKIP_RETURN_CODE 77)
 endfunction()

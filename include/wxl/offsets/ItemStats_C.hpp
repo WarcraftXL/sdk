@@ -11,6 +11,7 @@ namespace wxl::offsets::ItemStats_C
     inline constexpr uintptr_t dtor = 0x00668020;
     inline constexpr uintptr_t dtor_668860 = 0x00668860;
     inline constexpr uintptr_t Unpack = 0x0098D910;
+    using UnpackFn = void(__fastcall*)(void* self, void* edx, void* msg);
     inline constexpr uintptr_t Pack = 0x0098DDB0;
 }
 
@@ -19,10 +20,37 @@ namespace wxl::offsets::ItemStats_C::fields
     inline constexpr size_t kSize = 0x204;
     inline constexpr size_t m_class = 0x4;
     inline constexpr size_t m_subClass = 0x8;
+    inline constexpr size_t m_soundOverrideSubclass = 0xC; // i32
+    inline constexpr size_t m_displayId = 0x10; // u32
     inline constexpr size_t m_quality = 0x14;
+    inline constexpr size_t m_flags = 0x18; // u32[2]
     inline constexpr size_t m_sellPrice = 0x24;
     inline constexpr size_t m_inventoryType = 0x28;
     inline constexpr size_t m_itemLevel = 0x34;
     inline constexpr size_t m_requiredLevel = 0x38;
     inline constexpr size_t m_stackable = 0x5C;
+    inline constexpr size_t m_material = 0x194; // u32
+    inline constexpr size_t m_sheatheType = 0x198; // u32
+}
+
+namespace wxl::offsets::layout
+{
+    struct ItemStats_C
+    {
+        uint8_t _pad0[0xC];
+        int32_t m_soundOverrideSubclass;
+        uint32_t m_displayId;
+        uint8_t _pad14[0x4];
+        uint32_t m_flags[2];
+        uint8_t _pad20[0x174];
+        uint32_t m_material;
+        uint32_t m_sheatheType;
+        uint8_t _pad19C[0x68];
+    };
+    static_assert(sizeof(ItemStats_C) == 0x204);
+    static_assert(offsetof(ItemStats_C, m_soundOverrideSubclass) == 0xC);
+    static_assert(offsetof(ItemStats_C, m_displayId) == 0x10);
+    static_assert(offsetof(ItemStats_C, m_flags) == 0x18);
+    static_assert(offsetof(ItemStats_C, m_material) == 0x194);
+    static_assert(offsetof(ItemStats_C, m_sheatheType) == 0x198);
 }

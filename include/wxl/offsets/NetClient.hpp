@@ -18,6 +18,7 @@ namespace wxl::offsets::NetClient
     inline constexpr uintptr_t ResetHandler = 0x00631FC0;
     inline constexpr uintptr_t ProcessMessage = 0x00631FE0;
     using ProcessMessageFn = int32_t(__fastcall*)(void* self, void* edx, uint32_t time_received, void* message, int32_t unused);
+    inline constexpr uintptr_t ProcessMessage_handlerCountImm = 0x0063200D; // in NetClient::ProcessMessage: 1F 05 00 00
     inline constexpr uintptr_t WCConnected = 0x00632060;
     inline constexpr uintptr_t GetNetStats = 0x006320D0;
     inline constexpr uintptr_t PollEventQueue = 0x006321A0;
@@ -52,4 +53,36 @@ namespace wxl::offsets::NetClient
 namespace wxl::offsets::NetClient::HELDMESSAGE
 {
     inline constexpr uintptr_t dtor = 0x00632970;
+}
+
+namespace wxl::offsets::NetClient::fields
+{
+    inline constexpr size_t kSize = 0x2EE0;
+    inline constexpr size_t m_netState = 0x534; // u32
+    inline constexpr size_t m_suspended = 0x538; // u8
+    inline constexpr size_t m_handlers = 0x53C; // ptr[1311]
+    inline constexpr size_t m_handlerParams = 0x19B8; // ptr[1311]
+    inline constexpr size_t m_serverConnection = 0x2E38; // ptr
+}
+
+namespace wxl::offsets::layout
+{
+    struct NetClient
+    {
+        uint8_t _pad0[0x534];
+        uint32_t m_netState;
+        uint8_t m_suspended;
+        uint8_t _pad539[0x3];
+        void* m_handlers[1311];
+        void* m_handlerParams[1311];
+        uint8_t _pad2E34[0x4];
+        void* m_serverConnection;
+        uint8_t _pad2E3C[0xA4];
+    };
+    static_assert(sizeof(NetClient) == 0x2EE0);
+    static_assert(offsetof(NetClient, m_netState) == 0x534);
+    static_assert(offsetof(NetClient, m_suspended) == 0x538);
+    static_assert(offsetof(NetClient, m_handlers) == 0x53C);
+    static_assert(offsetof(NetClient, m_handlerParams) == 0x19B8);
+    static_assert(offsetof(NetClient, m_serverConnection) == 0x2E38);
 }

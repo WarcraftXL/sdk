@@ -51,6 +51,19 @@ namespace wxl::offsets::CVar::fields
     inline constexpr size_t m_key_m_str = 0x14;
     inline constexpr size_t m_flags = 0x1C;
     inline constexpr size_t m_stringValue_m_str = 0x28;
+    inline constexpr size_t m_intValue = 0x30; // i32
     inline constexpr size_t m_defaultValue_m_str = 0x40;
     inline constexpr size_t m_latchedValue_m_str = 0x58;
+}
+
+namespace wxl::offsets::layout
+{
+    struct CVar
+    {
+        uint8_t _pad0[0x30];
+        int32_t m_intValue;
+        uint8_t _pad34[0x3C];
+    };
+    static_assert(sizeof(CVar) == 0x70);
+    static_assert(offsetof(CVar, m_intValue) == 0x30);
 }

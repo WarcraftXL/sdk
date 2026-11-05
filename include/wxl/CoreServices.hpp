@@ -6,6 +6,7 @@
 #include "wxl/Service.hpp"
 #include "wxl/abi/GraphicsDevice.h"
 #include "wxl/abi/Lua.h"
+#include "wxl/abi/Net.h"
 #include "wxl/abi/Objects.h"
 #include "wxl/abi/Profiles.h"
 #include "wxl/abi/Settings.h"
@@ -27,5 +28,6 @@ namespace wxl
     WXL_DETAIL_CORE_SERVICE(WXL_ProfilesApi, WXL_PROFILES_API_NAME, WXL_PROFILES_API_VERSION)
     WXL_DETAIL_CORE_SERVICE(WXL_LuaApi, WXL_LUA_API_NAME, WXL_LUA_API_VERSION)
     WXL_DETAIL_CORE_SERVICE(WXL_GraphicsDeviceApi, WXL_GRAPHICS_DEVICE_API_NAME, WXL_GRAPHICS_DEVICE_API_VERSION)
+    WXL_DETAIL_CORE_SERVICE(WXL_NetApi, WXL_NET_API_NAME, WXL_NET_API_VERSION)
 #undef WXL_DETAIL_CORE_SERVICE
 }

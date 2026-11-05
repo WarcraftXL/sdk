@@ -108,8 +108,26 @@ namespace wxl::offsets::DBCache_ItemStats_C_int_HASHKEY_INT
     inline constexpr uintptr_t VerifyAndUpdateVersion = 0x0066FA90;
     inline constexpr uintptr_t dtor = 0x006760B0;
     inline constexpr uintptr_t CancelCallback = 0x0067A0F0;
+    inline constexpr uintptr_t Invalidate = 0x0067A170;
+    using InvalidateFn = void(__fastcall*)(void* self, void* edx, int32_t key);
     inline constexpr uintptr_t GetRecord = 0x0067CA30;
+    using GetRecordFn = void*(__fastcall*)(void* self, void* edx, int32_t key, const void* guid, void* callback, void* param, bool unique);
     inline constexpr uintptr_t AddItems = 0x0067CBD0;
+    inline constexpr uintptr_t Load = 0x0067CDD0;
+    using LoadFn = void(__fastcall*)(void* self, void* edx);
+}
+
+namespace wxl::offsets::DBCache_ItemStats_C_int_HASHKEY_INT::DBCACHEHASH::fields
+{
+    inline constexpr size_t kSize = 0x23C;
+    inline constexpr size_t m_hashval = 0x0; // u32
+    inline constexpr size_t m_record = 0x18; // rec:ItemStats_C
+    inline constexpr size_t m_id = 0x21C; // i32
+    inline constexpr size_t m_loaded = 0x220; // u8
+    inline constexpr size_t m_callbacks = 0x224; // bytes
+    inline constexpr size_t m_noSave = 0x230; // u8
+    inline constexpr size_t m_dispatching = 0x231; // u8
+    inline constexpr size_t m_invalidatePending = 0x232; // u8
 }
 
 namespace wxl::offsets::DBCache_ItemTextCache_C_unsigned_int64_CHashKeyGUID
@@ -251,7 +269,6 @@ namespace wxl::offsets::DBCache_T_TKey_THashKey
     inline constexpr uintptr_t DenyItem_679F80 = 0x00679F80;
     inline constexpr uintptr_t Invalidate_67A000 = 0x0067A000;
     inline constexpr uintptr_t DenyItem_67A070 = 0x0067A070;
-    inline constexpr uintptr_t Invalidate_67A170 = 0x0067A170;
     inline constexpr uintptr_t RetryItem = 0x0067A360;
     inline constexpr uintptr_t SetTemporary = 0x0067A4C0;
     inline constexpr uintptr_t DenyItem_67A750 = 0x0067A750;
@@ -266,7 +283,6 @@ namespace wxl::offsets::DBCache_T_TKey_THashKey
     inline constexpr uintptr_t Load_67C0E0 = 0x0067C0E0;
     inline constexpr uintptr_t GetRecord = 0x0067C3E0;
     inline constexpr uintptr_t Load_67C740 = 0x0067C740;
-    inline constexpr uintptr_t Load_67CDD0 = 0x0067CDD0;
     inline constexpr uintptr_t Load_67D470 = 0x0067D470;
     inline constexpr uintptr_t Load_67DB90 = 0x0067DB90;
     inline constexpr uintptr_t Load_67E0E0 = 0x0067E0E0;
@@ -311,4 +327,27 @@ namespace wxl::offsets::DBCache_WardenCachedModule_CWardenKey_CWardenKey
     inline constexpr uintptr_t VerifyAndUpdateVersion = 0x0066FE80;
     inline constexpr uintptr_t DenyItem = 0x0067ABB0;
     inline constexpr uintptr_t Invalidate = 0x0067ACA0;
+}
+
+namespace wxl::offsets::layout
+{
+    struct DBCache_ItemStats_C_int_HASHKEY_INT_DBCACHEHASH
+    {
+        uint32_t m_hashval;
+        uint8_t _pad4[0x218];
+        int32_t m_id;
+        uint8_t m_loaded;
+        uint8_t _pad221[0xF];
+        uint8_t m_noSave;
+        uint8_t m_dispatching;
+        uint8_t m_invalidatePending;
+        uint8_t _pad233[0x9];
+    };
+    static_assert(sizeof(DBCache_ItemStats_C_int_HASHKEY_INT_DBCACHEHASH) == 0x23C);
+    static_assert(offsetof(DBCache_ItemStats_C_int_HASHKEY_INT_DBCACHEHASH, m_hashval) == 0x0);
+    static_assert(offsetof(DBCache_ItemStats_C_int_HASHKEY_INT_DBCACHEHASH, m_id) == 0x21C);
+    static_assert(offsetof(DBCache_ItemStats_C_int_HASHKEY_INT_DBCACHEHASH, m_loaded) == 0x220);
+    static_assert(offsetof(DBCache_ItemStats_C_int_HASHKEY_INT_DBCACHEHASH, m_noSave) == 0x230);
+    static_assert(offsetof(DBCache_ItemStats_C_int_HASHKEY_INT_DBCACHEHASH, m_dispatching) == 0x231);
+    static_assert(offsetof(DBCache_ItemStats_C_int_HASHKEY_INT_DBCACHEHASH, m_invalidatePending) == 0x232);
 }

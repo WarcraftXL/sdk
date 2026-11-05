@@ -13,4 +13,36 @@ namespace wxl::offsets::ItemRec
 namespace wxl::offsets::ItemRec::fields
 {
     inline constexpr size_t kSize = 0x20;
+    inline constexpr size_t m_id = 0x0; // i32
+    inline constexpr size_t m_classID = 0x4; // i32
+    inline constexpr size_t m_subclassID = 0x8; // i32
+    inline constexpr size_t m_soundOverrideSubclassID = 0xC; // i32
+    inline constexpr size_t m_material = 0x10; // i32
+    inline constexpr size_t m_displayInfoID = 0x14; // i32
+    inline constexpr size_t m_inventoryType = 0x18; // i32
+    inline constexpr size_t m_sheatheType = 0x1C; // i32
+}
+
+namespace wxl::offsets::layout
+{
+    struct ItemRec
+    {
+        int32_t m_id;
+        int32_t m_classID;
+        int32_t m_subclassID;
+        int32_t m_soundOverrideSubclassID;
+        int32_t m_material;
+        int32_t m_displayInfoID;
+        int32_t m_inventoryType;
+        int32_t m_sheatheType;
+    };
+    static_assert(sizeof(ItemRec) == 0x20);
+    static_assert(offsetof(ItemRec, m_id) == 0x0);
+    static_assert(offsetof(ItemRec, m_classID) == 0x4);
+    static_assert(offsetof(ItemRec, m_subclassID) == 0x8);
+    static_assert(offsetof(ItemRec, m_soundOverrideSubclassID) == 0xC);
+    static_assert(offsetof(ItemRec, m_material) == 0x10);
+    static_assert(offsetof(ItemRec, m_displayInfoID) == 0x14);
+    static_assert(offsetof(ItemRec, m_inventoryType) == 0x18);
+    static_assert(offsetof(ItemRec, m_sheatheType) == 0x1C);
 }

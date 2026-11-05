@@ -55,6 +55,7 @@ namespace wxl::offsets::CGTooltip
     inline constexpr uintptr_t PostLoadXML = 0x0061FB30;
     inline constexpr uintptr_t AddFontStrings = 0x0061FE30;
     inline constexpr uintptr_t AddLine = 0x0061FEC0;
+    using AddLineFn = void(__fastcall*)(void* self, void* edx, const char* left, const char* right, const void* left_color, const void* right_color, int32_t wrap);
     inline constexpr uintptr_t AddLine_6201C0 = 0x006201C0;
     inline constexpr uintptr_t AddEmpathyText = 0x00620950;
     inline constexpr uintptr_t AddSkinnableText = 0x00620EE0;
@@ -76,6 +77,7 @@ namespace wxl::offsets::CGTooltip
     inline constexpr uintptr_t SetTalent = 0x00626E20;
     inline constexpr uintptr_t SetAchievement = 0x00627220;
     inline constexpr uintptr_t SetItem = 0x006277F0;
+    using SetItemFn = int32_t(__fastcall*)(void* self, void* edx, int32_t item_id, const void* requester, const void* item_guid, int32_t name_only, int32_t compare, int32_t use_link_info, int32_t append, uint64_t owner, int32_t socket_preview, void* stream, int32_t hide_charges, const void* link, int32_t minimum_level, int32_t skip_lock, int32_t skip_sell_price);
     inline constexpr uintptr_t SetItemDelta = 0x0062D930;
     inline constexpr uintptr_t SetMacro = 0x00630D20;
     inline constexpr uintptr_t s_objectTypeName = 0x00AD2ADC;

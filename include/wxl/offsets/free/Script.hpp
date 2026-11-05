@@ -2253,6 +2253,7 @@ namespace wxl::offsets
     inline constexpr uintptr_t Script_FillLocalizedClassList = 0x0060A510;
     inline constexpr uintptr_t Script_GetGUIDFromString = 0x0060A630;
     inline constexpr uintptr_t Script_GetGUIDFromToken = 0x0060ABF0;
+    using Script_GetGUIDFromTokenFn = bool(__cdecl*)(const char* token, uint64_t* guid, bool default_to_target);
     inline constexpr uintptr_t Script_GetTokenFromGUID = 0x0060B0B0;
     inline constexpr uintptr_t Script_GetAuraTokenFromGUID = 0x0060B420;
     inline constexpr uintptr_t Script_GetTokenIDsFromGUID = 0x0060BB70;
